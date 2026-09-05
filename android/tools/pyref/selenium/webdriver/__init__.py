@@ -1,0 +1,1 @@
+class Chrome: pass

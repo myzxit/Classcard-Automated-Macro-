@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">클래스카드 자동화</string>
+
+    <!-- 컨트롤 패널 (파이썬 버전의 단축키와 1:1 대응) -->
+    <string name="btn_auto_all">전체 자동화</string>
+    <string name="btn_single_set">한 세트</string>
+    <string name="btn_stop">중지</string>
+    <string name="btn_fetch">단어장 가져오기</string>
+    <string name="btn_quit">종료</string>
+    <string name="btn_memorize">암기</string>
+    <string name="btn_recall">리콜</string>
+    <string name="btn_spell">스펠</string>
+    <string name="btn_memorize_sentence">문장 암기</string>
+    <string name="btn_recall_sentence">문장 리콜</string>
+    <string name="btn_test">단어 테스트</string>
+    <string name="btn_test_sentence">문장 테스트</string>
+    <string name="btn_matching">매칭</string>
+    <string name="btn_scramble">스크램블</string>
+
+    <string name="log_toggle">로그</string>
+    <string name="accounts_short">계정</string>
+    <string name="accounts_title">계정 설정</string>
+
+    <string name="accounts_help">클래스카드 아이디와 비밀번호를 입력하세요. 여러 개를 넣으면 계정 수만큼 창이 열리고, 버튼 한 번이 모든 계정에 동시에 적용됩니다.</string>
+    <string name="account_add">+ 계정 추가</string>
+    <string name="parallel_label">여러 계정 동시 실행 (끄면 첫 번째 계정만 사용)</string>
+    <string name="env_import_title">.env 붙여넣기로 가져오기</string>
+    <string name="env_import_hint">CLASSCARD_ID=계정1,계정2\nCLASSCARD_PW=비번1,비번2</string>
+    <string name="env_import">붙여넣은 내용 가져오기</string>
+    <string name="save_and_restart">저장하고 다시 시작</string>
+    <string name="hint_id">아이디</string>
+    <string name="hint_pw">비밀번호</string>
+    <string name="remove">삭제</string>
+
+    <string name="no_accounts">계정이 없습니다. [계정] 버튼에서 아이디/비밀번호를 등록하세요.</string>
+    <string name="service_channel">자동화 실행 중</string>
+    <string name="service_running">클래스카드 자동화가 백그라운드에서 실행 중입니다.</string>
+</resources>
