@@ -1,215 +1,223 @@
 <a id="readme-top"></a>
 
-<!-- PROJECT LOGO -->
 <br />
 <div align="center">
   <img src="https://play-lh.googleusercontent.com/howCUVHqn67CQ_1VuMAICY7FIwUGT-4c6_Tcii_9z0dE1_2ZN2vA8Ny1EMkJVYMGBQUw" alt="Classcard" width="80" height="80">
 
-  <h3 align="center">Classcard Automation for Android</h3>
+  <h3 align="center">Classcard Automation</h3>
 
   <p align="center">
-    클래스카드(Classcard)의 암기 · 리콜 · 스펠 · 매칭 · 스크램블 · 테스트 학습을 자동화하는 <b>안드로이드 앱</b>입니다.
+    클래스카드(Classcard)의 암기 · 리콜 · 스펠 · 매칭 · 스크램블 · 테스트 학습을 자동화합니다.
     <br />
-    PC(Selenium) 버전의 <b>모든 기능</b>을 그대로 옮겼습니다. 폰 하나로 전체 자동화까지 돌아갑니다.
+    <b>📱 안드로이드 앱</b> 과 <b>🧩 크롬 확장프로그램</b> 두 가지로 쓸 수 있고, <b>기능은 완전히 같습니다.</b>
   </p>
 </div>
 
 <br />
 
-## About The Project
+## 다운로드
 
-원래 이 프로젝트는 PC에서 Selenium으로 크롬을 조종하고, `pynput` 글로벌 단축키로 자동화를
-켜는 파이썬 스크립트였습니다. 안드로이드에는 ChromeDriver도, 글로벌 단축키도, `.env` 파일도
-없기 때문에 **자동화 두뇌는 Kotlin으로 1:1 이식**하고, 브라우저를 조종하는 부분만
-`WebView` + 코루틴으로 갈아 끼웠습니다.
+| | 받는 곳 | 설치 |
+|---|---|---|
+| 📱 **안드로이드** | [classcard-automation.apk](https://github.com/myzxit/Classcard-Automated-Macro-/releases/download/apk-latest/classcard-automation.apk) | 폰 브라우저로 링크를 열면 바로 받아집니다 |
+| 🧩 **크롬 확장** | [classcard-automation-extension.zip](https://github.com/myzxit/Classcard-Automated-Macro-/releases/download/apk-latest/classcard-automation-extension.zip) | 압축을 풀고 개발자 모드로 로드 |
 
-카드 판별 · 정답 매칭 · 클릭 순서 · 목표 점수 · 이탈 감지 우회 같은 핵심 로직은
-**원본과 같은 값이 나오는지 테스트로 검증**합니다
-(`android/app/src/test/.../PortParityTest.kt` — 원본 파이썬을 실제로 실행해 만든 기준값과 대조).
-
-### 기능 (하나도 빠지지 않았습니다)
-
-* **자동 로그인** — 앱에 저장한 아이디/비밀번호로 자동 로그인
-* **다계정 동시 실행** — 계정 수만큼 WebView가 열리고, 버튼 한 번이면 **모든 계정이 동시에**
-  같은 자동화를 수행합니다. 계정별로 쿠키가 분리되어 서로 섞이지 않습니다
-  (기기의 WebView가 멀티 프로필을 지원하는 경우. 미지원이면 앱이 알려줍니다)
-* **암기(Memorize)** — 단어/문장 암기 자동화
-* **리콜(Recall)** — 단어/문장 리콜 자동화
-* **스펠(Spell)** — 정답을 자동으로 타이핑. 전체 자동화에서는 선생님이 **필수로 지정한 단어 set**에서만 수행
-* **테스트(단어)** — 객관식 자동 풀이. 양방향(영↔한) 매칭으로 정답을 고르고,
-  항상 100점이 되지 않도록 일부 문항을 랜덤 오답 처리(**70점 초과 보장**)
-* **테스트(문장)** — 문장 어순 배열 자동 풀이. 한글 문제 → 영어 정답 문장을 찾아 어순대로 클릭.
-  실시간 채점에 대응하기 위해 **네이티브 터치 주입(진짜 클릭)** 을 사용하며,
-  괄호 묶음 `(...)`·대소문자 중복(`The`/`the`)·구두점 차이를 모두 정규화해 매칭.
-  0~1개만 랜덤 오답 처리(**90점 패스 기준** 안전 통과)
-* **매칭(단어)** — 영어↔한국어 카드 매칭 게임 자동 풀이. 목표 점수(**3000~5000점 랜덤**)에
-  도달하면 게임 도중에 자동으로 빠져나옴(점수는 저장됨)
-* **스크램블(문장)** — 문장 어순 배열 게임 자동 풀이. 목표 점수(**4000~5000점 랜덤**)에 도달하면 빠져나옴
-* **단어장 가져오기** — 현재 페이지에서 단어 데이터를 추출해 계정별로 보관
-* **전체 자동화** — 단어장 목록에서 맨 아래 set부터 위로 올라가며 단어/문장 자동 판별 →
-  학습구간을 '전체 카드 학습'으로 변경 → 단어장 자동 갱신 →
-  암기 → 리콜 → 스펠 → 매칭/스크램블 → 테스트를 차례로 수행.
-  이미 완료된 모드와 set은 자동으로 스킵
-  (테스트는 최고점수가 단어 90점 / 문장 90점, 매칭은 3000점 / 스크램블은 4000점 이상이면 스킵)
-* **한 세트 자동화** — 셋홈(set 상세) 화면에서 그 한 set만 전체 모드를 수행하고 멈춤
-* **백그라운드 실행** — 포그라운드 서비스 + WakeLock으로 화면을 꺼도 계속 동작합니다.
-  페이지의 '이탈 감지'는 문서 시작 시점에 주입되는 스크립트가 막습니다
+코드가 바뀔 때마다 같은 주소에 최신 빌드가 자동으로 올라갑니다.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## 설치
+## 기능 (두 버전 모두 동일)
 
-### 1) 휴대폰에서 바로 받기 (권장)
+* **자동 로그인** — 저장한 아이디/비밀번호로 자동 로그인
+* **다계정** — 계정 여러 개를 등록해 두고 한 번에 실행
+  (안드로이드는 계정별 세션을 분리해 **동시** 실행, 크롬은 쿠키를 공유하므로 **순차** 실행)
+* **암기 / 리콜 / 스펠** — 단어 학습 자동화. 스펠은 선생님이 **필수**로 지정한 set 에서만 수행
+* **문장 암기 / 문장 리콜** — 문장 학습 자동화.
+  문장 리콜은 페이지가 콘솔로 흘리는 정답을 가로채 맞춥니다(정답이 DOM 에 없어서 이 방법뿐)
+* **단어 테스트** — 객관식 자동 풀이. 양방향(영↔한) 매칭으로 정답을 고르고,
+  항상 100점이 되지 않도록 일부를 랜덤 오답 처리(**70점 초과 보장**)
+* **문장 테스트** — 어순 배열 자동 풀이. 한글 문제 → 영어 정답을 찾아 순서대로 클릭.
+  괄호 묶음 `(...)`·대소문자 중복(`The`/`the`)·구두점 차이를 정규화해 매칭하고,
+  0~1개만 랜덤 오답 처리(**90점 패스 안전 통과**)
+* **단어 매칭** — 매칭 게임 자동 풀이. 목표 점수(**3000~5000 랜덤**) 도달 시 중도 종료(점수 저장됨)
+* **문장 스크램블** — 스크램블 게임 자동 풀이. 목표 점수(**4000~5000 랜덤**) 도달 시 종료
+* **단어장 가져오기** — 현재 학습 페이지에서 단어/뜻 데이터를 추출해 계정별로 보관
+* **전체 자동화** — 단어장 목록에서 맨 아래 set 부터 위로 올라가며 단어/문장 자동 판별 →
+  학습구간을 '전체 카드 학습'으로 변경 → 단어장 갱신 →
+  암기 → 리콜 → 스펠 → 매칭/스크램블 → 테스트를 차례로 수행.
+  이미 끝난 모드와 set 은 자동으로 스킵(테스트 90점 / 매칭 3000점 / 스크램블 4000점 이상)
+* **한 세트 자동화** — 셋홈(set 상세)에서 그 한 set 만 전 과정 수행
+* **백그라운드 실행** — 화면이 꺼지거나 창이 가려져도 '이탈'로 잡히지 않고 계속 실행
 
-코드가 올라갈 때마다 GitHub Actions가 APK를 만들어 **항상 같은 주소**에 올려 둡니다.
-휴대폰 브라우저(크롬 등)에서 아래 주소를 열면 그대로 다운로드됩니다.
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-**https://github.com/myzxit/Classcard-Automated-Macro-/releases/download/apk-latest/classcard-automation.apk**
+## 📱 안드로이드 설치
 
-설치 순서:
-
-1. 위 링크를 눌러 `classcard-automation.apk` 다운로드
+1. 위 표의 **APK 링크**를 폰 브라우저(크롬)로 열기 → 자동 다운로드
 2. 다운로드 알림(또는 **파일** 앱 → **다운로드**)에서 APK를 누름
-3. "출처를 알 수 없는 앱" 경고가 뜨면 → **설정** → 해당 브라우저에 **이 소스 허용** 켜기 → 뒤로 → **설치**
-4. "기기가 손상될 수 있다"는 Play 프로텍트 경고는 **무시하고 설치** 를 누르면 됩니다
-   (개인 서명 APK라 항상 뜨는 경고입니다)
+3. "출처를 알 수 없는 앱" 경고 → **설정** → 해당 브라우저에 **이 소스 허용** → 뒤로 → **설치**
+4. "기기가 손상될 수 있다"(Play 프로텍트) 경고는 **무시하고 설치**
+   — 개인 서명 APK라 항상 뜨는 경고입니다
 
-> 저장소가 비공개라면 링크를 열 때 GitHub 로그인이 필요합니다.
-> 최신 빌드 목록은 [Releases](https://github.com/myzxit/Classcard-Automated-Macro-/releases) 에서 볼 수 있습니다.
+**요구 사항**: Android 8.0(API 26) 이상.
+문장 리콜의 정답 캡처와 계정별 쿠키 분리는 최신 WebView 기능을 씁니다.
+잘 안 되면 Play 스토어에서 **Android System WebView** 와 **Chrome** 을 업데이트하세요.
 
-### 2) 직접 빌드하기
+### 사용법
+
+1. 앱을 켜고 왼쪽 **계정 리스트** 에 아이디/비밀번호를 넣고 **+**
+   (기존 `.env` 는 **⤓ .env 불러오기** 로 붙여넣으면 됩니다)
+2. **🌐 브라우저 열기** → 자동으로 로그인됩니다
+3. 계정 줄을 누르면 그 계정의 브라우저 화면이 열립니다. 단어장 목록 페이지로 이동하세요
+4. 오른쪽에서 **학습 모드**를 고르고 아래 **▶ 자동화 시작**
+5. 진행 상황은 위쪽 **LOG** 탭에서 볼 수 있습니다
+
+> **화면이 작게 보이는 건 정상입니다.** 클래스카드는 화면이 좁으면 모바일 레이아웃으로 바뀌는데,
+> 그러면 스크램블 타일이 잘려 자동화가 깨집니다. 그래서 앱이 **데스크톱 화면(가로 1280px)** 을
+> 강제로 유지하고 축소해 보여 줍니다. 손가락으로 확대/스크롤하면 됩니다.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## 🧩 크롬 확장프로그램 설치
+
+1. 위 표의 **확장 zip** 을 받아 **압축을 풉니다** (폴더가 하나 생깁니다)
+2. 크롬 주소창에 `chrome://extensions` 입력
+3. 오른쪽 위 **개발자 모드** 를 켭니다
+4. **압축해제된 확장 프로그램을 로드합니다** → 방금 푼 폴더 선택
+5. 툴바의 퍼즐 아이콘에서 **클래스카드 자동화** 를 고정해 두면 편합니다
+
+> 크롬 웹스토어에 올린 앱이 아니라서 개발자 모드로 넣어야 합니다.
+> Edge, Whale 등 크로미움 기반 브라우저도 같은 방법으로 됩니다.
+
+### 사용법
+
+1. 확장 아이콘을 눌러 팝업을 엽니다 (안드로이드 앱과 같은 화면입니다)
+2. 계정을 등록하고 **🌐 탭 열기** → 새 탭이 열리며 자동 로그인됩니다
+   - 이미 로그인해 둔 탭이 있으면 **↪ 지금 보는 탭 사용** 이 더 빠릅니다
+3. 그 탭에서 단어장 목록 페이지로 이동
+4. **학습 모드** 를 고르고 **▶ 자동화 시작**
+
+**문장 테스트를 돌리면 "…에서 디버깅하고 있습니다" 알림 바가 뜹니다.** 정상입니다.
+그 화면의 버튼은 진짜 마우스 입력에만 반응해서, 크롬 디버거(CDP)로 신뢰된 클릭을 보냅니다.
+자동화가 끝나면 자동으로 연결이 끊깁니다. (원본 파이썬 버전이 쓰던 것과 **같은** 방식입니다)
+
+**다계정은 순차로 돌아갑니다.** 크롬은 프로필 하나에서 쿠키를 공유하므로 여러 계정을
+동시에 로그인해 둘 수 없습니다. 그래서 계정1 실행 → 쿠키 정리 → 계정2 로그인 → 실행 …
+순서로 진행합니다. 정말 동시에 돌리고 싶다면 안드로이드 앱을 쓰거나,
+크롬 **프로필**을 계정 수만큼 만들어 각각 확장을 설치하세요.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## 어떻게 만들어졌나
+
+원래 이 프로젝트는 PC에서 **Selenium** 으로 크롬을 조종하고 **pynput** 글로벌 단축키로
+자동화를 켜는 파이썬 스크립트였습니다. 자동화의 두뇌(카드 판별 · 정답 매칭 · 클릭 순서 ·
+목표 점수 · 이탈 감지 우회)는 **로직 그대로** 옮기고, "브라우저를 조종하는 부분"만
+플랫폼에 맞게 갈아 끼웠습니다.
+
+| 원본 (PC / Selenium) | 📱 안드로이드 | 🧩 크롬 확장 |
+|---|---|---|
+| `driver.execute_script(...)` | `Driver.eval()` (WebView) | `Driver.eval()` (`chrome.scripting`, MAIN world) |
+| CDP `Input.dispatchMouseEvent` (신뢰된 클릭) | 네이티브 `MotionEvent` 주입 | `chrome.debugger` → **같은 CDP** |
+| `body.send_keys(SPACE)` | 네이티브 `KeyEvent` 주입 | CDP `Input.dispatchKeyEvent` |
+| CDP `addScriptToEvaluateOnNewDocument` | `addDocumentStartJavaScript` | `document_start` 콘텐츠 스크립트 |
+| 크롬 창 N개 (계정 격리) | WebView N개 + `ProfileStore` 분리 | 순차 실행 + 쿠키 정리 |
+| 창 크기 1280×900 강제 | 데스크톱 UA + `initialScale` + viewport 강제 | (PC라 불필요) |
+| `pynput` 글로벌 단축키 | 화면 하단 버튼 | 팝업 버튼 |
+| `.env` 파일 | 앱 내 계정 설정 | 팝업 내 계정 설정 |
+
+두 버전 모두 **페이지가 이동해도 자동화가 살아남도록** 조종 주체를 페이지 밖
+(안드로이드는 코틀린 코루틴, 확장은 백그라운드 서비스 워커)에 두었습니다.
+전체 자동화처럼 여러 페이지를 오가는 흐름이 이 구조라서 가능합니다.
+
+### 이식이 맞는지 어떻게 검증했나
+
+`android/tools/gen_reference.py` 가 **원본 파이썬 구현을 실제로 import 해서 실행**하고,
+그 출력을 `reference.json` 으로 저장합니다. 두 이식본은 **같은 기준 파일**로 검증합니다.
 
 ```sh
-git clone https://github.com/myzxit/Classcard-Automated-Macro-.git
-cd Classcard-Automated-Macro-/android
-./gradlew assembleDebug
-# -> app/build/outputs/apk/debug/app-debug.apk
+node extension/test/parity.test.mjs      # 확장  — 223개 단언
+cd android && ./gradlew testDebugUnitTest # 안드로이드 — 14개 테스트
 ```
 
-**요구 사항**: JDK 17, Android SDK (compileSdk 34) / 폰은 **Android 8.0(API 26) 이상**
+정규화 함수 전부, 토큰화, `difflib.SequenceMatcher.ratio()`, 스크램블 정렬/다음 단어 선택,
+문장 리콜 매칭, 스펠 정답 찾기, 단어 테스트 정답 고르기, 매칭 쌍 찾기, 오답 주입 개수를
+원본과 한 글자도 다르지 않은지 대조합니다.
 
-> 문장 리콜의 정답 캡처와 계정별 쿠키 분리는 최신 WebView 기능을 사용합니다.
-> 잘 동작하지 않으면 Play 스토어에서 **Android System WebView** 와 **Chrome** 을 업데이트하세요.
-> (지원하지 않는 기기에서는 앱이 로그로 알려주고 가능한 범위에서 계속 동작합니다.)
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## 사용법
-
-1. 앱을 켜고 오른쪽 위 **[계정]** 을 눌러 클래스카드 아이디/비밀번호를 등록합니다.
-   * 여러 계정을 넣으면 계정 수만큼 창이 열리고, 버튼 한 번이 **모든 계정에 동시에** 적용됩니다.
-   * 기존 `.env` 를 쓰던 분은 그 내용을 그대로 붙여넣고 **[붙여넣은 내용 가져오기]** 를 누르면 됩니다.
-
-     ```
-     CLASSCARD_ID=계정1,계정2
-     CLASSCARD_PW=비번1,비번2
-     ```
-2. **[저장하고 다시 시작]** 을 누르면 계정마다 창이 열리고 자동으로 로그인됩니다.
-3. 화면 위쪽 드롭다운으로 계정을 골라 볼 수 있습니다. **보이지 않는 계정도 뒤에서 계속 동작합니다.**
-4. 아래 버튼으로 자동화를 제어합니다.
-
-| 버튼 | 기능 | (PC 버전 단축키) |
-|------|------|------------------|
-| **전체 자동화** | 단어장 목록 페이지에서 맨 아래 set부터 순차 처리 | `Ctrl + A` |
-| **한 세트** | 열어 둔 셋홈 화면의 그 set만 전체 모드 수행 | `Ctrl + Alt + S` |
-| **단어장 가져오기** | 현재 페이지에서 단어 데이터 추출 | `Ctrl + M` |
-| **중지** | 현재 자동화 중지 (전체 계정) | `Ctrl + E` |
-| **종료** | 자동화를 멈추고 앱 종료 | `Ctrl + Esc` |
-| **암기** | 단어 암기 | `Ctrl + I` |
-| **리콜** | 단어 리콜 | `Ctrl + Y` |
-| **스펠** | 스펠 | `Ctrl + X` |
-| **문장 암기** | 문장 암기 | `Ctrl + B` |
-| **문장 리콜** | 문장 리콜 | `Ctrl + Q` |
-| **단어 테스트** | 단어 객관식 테스트 | `Ctrl + Alt + G` |
-| **문장 테스트** | 문장 어순 배열 테스트 | `Ctrl + Alt + H` |
-| **매칭** | 단어 매칭 게임 | `Ctrl + Alt + J` |
-| **스크램블** | 문장 스크램블 게임 | `Ctrl + Alt + K` |
-
-**[로그]** 버튼을 누르면 진행 상황이 그대로 보입니다 (PC 버전의 터미널 출력과 같은 내용).
-
-### 잘 안 될 때
-
-* **화면이 작게 보이는 건 정상입니다.** 클래스카드는 화면이 좁으면 모바일 레이아웃으로 바뀌는데,
-  그러면 스크램블 타일이 잘려 자동화가 깨집니다. 그래서 앱이 **데스크톱 화면(가로 1280px)** 을
-  강제로 유지하고 화면에 맞게 축소해서 보여 줍니다. 확대해서 보고 싶으면 손가락으로 스크롤하세요.
-* 자동화가 멈춘 것 같으면 **[로그]** 를 열어 어느 단계에서 막혔는지 확인하세요.
-* 단어장이 없다는 로그가 나오면 학습 페이지로 이동한 뒤 **[단어장 가져오기]** 를 누르세요.
+> 이 과정에서 실제 차이를 하나 잡았습니다: `Test.py` 의 `mnorm` 은 HTML 태그를 제거하지 **않고**
+> `Matching.py` 의 `mnorm` 은 제거합니다. 처음엔 하나로 합쳤다가 테스트가 잡아내서 분리했습니다.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## 코드 구조
 
 ```
-android/app/src/main/java/com/classcard/automation/
-  MainActivity.kt          컨트롤 패널 + 계정별 WebView 호스트
-  AccountsActivity.kt      계정 설정 (.env 대체)
-  AccountStore.kt          계정 저장 / .env 텍스트 파싱
-  AutomationService.kt     포그라운드 서비스 + WakeLock (백그라운드 실행)
-  LogBus.kt                로그 (파이썬 print 대체)
-  core/
-    Driver.kt              WebView 래퍼 — Selenium WebDriver 대체
-                           execute_script -> eval, CDP 클릭/키 -> 네이티브 주입
-    Session.kt             계정 1개 = WebView 1개 (원본 Account 클래스)
-    Controller.kt          버튼 -> 전 계정 fan-out (원본 make_starter)
-    StopFlag.kt            threading.Event 대체
-    Norm.kt                정규화/토큰화 함수 모음 (원본 함수별 1:1)
-    Similarity.kt          difflib.SequenceMatcher.ratio() 이식
-    AntiBlur.kt            이탈 감지 우회 스크립트
-  modules/                 자동화 모듈 (원본 파이썬 파일과 1:1)
-    HtmlParser  Spell  Memorize  Recall  MemorizeSentence  RecallSentence
-    Test  TestSentence  Matching  Scramble  AutoAll
-android/app/src/main/assets/preload.js
-    문서 시작 시점 주입 — 이탈 감지 우회 / 문장 리콜 정답 캡처 / 데스크톱 뷰포트 강제
+android/                                  📱 안드로이드 앱 (Kotlin)
+  app/src/main/java/com/classcard/automation/
+    MainActivity.kt        계정 리스트 · 학습 모드 · 고급 설정 · LOG 탭
+    AccountStore.kt        계정 저장 / .env 파싱
+    SettingsStore.kt       고급 설정 값
+    LogBus.kt              로그(날짜별 보존)
+    AutomationService.kt   포그라운드 서비스 + WakeLock
+    core/
+      Driver.kt      WebView 래퍼 (Selenium 대체)
+      Session.kt     계정 1개 = WebView 1개
+      Controller.kt  버튼 -> 전 계정 fan-out
+      StopFlag.kt    threading.Event 대체
+      Norm.kt        정규화/토큰화 (원본 함수별 1:1)
+      Similarity.kt  difflib ratio 이식
+      AntiBlur.kt    이탈 감지 우회
+    modules/         자동화 모듈 (원본 파이썬 파일과 1:1)
+  app/src/main/assets/preload.js          문서 시작 주입
+  app/src/test/                           이식 정확성 테스트
+
+extension/                                🧩 크롬 확장 (MV3)
+  manifest.json
+  background.js                 오케스트레이터 (계정/실행/로그)
+  content/preload.js            문서 시작 주입 (이탈 감지 우회 + 정답 캡처)
+  engine/
+    driver.js                   탭 조종 + CDP 신뢰된 입력
+    norm.js  similarity.js      안드로이드판과 같은 내용
+    modules/
+      basic.js      HtmlParser · 암기 · 리콜 · 스펠
+      sentence.js   문장 암기 · 문장 리콜
+      games.js      단어/문장 테스트 · 매칭 · 스크램블
+      autoall.js    전체 자동화 · 한 세트 자동화
+  popup/                        팝업 UI (안드로이드 앱과 같은 화면)
+  test/parity.test.mjs          이식 정확성 테스트
 ```
-
-### Selenium이 하던 일을 어떻게 대체했나
-
-| 원본 (PC) | 안드로이드 |
-|---|---|
-| `driver.execute_script(...)` | `Driver.eval(...)` — JS 스니펫과 CSS 셀렉터를 그대로 재사용 |
-| CDP `Input.dispatchMouseEvent` (진짜 클릭) | 네이티브 `MotionEvent` 주입 |
-| `body.send_keys(SPACE)` (진짜 키 입력) | 네이티브 `KeyEvent` 주입 |
-| CDP `addScriptToEvaluateOnNewDocument` | `WebViewCompat.addDocumentStartJavaScript` |
-| 크롬 창 N개 (계정 격리) | WebView N개 + `ProfileStore` 프로필 분리 |
-| 창 크기 1280×900 강제 | 데스크톱 UA + `initialScale` + viewport 메타 강제 |
-| `pynput` 글로벌 단축키 | 화면 하단 컨트롤 패널 |
-| `.env` 파일 | 앱 내 계정 설정 (+ `.env` 붙여넣기 가져오기) |
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## 개발
+## 직접 빌드하기
 
 ```sh
-cd android
-./gradlew testDebugUnitTest   # 이식 정확성 회귀 테스트
-./gradlew assembleDebug       # APK 빌드
-```
+# 안드로이드 (JDK 17 + Android SDK 필요)
+cd android && ./gradlew assembleDebug
+#   -> app/build/outputs/apk/debug/app-debug.apk
 
-`android/tools/gen_reference.py` 는 **원본 파이썬 구현을 그대로 실행해서**
-테스트 기준값(`app/src/test/resources/reference.json`)을 만드는 스크립트입니다.
-원본 파이썬 파일은 이 저장소의 git 히스토리(안드로이드 이식 이전 커밋)에 있습니다.
+# 확장 (빌드 과정 없음 — 폴더를 그대로 로드하거나 zip 으로 묶으면 끝)
+cd extension && zip -r ../classcard-automation-extension.zip . -x 'test/*'
+```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Roadmap
 
-- [x] 자동 로그인
-- [x] 단어장 자동 추출
-- [x] 단어/문장 암기·리콜
-- [x] 스펠
-- [x] 단어/문장 테스트 (백그라운드 실행)
+- [x] 자동 로그인 / 단어장 자동 추출
+- [x] 단어·문장 암기 / 리콜 / 스펠
+- [x] 단어·문장 테스트 (백그라운드 실행)
 - [x] 매칭 / 스크램블 (백그라운드 실행)
 - [x] 전체 자동화 / 한 세트 자동화
-- [x] 다계정 동시 실행
-- [x] 안드로이드 앱 (GUI 인터페이스)
+- [x] 다계정
+- [x] 📱 안드로이드 전용 버전
+- [x] 🧩 크롬 확장프로그램 전용 버전
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## License
 
 Distributed under the Unlicense License.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Acknowledgments
 
