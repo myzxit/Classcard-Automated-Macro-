@@ -38,8 +38,9 @@ jobs:
       - name: Extension parity tests
         run: node extension/test/parity.test.mjs
 
+      # 파일을 직접 지정한다 (node 20 의 --test 는 glob 을 풀지 못한다)
       - name: Extension unit tests
-        run: node --test 'extension/test/*.test.mjs'
+        run: node --test extension/test/grammar.test.mjs
 
       - name: Package extension
         run: |
