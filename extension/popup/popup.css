@@ -1,5 +1,6 @@
 /* 안드로이드 앱과 같은 디자인 — 목업 기준 */
 
+/* 라이트 팔레트 */
 :root {
   --bg: #f3f4f6;
   --surface: #ffffff;
@@ -14,7 +15,42 @@
   --primary-border: #93c5fd;
   --danger: #ef4444;
   --run-bg: #0f1115;
+  --danger-btn: #ef4444;
+  --danger-btn-hover: #dc2626;
 }
+
+/*
+  다크 팔레트 — 이름만 덮어쓰면 나머지 규칙은 그대로 쓴다.
+  (안드로이드의 values-night/colors.xml 과 같은 값)
+*/
+:root[data-theme="dark"] {
+  --bg: #0f1115;
+  --surface: #171a21;
+  --surface-alt: #1f232b;
+  --border: #2a2f3a;
+  --text: #e5e7eb;
+  --text-2: #9ca3af;
+  --text-3: #6b7280;
+  --primary: #3b82f6;
+  --primary-dark: #93c5fd;
+  --primary-soft: #17233a;
+  --primary-border: #3b82f6;
+  --danger: #f87171;
+  --run-bg: #0b0d11;
+  /* '중지' 버튼은 흰 글씨가 얹히므로 다크에서 오히려 더 진하게 */
+  --danger-btn: #dc2626;
+  --danger-btn-hover: #b91c1c;
+}
+
+/* 다크에서 상태 칩도 같이 어둡게 */
+:root[data-theme="dark"] .chip.off { background: #262b33; color: #9ca3af; }
+:root[data-theme="dark"] .chip.opening,
+:root[data-theme="dark"] .chip.ready { background: #1e3a8a; color: #93c5fd; }
+:root[data-theme="dark"] .chip.running { background: #14532d; color: #86efac; }
+:root[data-theme="dark"] .chip.error { background: #7f1d1d; color: #fca5a5; }
+
+/* 셀렉트/체크박스 등 폼 컨트롤도 다크 위젯으로 */
+:root[data-theme="dark"] { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 
@@ -285,8 +321,8 @@ input[type="text"].search { width: 100%; margin-top: 7px; flex: 0 0 auto; }
   flex: 0 0 46px;
 }
 .run-btn:hover { background: var(--primary-dark); }
-.run-btn.stop { background: var(--danger); }
-.run-btn.stop:hover { background: #dc2626; }
+.run-btn.stop { background: var(--danger-btn); }
+.run-btn.stop:hover { background: var(--danger-btn-hover); }
 
 /* -------------------------------------------------- LOG */
 #pageLog { display: flex; flex-direction: column; }

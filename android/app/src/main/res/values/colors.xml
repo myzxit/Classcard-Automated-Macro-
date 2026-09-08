@@ -29,6 +29,9 @@
 
     <!-- 위험(중지) -->
     <color name="danger">#FFEF4444</color>
+    <!-- '중지' 버튼 배경. 흰 글씨가 얹히므로 다크에서도 옅어지면 안 된다. -->
+    <color name="danger_button">#FFEF4444</color>
+    <color name="danger_button_pressed">#FFDC2626</color>
     <color name="danger_soft">#FFFEF2F2</color>
     <color name="danger_border">#FFFECACA</color>
 

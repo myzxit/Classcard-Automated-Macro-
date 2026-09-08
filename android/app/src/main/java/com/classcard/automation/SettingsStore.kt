@@ -18,6 +18,7 @@ object SettingsStore {
     private const val KEY_KEEP_BROWSER = "keep_browser"
     private const val KEY_START_DELAY = "start_delay"
     private const val KEY_ACCOUNT_GAP = "account_gap"
+    private const val KEY_DARK_MODE = "dark_mode"
 
     /** 저장된 ID/PW로 브라우저를 열 때 바로 로그인. */
     fun autoLogin(c: Context): Boolean = prefs(c).getBoolean(KEY_AUTO_LOGIN, true)
@@ -44,6 +45,10 @@ object SettingsStore {
     fun accountGapSec(c: Context): Int = prefs(c).getInt(KEY_ACCOUNT_GAP, 0)
     fun setAccountGapSec(c: Context, v: Int) =
         prefs(c).edit().putInt(KEY_ACCOUNT_GAP, v.coerceIn(0, 3600)).apply()
+
+    /** 다크 모드. 기본값은 켬. */
+    fun darkMode(c: Context): Boolean = prefs(c).getBoolean(KEY_DARK_MODE, true)
+    fun setDarkMode(c: Context, v: Boolean) = put(c, KEY_DARK_MODE, v)
 
     private fun put(c: Context, key: String, value: Boolean) =
         prefs(c).edit().putBoolean(key, value).apply()

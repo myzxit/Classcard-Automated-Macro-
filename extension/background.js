@@ -26,6 +26,7 @@ let logsByDate = {};
 let currentRun = null; // { queue, index, modeId, stopped }
 
 const DEFAULT_SETTINGS = {
+  darkMode: true,
   autoLogin: true,
   keepTab: true,
   sequential: true,

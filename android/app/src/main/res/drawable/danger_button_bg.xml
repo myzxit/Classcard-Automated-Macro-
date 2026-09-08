@@ -2,13 +2,13 @@
 <selector xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:state_pressed="true">
         <shape android:shape="rectangle">
-            <solid android:color="#FFDC2626" />
+            <solid android:color="@color/danger_button_pressed" />
             <corners android:radius="12dp" />
         </shape>
     </item>
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="@color/danger" />
+            <solid android:color="@color/danger_button" />
             <corners android:radius="12dp" />
         </shape>
     </item>

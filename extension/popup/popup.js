@@ -19,6 +19,7 @@ const MODES = [
 ];
 
 const SETTINGS = [
+  { key: 'darkMode', title: '다크 모드', sub: '어두운 화면으로 표시 (끄면 밝은 화면)', type: 'toggle' },
   { key: 'autoLogin', title: '자동 로그인', sub: '저장된 ID/PW로 탭을 열 때 바로 로그인', type: 'toggle' },
   { key: 'keepTab', title: '자동화 후 탭 유지', sub: '끄면 자동화가 끝날 때 탭을 닫음', type: 'toggle' },
   { key: 'sequential', title: '다계정 순차 실행', sub: '크롬은 쿠키를 공유하므로 계정을 하나씩 실행 (끌 수 없음)', type: 'toggle', disabled: true, fixed: true },
@@ -52,6 +53,7 @@ async function init() {
 
   state = await send({ type: 'getState' });
   currentLogDate = state.today;
+  applyTheme(state.settings.darkMode !== false);
 
   buildSettings();
   renderAccounts();
@@ -63,6 +65,11 @@ async function init() {
 
 function send(message) {
   return chrome.runtime.sendMessage(message);
+}
+
+/** 다크/라이트 전환 — CSS 변수만 갈아 끼우면 전체가 따라온다. */
+function applyTheme(dark) {
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
 }
 
 function bindEvents() {
@@ -333,6 +340,7 @@ function buildSettings() {
       input.addEventListener('change', () => {
         send({ type: 'setSettings', patch: { [spec.key]: input.checked } });
         state.settings[spec.key] = input.checked;
+        if (spec.key === 'darkMode') applyTheme(input.checked);
       });
       const slider = document.createElement('span');
       slider.className = 'slider';

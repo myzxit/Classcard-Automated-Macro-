@@ -23,6 +23,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -140,6 +141,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // 테마는 화면을 그리기 전에 정해야 첫 프레임부터 다크로 뜬다.
+        applyNightMode(SettingsStore.darkMode(this))
         super.onCreate(savedInstanceState)
         LogBus.init(this)
         setContentView(R.layout.activity_main)
@@ -586,6 +589,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         addToggle(
+            R.string.set_dark_mode, R.string.set_dark_mode_sub,
+            SettingsStore.darkMode(this),
+        ) { value ->
+            SettingsStore.setDarkMode(this, value)
+            // 테마를 바꾸면 액티비티가 다시 만들어지며 새 색이 적용된다.
+            applyNightMode(value)
+        }
+
+        addToggle(
             R.string.set_auto_login, R.string.set_auto_login_sub,
             SettingsStore.autoLogin(this),
         ) { SettingsStore.setAutoLogin(this, it) }
@@ -779,6 +791,12 @@ class MainActivity : AppCompatActivity() {
                 this, arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1001,
             )
         }
+    }
+
+    private fun applyNightMode(dark: Boolean) {
+        AppCompatDelegate.setDefaultNightMode(
+            if (dark) AppCompatDelegate.MODE_NIGHT_YES else AppCompatDelegate.MODE_NIGHT_NO,
+        )
     }
 
     private fun color(res: Int): Int = ContextCompat.getColor(this, res)
