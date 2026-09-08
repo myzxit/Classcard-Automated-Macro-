@@ -4,11 +4,13 @@ import android.content.Context
 import android.webkit.WebView
 import com.classcard.automation.AccountInfo
 import com.classcard.automation.LogBus
+import com.classcard.automation.SettingsStore
 import com.classcard.automation.modules.AutoAll
 import com.classcard.automation.modules.FlowFn
 import com.classcard.automation.modules.HtmlParser
 import com.classcard.automation.modules.ModeFn
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -20,36 +22,97 @@ class Controller(
     private val scope: CoroutineScope,
 ) {
 
-    val sessions = mutableListOf<Session>()
+    /** 열려 있는 세션 (계정 아이디 -> 세션). 순서를 유지한다. */
+    private val sessionMap = LinkedHashMap<String, Session>()
 
-    /** 계정 목록으로 세션(WebView)들을 만든다. 이미 있으면 먼저 정리한다. */
-    fun createSessions(accounts: List<AccountInfo>, preloadScript: String): List<Session> {
-        destroy()
-        accounts.forEachIndexed { index, account ->
-            val session = Session.createWebView(context, account, index, preloadScript)
-            sessions.add(session)
+    val sessions: List<Session> get() = sessionMap.values.toList()
+
+    /** 세션 목록/상태가 바뀔 때 UI 를 다시 그리기 위한 콜백. */
+    var onSessionsChanged: (() -> Unit)? = null
+
+    private var preloadScript: String = ""
+
+    fun setPreloadScript(script: String) {
+        preloadScript = script
+    }
+
+    fun sessionFor(accountId: String): Session? = sessionMap[accountId]
+
+    val runningCount: Int get() = sessionMap.values.count { it.isRunning }
+
+    // ------------------------------------------------------- 브라우저 열기/닫기
+
+    /**
+     * 선택된 계정의 브라우저(WebView)를 연다. 이미 열린 계정은 그대로 둔다.
+     * 파이썬 `initialize_browser` + `auto_login` 에 대응.
+     */
+    fun openBrowsers(accounts: List<AccountInfo>, attach: (Session) -> Unit) {
+        if (accounts.isEmpty()) return
+
+        val isolate = SettingsStore.isolateSessions(context)
+        val autoLogin = SettingsStore.autoLogin(context)
+
+        for (account in accounts) {
+            if (sessionMap.containsKey(account.id)) continue
+
+            val session = Session.createWebView(
+                context, account, preloadScript, isolate,
+            )
+            session.onStateChanged = { onSessionsChanged?.invoke() }
+            sessionMap[account.id] = session
+            session.setState(SessionState.OPENING, "브라우저 여는 중")
+            attach(session)
+
+            scope.launch {
+                try {
+                    session.driver.loadUrl(Session.LOGIN_URL)
+                    session.driver.waitForLoad()
+                    if (autoLogin) {
+                        autoLogin(session)
+                    } else {
+                        session.log("자동 로그인이 꺼져 있습니다. 직접 로그인하세요.")
+                    }
+                    checkViewport(session)
+                    if (session.state != SessionState.ERROR) {
+                        session.setState(SessionState.READY, "브라우저 열림")
+                    }
+                } catch (e: Throwable) {
+                    session.log("[!] 브라우저 열기 실패: ${e.message}")
+                    session.setState(SessionState.ERROR, "브라우저 열기 실패")
+                }
+            }
         }
-        if (sessions.isNotEmpty() && sessions.none { it.isolated }) {
-            LogBus.log(
-                "[!] 이 기기의 WebView는 계정별 쿠키 격리(멀티 프로필)를 지원하지 않습니다. " +
+        onSessionsChanged?.invoke()
+
+        if (sessionMap.isNotEmpty() && sessionMap.values.none { it.isolated } &&
+            sessionMap.size > 1 && isolate
+        ) {
+            LogBus.warn(
+                "[!] 이 기기의 WebView는 계정별 쿠키 격리를 지원하지 않습니다. " +
                     "여러 계정을 동시에 로그인하면 세션이 섞이므로 계정을 하나씩 사용하세요."
             )
         }
-        return sessions
+    }
+
+    /** 지정한 계정(또는 전체)의 브라우저를 닫는다. */
+    fun closeBrowsers(accountIds: Collection<String>? = null) {
+        val targets = accountIds?.toSet() ?: sessionMap.keys.toSet()
+        for (id in targets) {
+            sessionMap.remove(id)?.let { session ->
+                session.destroy()
+                LogBus.info("[$id] 브라우저를 닫았습니다.")
+            }
+        }
+        onSessionsChanged?.invoke()
     }
 
     fun destroy() {
-        sessions.forEach {
-            it.stopAutomation()
-            try {
-                it.webView.stopLoading()
-                it.webView.destroy()
-            } catch (e: Throwable) {
-                // 이미 정리된 경우 무시
-            }
-        }
-        sessions.clear()
+        sessionMap.values.toList().forEach { it.destroy() }
+        sessionMap.clear()
+        onSessionsChanged?.invoke()
     }
+
+    // ------------------------------------------------------------- 화면/로그인
 
     /** WebView 가 배치된 뒤 CSS 뷰포트가 1280px 이 되도록 스케일을 맞춘다. */
     fun applyDesktopScale(webView: WebView) {
@@ -57,16 +120,6 @@ class Controller(
         if (widthPx <= 0) return
         val scale = (widthPx.toFloat() / Session.VIEWPORT_WIDTH * 100f).toInt().coerceIn(1, 100)
         webView.setInitialScale(scale)
-    }
-
-    /** 로그인 페이지를 열고 자동 로그인한다. (파이썬 initialize_browser + auto_login) */
-    fun launch(session: Session) {
-        scope.launch {
-            session.driver.loadUrl(Session.LOGIN_URL)
-            session.driver.waitForLoad()
-            autoLogin(session)
-            checkViewport(session)
-        }
     }
 
     /** main.py 의 `auto_login` 이식. */
@@ -131,7 +184,7 @@ class Controller(
                 d.log("[O] 로그인 성공")
                 return
             }
-            kotlinx.coroutines.delay(300)
+            delay(300)
         }
         d.log("[!] 자동 로그인 실패(시간 초과). 수동으로 로그인해 주세요.")
     }
@@ -161,11 +214,12 @@ class Controller(
 
     /**
      * 파이썬 `make_starter(module_func, needs_dict)` 대응.
-     * 버튼 한 번으로 모든 계정에서 동시에 모드를 시작한다.
+     * 버튼 한 번으로 선택된 모든 계정에서 동시에 모드를 시작한다.
+     * '시작 지연시간'과 '계정별 실행 간격' 설정을 반영한다.
      */
-    fun startMode(modeFn: ModeFn, needsDict: Boolean = true) {
-        for (session in sessions) {
-            session.start(scope) { stop ->
+    fun startMode(label: String, modeFn: ModeFn, targets: List<Session>, needsDict: Boolean = true) {
+        launchStaggered(targets) { session ->
+            session.start(scope, label, onFinished = { finishSession(session) }) { stop ->
                 val dict = if (needsDict) {
                     val d = session.ensureAnswerDict()
                     if (d == null) {
@@ -182,30 +236,64 @@ class Controller(
     }
 
     /** 전체 자동화 / 한 세트 자동화처럼 단어장이 필요 없는 흐름. */
-    fun startFlow(flowFn: FlowFn) {
-        for (session in sessions) {
-            session.start(scope) { stop -> flowFn(session.driver, stop) }
+    fun startFlow(label: String, flowFn: FlowFn, targets: List<Session>) {
+        launchStaggered(targets) { session ->
+            session.start(scope, label, onFinished = { finishSession(session) }) { stop ->
+                flowFn(session.driver, stop)
+            }
         }
     }
 
-    fun startFullAutomation() = startFlow(AutoAll.runFullAutomation)
+    fun startFullAutomation(targets: List<Session>) =
+        startFlow("전체 자동화", AutoAll.runFullAutomation, targets)
 
-    fun startSingleSet() = startFlow(AutoAll.runSingleSet)
+    fun startSingleSet(targets: List<Session>) =
+        startFlow("한 세트 자동화", AutoAll.runSingleSet, targets)
+
+    /** 시작 지연 + 계정 간격을 적용해 순서대로 띄운다. */
+    private fun launchStaggered(targets: List<Session>, block: (Session) -> Unit) {
+        if (targets.isEmpty()) return
+        val startDelay = SettingsStore.startDelaySec(context) * 1000L
+        val gap = SettingsStore.accountGapSec(context) * 1000L
+
+        scope.launch {
+            if (startDelay > 0) {
+                LogBus.info("시작 지연시간 ${startDelay / 1000}초 대기…")
+                delay(startDelay)
+            }
+            targets.forEachIndexed { index, session ->
+                if (index > 0 && gap > 0) delay(gap)
+                block(session)
+            }
+        }
+    }
+
+    /** 자동화 종료 후 '브라우저 유지' 설정에 따라 정리한다. */
+    private fun finishSession(session: Session) {
+        if (!SettingsStore.keepBrowser(context)) {
+            closeBrowsers(listOf(session.account.id))
+        }
+    }
 
     /** 파이썬 `stop_automation` (Ctrl+E) 대응. */
     fun stopAll() {
-        LogBus.log("[중지] 모든 계정 자동화를 중지합니다...")
+        LogBus.info("[중지] 모든 계정 자동화를 중지합니다...")
         var anyRunning = false
-        for (session in sessions) {
+        for (session in sessionMap.values.toList()) {
             if (session.stopAutomation()) anyRunning = true
         }
-        if (!anyRunning) LogBus.log("    현재 실행 중인 자동화가 없습니다.")
+        if (!anyRunning) LogBus.dim("    현재 실행 중인 자동화가 없습니다.")
+        onSessionsChanged?.invoke()
     }
 
     /** 파이썬 `html_parse` (Ctrl+M) 대응. */
-    fun refreshAnswerDicts() {
-        LogBus.log("[단어장 가져오기] 모든 계정의 단어장을 가져옵니다...")
-        for (session in sessions) {
+    fun refreshAnswerDicts(targets: List<Session>) {
+        if (targets.isEmpty()) {
+            LogBus.warn("[단어장 가져오기] 브라우저가 열린 계정이 없습니다.")
+            return
+        }
+        LogBus.info("[단어장 가져오기] 선택한 계정의 단어장을 가져옵니다...")
+        for (session in targets) {
             scope.launch {
                 try {
                     val data = HtmlParser.getData(session.driver)

@@ -4,18 +4,24 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** 계정 하나. 파이썬 `.env` 의 CLASSCARD_ID / CLASSCARD_PW 한 쌍에 대응. */
-data class AccountInfo(val id: String, val pw: String)
+/**
+ * 계정 하나. 파이썬 `.env` 의 CLASSCARD_ID / CLASSCARD_PW 한 쌍에 대응한다.
+ * [enabled] 는 계정 리스트의 체크박스 상태(이 계정을 실행에 포함할지).
+ */
+data class AccountInfo(
+    val id: String,
+    val pw: String,
+    val enabled: Boolean = true,
+)
 
 /**
  * `.env` 파일을 대신하는 계정 저장소.
- * 파일 대신 SharedPreferences 를 쓰고, `.env` 텍스트 붙여넣기 임포트도 지원한다.
+ * 파일 대신 SharedPreferences 를 쓰고, `.env` 텍스트 붙여넣기 가져오기도 지원한다.
  */
 object AccountStore {
 
     private const val PREFS = "classcard_accounts"
     private const val KEY_ACCOUNTS = "accounts"
-    private const val KEY_PARALLEL = "parallel"
 
     fun load(context: Context): List<AccountInfo> {
         val raw = prefs(context).getString(KEY_ACCOUNTS, null) ?: return emptyList()
@@ -24,8 +30,8 @@ object AccountStore {
             (0 until arr.length()).mapNotNull { i ->
                 val o = arr.optJSONObject(i) ?: return@mapNotNull null
                 val id = o.optString("id", "").trim()
-                val pw = o.optString("pw", "")
-                if (id.isEmpty()) null else AccountInfo(id, pw)
+                if (id.isEmpty()) null
+                else AccountInfo(id, o.optString("pw", ""), o.optBoolean("enabled", true))
             }
         } catch (e: Throwable) {
             emptyList()
@@ -38,16 +44,14 @@ object AccountStore {
         val seen = HashSet<String>()
         for (a in accounts) {
             if (a.id.isBlank() || !seen.add(a.id)) continue
-            arr.put(JSONObject().put("id", a.id).put("pw", a.pw))
+            arr.put(
+                JSONObject()
+                    .put("id", a.id)
+                    .put("pw", a.pw)
+                    .put("enabled", a.enabled)
+            )
         }
         prefs(context).edit().putString(KEY_ACCOUNTS, arr.toString()).apply()
-    }
-
-    /** 여러 계정을 동시에(병렬로) 돌릴지 여부. 기본 true. */
-    fun isParallel(context: Context): Boolean = prefs(context).getBoolean(KEY_PARALLEL, true)
-
-    fun setParallel(context: Context, value: Boolean) {
-        prefs(context).edit().putBoolean(KEY_PARALLEL, value).apply()
     }
 
     /**
@@ -58,7 +62,7 @@ object AccountStore {
     fun parseEnv(text: String): List<AccountInfo> {
         val values = HashMap<String, String>()
         for (rawLine in text.lines()) {
-            val line = rawLine.trim()
+            val line = rawLine.trim().removePrefix("export ").trim()
             if (line.isEmpty() || line.startsWith("#")) continue
             val eq = line.indexOf('=')
             if (eq <= 0) continue
@@ -71,6 +75,12 @@ object AccountStore {
 
         val ids = (values["CLASSCARD_ID"] ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
         val pws = (values["CLASSCARD_PW"] ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
+        if (ids.size != pws.size && ids.isNotEmpty() && pws.isNotEmpty()) {
+            LogBus.warn(
+                "[!] .env CLASSCARD_ID(${ids.size}개)와 CLASSCARD_PW(${pws.size}개) 개수가 다릅니다. " +
+                    "맞는 개수(${minOf(ids.size, pws.size)}개)만 사용합니다."
+            )
+        }
         for (i in 0 until minOf(ids.size, pws.size)) pairs.add(AccountInfo(ids[i], pws[i]))
 
         var n = 2

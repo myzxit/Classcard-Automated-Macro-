@@ -1,39 +1,114 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">클래스카드 자동화</string>
+    <string name="app_initials">CC</string>
+    <string name="settings">설정</string>
+    <string name="icon_gear">⚙</string>
+    <string name="icon_calendar">🗓</string>
+    <string name="dot">●</string>
+    <string name="plus">+</string>
 
-    <!-- 컨트롤 패널 (파이썬 버전의 단축키와 1:1 대응) -->
-    <string name="btn_auto_all">전체 자동화</string>
-    <string name="btn_single_set">한 세트</string>
-    <string name="btn_stop">중지</string>
-    <string name="btn_fetch">단어장 가져오기</string>
-    <string name="btn_quit">종료</string>
-    <string name="btn_memorize">암기</string>
-    <string name="btn_recall">리콜</string>
-    <string name="btn_spell">스펠</string>
-    <string name="btn_memorize_sentence">문장 암기</string>
-    <string name="btn_recall_sentence">문장 리콜</string>
-    <string name="btn_test">단어 테스트</string>
-    <string name="btn_test_sentence">문장 테스트</string>
-    <string name="btn_matching">매칭</string>
-    <string name="btn_scramble">스크램블</string>
+    <!-- 탭 -->
+    <string name="tab_main">메인</string>
+    <string name="tab_log">LOG</string>
 
-    <string name="log_toggle">로그</string>
-    <string name="accounts_short">계정</string>
-    <string name="accounts_title">계정 설정</string>
+    <!-- 상태 -->
+    <string name="status_idle">대기 중</string>
+    <string name="status_running">자동화 실행 중 (%1$d)</string>
 
-    <string name="accounts_help">클래스카드 아이디와 비밀번호를 입력하세요. 여러 개를 넣으면 계정 수만큼 창이 열리고, 버튼 한 번이 모든 계정에 동시에 적용됩니다.</string>
-    <string name="account_add">+ 계정 추가</string>
-    <string name="parallel_label">여러 계정 동시 실행 (끄면 첫 번째 계정만 사용)</string>
-    <string name="env_import_title">.env 붙여넣기로 가져오기</string>
-    <string name="env_import_hint">CLASSCARD_ID=계정1,계정2\nCLASSCARD_PW=비번1,비번2</string>
-    <string name="env_import">붙여넣은 내용 가져오기</string>
-    <string name="save_and_restart">저장하고 다시 시작</string>
+    <!-- 계정 카드 -->
+    <string name="accounts_card_title">👥  계정 리스트</string>
     <string name="hint_id">아이디</string>
     <string name="hint_pw">비밀번호</string>
-    <string name="remove">삭제</string>
+    <string name="hint_search">검색…</string>
+    <string name="btn_import_env">⤓ .env 불러오기</string>
+    <string name="btn_save_accounts">⤒ 계정 저장</string>
+    <string name="btn_open_browser">🌐 브라우저 열기</string>
+    <string name="btn_close_browser">✕ 브라우저 닫기</string>
+    <string name="btn_select_all">☑ 전체 선택</string>
+    <string name="btn_delete_selected">🗑 선택 삭제</string>
+    <string name="account_summary">계정 %1$d · 실행 %2$d</string>
 
-    <string name="no_accounts">계정이 없습니다. [계정] 버튼에서 아이디/비밀번호를 등록하세요.</string>
+    <!-- 계정 상태 -->
+    <string name="acc_state_off">브라우저 꺼짐</string>
+    <string name="acc_state_opening">브라우저 여는 중</string>
+    <string name="acc_state_ready">브라우저 열림</string>
+    <string name="acc_state_running">%1$s 진행 중</string>
+    <string name="acc_state_error">오류</string>
+    <string name="chip_off">꺼짐</string>
+    <string name="chip_opening">여는 중</string>
+    <string name="chip_ready">준비됨</string>
+    <string name="chip_running">실행 중</string>
+    <string name="chip_error">오류</string>
+
+    <!-- 학습 모드 카드 -->
+    <string name="modes_card_title">🎯  학습 모드</string>
+    <string name="modes_card_hint">한 가지를 선택하세요</string>
+    <string name="modes_help_all">단어장 목록 페이지에서 맨 아래 set부터 순서대로 전 과정을 자동 수행합니다.</string>
+    <string name="modes_help_one_set">셋홈(set 상세) 페이지를 열어둔 상태에서 그 한 세트만 전 과정을 수행합니다.</string>
+    <string name="modes_help_single">해당 학습 화면에 들어간 상태에서 실행하세요. 단어장이 없으면 자동으로 가져옵니다.</string>
+    <string name="modes_help_fetch">현재 열린 학습 페이지에서 단어/뜻 데이터를 추출해 계정별로 저장합니다.</string>
+
+    <!-- 모드 이름 -->
+    <string name="mode_auto_all">⚡ 전체 자동화</string>
+    <string name="mode_one_set">◎ 한 세트 자동화</string>
+    <string name="mode_memorize">🗂 암기</string>
+    <string name="mode_recall">🔁 리콜</string>
+    <string name="mode_spell">⌨ 스펠</string>
+    <string name="mode_memorize_sentence">📖 문장 암기</string>
+    <string name="mode_recall_sentence">📝 문장 리콜</string>
+    <string name="mode_test">🃏 단어 테스트</string>
+    <string name="mode_test_sentence">📕 문장 테스트</string>
+    <string name="mode_matching">🎴 단어 매칭</string>
+    <string name="mode_scramble">✳ 문장 스크램블</string>
+    <string name="mode_fetch">⤵ 단어장 가져오기</string>
+
+    <!-- 고급 설정 -->
+    <string name="advanced_card_title">⚙  고급 설정</string>
+    <string name="set_auto_login">자동 로그인</string>
+    <string name="set_auto_login_sub">저장된 ID/PW로 브라우저 열 때 바로 로그인</string>
+    <string name="set_background">백그라운드 실행</string>
+    <string name="set_background_sub">화면을 꺼도 \'이탈\'로 잡히지 않게 계속 실행</string>
+    <string name="set_isolate">계정별 세션 분리</string>
+    <string name="set_isolate_sub">계정마다 쿠키를 나눠 동시 로그인 (PC의 창 분리에 해당)</string>
+    <string name="set_keep_browser">자동화 후 브라우저 유지</string>
+    <string name="set_keep_browser_sub">끄면 자동화가 끝날 때 브라우저를 닫음</string>
+    <string name="set_hotkey">전역 단축키 사용</string>
+    <string name="set_hotkey_sub">Ctrl+A / Ctrl+I / Ctrl+E … (안드로이드 미지원)</string>
+    <string name="set_start_delay">시작 지연시간 (초)</string>
+    <string name="set_start_delay_sub">시작 버튼을 누른 뒤 대기할 시간</string>
+    <string name="set_account_gap">계정별 실행 간격 (초)</string>
+    <string name="set_account_gap_sub">다계정 병렬 실행 시 간격</string>
+
+    <!-- 실행 버튼 -->
+    <string name="btn_run_start">▶  자동화 시작</string>
+    <string name="btn_run_stop">■  자동화 중지</string>
+
+    <!-- 로그 -->
+    <string name="log_save">💾 저장</string>
+    <string name="log_clear">🗑 지우기</string>
+
+    <!-- 브라우저 -->
+    <string name="browser_back">‹ 메인</string>
+    <string name="browser_title">%1$s 브라우저</string>
+
+    <!-- .env 가져오기 다이얼로그 -->
+    <string name="env_dialog_title">.env 붙여넣기로 가져오기</string>
+    <string name="env_dialog_hint">CLASSCARD_ID=계정1,계정2\nCLASSCARD_PW=비번1,비번2</string>
+    <string name="ok">확인</string>
+    <string name="cancel">취소</string>
+
+    <!-- 안내 / 오류 -->
+    <string name="msg_no_accounts">계정이 없습니다. 아이디/비밀번호를 입력하고 + 를 누르세요.</string>
+    <string name="msg_no_selected">선택된 계정이 없습니다.</string>
+    <string name="msg_saved">계정 %1$d개를 저장했습니다.</string>
+    <string name="msg_imported">.env에서 계정 %1$d개를 가져왔습니다.</string>
+    <string name="msg_import_failed">가져올 계정을 찾지 못했습니다.</string>
+    <string name="msg_open_first">브라우저를 먼저 엽니다. 로그인이 끝나면 다시 [자동화 시작]을 누르세요.</string>
+    <string name="msg_pick_mode">학습 모드를 먼저 선택하세요.</string>
+    <string name="msg_log_saved">로그를 저장했습니다: %1$s</string>
+
+    <!-- 서비스 -->
     <string name="service_channel">자동화 실행 중</string>
     <string name="service_running">클래스카드 자동화가 백그라운드에서 실행 중입니다.</string>
 </resources>

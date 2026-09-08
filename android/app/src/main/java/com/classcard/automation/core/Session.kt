@@ -19,6 +19,9 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
+/** 계정 리스트에 표시되는 상태. */
+enum class SessionState { OFF, OPENING, READY, RUNNING, ERROR }
+
 /**
  * 계정 1개 = WebView 1개. 파이썬 main.py 의 `Account` 클래스에 대응한다.
  * 계정마다 독립된 driver / answer_dict / 자동화 Job 을 가진다.
@@ -33,6 +36,16 @@ class Session(
 
     var answerDict: AnswerDict? = null
 
+    var state: SessionState = SessionState.OFF
+        private set
+
+    /** 화면에 보여줄 부가 설명 ("전체 자동화 진행 중" 등). */
+    var detail: String = ""
+        private set
+
+    /** 상태가 바뀔 때마다 호출된다 (계정 리스트 갱신용). */
+    var onStateChanged: (() -> Unit)? = null
+
     var job: Job? = null
         private set
 
@@ -45,25 +58,45 @@ class Session(
 
     fun log(message: String) = driver.log(message)
 
+    fun setState(newState: SessionState, newDetail: String = "") {
+        state = newState
+        detail = newDetail
+        onStateChanged?.invoke()
+    }
+
     /** 자동화 시작. 이미 실행 중이면 무시(원본 start_one 과 동일). */
     @Synchronized
-    fun start(scope: CoroutineScope, block: suspend (StopFlag) -> Unit): Boolean {
+    fun start(
+        scope: CoroutineScope,
+        label: String,
+        onFinished: (() -> Unit)? = null,
+        block: suspend (StopFlag) -> Unit,
+    ): Boolean {
         if (isRunning) {
             log("[X] 자동화가 이미 실행 중입니다.")
             return false
         }
         val flag = StopFlag()
         stop = flag
+        setState(SessionState.RUNNING, label)
         job = scope.launch {
+            var failed = false
             try {
                 block(flag)
             } catch (e: Throwable) {
-                if (!flag.isSet) log("자동화 오류: ${e.message}")
+                if (!flag.isSet) {
+                    failed = true
+                    log("자동화 오류: ${e.message}")
+                }
             } finally {
                 flag.set()
+                setState(
+                    if (failed) SessionState.ERROR else SessionState.READY,
+                    if (failed) "자동화 오류" else "",
+                )
+                onFinished?.invoke()
             }
         }
-        log("자동화 시작")
         return true
     }
 
@@ -73,6 +106,7 @@ class Session(
         stop?.set()
         job?.cancel()
         job = null
+        if (running) setState(SessionState.READY)
         return running
     }
 
@@ -86,6 +120,19 @@ class Session(
             log("단어장 자동 추출 실패: ${e.message}")
             null
         }
+    }
+
+    fun destroy() {
+        stopAutomation()
+        try {
+            webView.stopLoading()
+            // destroy() 전에 반드시 뷰 계층에서 떼어내야 한다.
+            (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+            webView.destroy()
+        } catch (e: Throwable) {
+            // 이미 정리된 경우 무시
+        }
+        setState(SessionState.OFF)
     }
 
     companion object {
@@ -111,21 +158,22 @@ class Session(
         fun createWebView(
             context: Context,
             account: AccountInfo,
-            profileIndex: Int,
             preloadScript: String,
+            isolate: Boolean,
         ): Session {
             val webView = WebView(context)
 
             // 계정별 쿠키/스토리지 격리 (파이썬의 '계정마다 크롬 창 1개'에 대응)
             var isolated = false
-            if (WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+            if (isolate && WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
                 try {
-                    val name = "cc_profile_$profileIndex"
+                    // 계정마다 고정된 이름이어야 다시 열어도 로그인이 유지된다.
+                    val name = "cc_profile_" + account.id.replace(Regex("[^A-Za-z0-9_]"), "_")
                     ProfileStore.getInstance().getOrCreateProfile(name)
                     WebViewCompat.setProfile(webView, name)
                     isolated = true
                 } catch (e: Throwable) {
-                    LogBus.log("[${account.id}] [!] 프로필 격리 실패: ${e.message}")
+                    LogBus.warn("[${account.id}] [!] 프로필 격리 실패: ${e.message}")
                 }
             }
 
@@ -137,8 +185,8 @@ class Session(
                 // 데스크톱 레이아웃 유지
                 useWideViewPort = true
                 loadWithOverviewMode = true
-                setSupportZoom(false)
-                builtInZoomControls = false
+                setSupportZoom(true)
+                builtInZoomControls = true
                 displayZoomControls = false
                 javaScriptCanOpenWindowsAutomatically = true
                 mediaPlaybackRequiresUserGesture = false
@@ -149,16 +197,17 @@ class Session(
                 try {
                     WebViewCompat.addDocumentStartJavaScript(webView, preloadScript, setOf("*"))
                 } catch (e: Throwable) {
-                    LogBus.log("[${account.id}] [!] 사전 주입 실패(무시하고 진행): ${e.message}")
+                    LogBus.warn("[${account.id}] [!] 사전 주입 실패(무시하고 진행): ${e.message}")
                 }
             } else {
-                LogBus.log(
+                LogBus.warn(
                     "[${account.id}] [!] 이 기기의 WebView는 문서 시작 주입을 지원하지 않습니다. " +
                         "문장 리콜 정답 캡처가 불안정할 수 있습니다(크롬/WebView 업데이트 권장)."
                 )
             }
 
             val driver = Driver(webView, "[${account.id}]") { LogBus.log(it) }
+            val session = Session(account, driver, webView, isolated)
 
             webView.webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -195,7 +244,7 @@ class Session(
                 }
             }
 
-            return Session(account, driver, webView, isolated)
+            return session
         }
     }
 }

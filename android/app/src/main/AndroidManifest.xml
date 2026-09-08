@@ -28,12 +28,6 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".AccountsActivity"
-            android:exported="false"
-            android:label="@string/accounts_title"
-            android:parentActivityName=".MainActivity" />
-
         <service
             android:name=".AutomationService"
             android:exported="false"

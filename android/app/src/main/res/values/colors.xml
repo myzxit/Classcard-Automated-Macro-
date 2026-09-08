@@ -1,8 +1,45 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="bg">#FFF7F7F9</color>
-    <color name="panel">#FFE9EAEE</color>
-    <color name="log_bg">#FF1E1E1E</color>
-    <color name="log_text">#FFD6D6D6</color>
+    <!-- 배경 / 표면 -->
+    <color name="bg">#FFF3F4F6</color>
+    <color name="surface">#FFFFFFFF</color>
+    <color name="surface_alt">#FFF9FAFB</color>
+    <color name="border">#FFE5E7EB</color>
+
+    <!-- 글자 -->
+    <color name="text_primary">#FF111827</color>
+    <color name="text_secondary">#FF6B7280</color>
+    <color name="text_tertiary">#FF9CA3AF</color>
+
+    <!-- 포인트 -->
+    <color name="primary">#FF2F6FED</color>
+    <color name="primary_dark">#FF1D4ED8</color>
+    <color name="primary_soft">#FFEFF6FF</color>
+    <color name="primary_border">#FF93C5FD</color>
+
+    <!-- 상태 칩 -->
+    <color name="chip_running_bg">#FFDCFCE7</color>
+    <color name="chip_running_fg">#FF15803D</color>
+    <color name="chip_ready_bg">#FFDBEAFE</color>
+    <color name="chip_ready_fg">#FF1D4ED8</color>
+    <color name="chip_error_bg">#FFFEE2E2</color>
+    <color name="chip_error_fg">#FFDC2626</color>
+    <color name="chip_off_bg">#FFF3F4F6</color>
+    <color name="chip_off_fg">#FF6B7280</color>
+
+    <!-- 위험(중지) -->
+    <color name="danger">#FFEF4444</color>
+    <color name="danger_soft">#FFFEF2F2</color>
+    <color name="danger_border">#FFFECACA</color>
+
+    <!-- 로그 콘솔 -->
+    <color name="log_bg">#FF0F1115</color>
+    <color name="log_text">#FFE5E7EB</color>
+    <color name="log_dim">#FF9CA3AF</color>
+    <color name="log_green">#FF4ADE80</color>
+    <color name="log_red">#FFF87171</color>
+    <color name="log_blue">#FF60A5FA</color>
+    <color name="log_yellow">#FFFBBF24</color>
+
     <color name="ic_launcher_background">#FF2F6FED</color>
 </resources>
