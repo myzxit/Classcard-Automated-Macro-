@@ -38,6 +38,9 @@ jobs:
       - name: Extension parity tests
         run: node extension/test/parity.test.mjs
 
+      - name: Extension unit tests
+        run: node --test 'extension/test/*.test.mjs'
+
       - name: Package extension
         run: |
           mkdir -p dist

@@ -31,6 +31,7 @@ import androidx.lifecycle.lifecycleScope
 import com.classcard.automation.core.Controller
 import com.classcard.automation.core.Session
 import com.classcard.automation.core.SessionState
+import com.classcard.automation.modules.Grammar
 import com.classcard.automation.modules.Matching
 import com.classcard.automation.modules.Memorize
 import com.classcard.automation.modules.MemorizeSentence
@@ -55,8 +56,14 @@ class MainActivity : AppCompatActivity() {
             Mode(id, labelRes, helpRes)
 
         /** 개별 학습 모드. */
-        class Single(id: String, labelRes: Int, val fn: ModeFn) :
-            Mode(id, labelRes, R.string.modes_help_single)
+        class Single(
+            id: String,
+            labelRes: Int,
+            val fn: ModeFn,
+            helpRes: Int = R.string.modes_help_single,
+            /** 단어장 없이도 돌아가는 모드인지 (문법훈련은 정답표 없이도 푼다). */
+            val needsDict: Boolean = true,
+        ) : Mode(id, labelRes, helpRes)
 
         /** 단어장 가져오기 (즉시 실행). */
         class Fetch(id: String, labelRes: Int) : Mode(id, labelRes, R.string.modes_help_fetch)
@@ -79,6 +86,10 @@ class MainActivity : AppCompatActivity() {
             Mode.Single("test_sentence", R.string.mode_test_sentence, TestSentence.run),
             Mode.Single("matching", R.string.mode_matching, Matching.run),
             Mode.Single("scramble", R.string.mode_scramble, Scramble.run),
+            Mode.Single(
+                "grammar", R.string.mode_grammar, Grammar.run,
+                R.string.modes_help_grammar, needsDict = false,
+            ),
             Mode.Fetch("fetch", R.string.mode_fetch),
         )
     }
@@ -721,7 +732,9 @@ class MainActivity : AppCompatActivity() {
         val sessions = selectedSessions()
         when (mode) {
             is Mode.Flow -> mode.start(controller, sessions)
-            is Mode.Single -> controller.startMode(getString(mode.labelRes), mode.fn, sessions)
+            is Mode.Single -> controller.startMode(
+                getString(mode.labelRes), mode.fn, sessions, mode.needsDict,
+            )
             is Mode.Fetch -> controller.refreshAnswerDicts(sessions)
         }
         renderStatus()

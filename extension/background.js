@@ -11,6 +11,7 @@ import { Driver, StopFlag } from './engine/driver.js';
 import * as Basic from './engine/modules/basic.js';
 import * as Sentence from './engine/modules/sentence.js';
 import * as Games from './engine/modules/games.js';
+import * as Grammar from './engine/modules/grammar.js';
 import * as AutoAll from './engine/modules/autoall.js';
 
 const LOGIN_URL = 'https://www.classcard.net/Login';
@@ -299,6 +300,8 @@ const MODES = {
   test_sentence: { label: '문장 테스트', fn: Games.testSentence },
   matching: { label: '단어 매칭', fn: Games.matching },
   scramble: { label: '문장 스크램블', fn: Games.scramble },
+  // 문법훈련은 단어장 없이도 (보기를 확인해 가며) 풀 수 있다.
+  grammar: { label: '문법', fn: Grammar.grammar, noDict: true },
 };
 
 /** 현재 페이지에서 단어장을 뽑아 세션에 저장 (Ctrl+M 대응). */
@@ -332,7 +335,9 @@ async function runModeOnSession(session, modeId) {
     } else {
       let dict = session.answerDict;
       if (!dict) dict = await fetchAnswerDict(session);
-      if (!dict) {
+      if (!dict && mode.noDict) {
+        await mode.fn(session.driver, null, stop);
+      } else if (!dict) {
         session.driver.log(
           '[!] 단어장이 없습니다. 학습 페이지로 이동 후 [단어장 가져오기]를 누르세요.',
           'error',

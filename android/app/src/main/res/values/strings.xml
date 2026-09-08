@@ -47,6 +47,7 @@
     <string name="modes_help_all">단어장 목록 페이지에서 맨 아래 set부터 순서대로 전 과정을 자동 수행합니다.</string>
     <string name="modes_help_one_set">셋홈(set 상세) 페이지를 열어둔 상태에서 그 한 세트만 전 과정을 수행합니다.</string>
     <string name="modes_help_single">해당 학습 화면에 들어간 상태에서 실행하세요. 단어장이 없으면 자동으로 가져옵니다.</string>
+    <string name="modes_help_grammar">문법훈련 문제 화면에서 실행하세요. 정답표가 없으면 보기를 하나씩 확인하며 풉니다.</string>
     <string name="modes_help_fetch">현재 열린 학습 페이지에서 단어/뜻 데이터를 추출해 계정별로 저장합니다.</string>
 
     <!-- 모드 이름 -->
@@ -61,6 +62,7 @@
     <string name="mode_test_sentence">📕 문장 테스트</string>
     <string name="mode_matching">🎴 단어 매칭</string>
     <string name="mode_scramble">✳ 문장 스크램블</string>
+    <string name="mode_grammar">📐 문법</string>
     <string name="mode_fetch">⤵ 단어장 가져오기</string>
 
     <!-- 고급 설정 -->
