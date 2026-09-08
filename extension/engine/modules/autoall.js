@@ -30,9 +30,9 @@ const FULL_CARDS_LABEL = '전체 카드 학습';
 export const PASS = {
   test: 90,          // TEST_PASS_SCORE
   sentenceTest: 90,  // SENTENCE_TEST_PASS_SCORE
-  // 목표 점수와 같게 두어야 전체 자동화가 목표 미달 set 을 '이미 완료'로 넘기지 않는다.
-  match: 8500,       // 단어 매칭 완료 기준
-  scramble: 8500,    // 문장 스크램블 완료 기준
+  // 목표 점수(8500)보다 낮게 두어, 7000 이상 받아 둔 set 은 다시 돌리지 않는다.
+  match: 7000,       // 단어 매칭 완료 기준
+  scramble: 7000,    // 문장 스크램블 완료 기준
 };
 
 export function isSentenceSet(setName) {

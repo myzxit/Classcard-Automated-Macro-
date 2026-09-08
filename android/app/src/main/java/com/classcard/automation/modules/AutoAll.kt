@@ -26,13 +26,13 @@ object AutoAll {
 
     /**
      * 매칭(단어): 최고기록이 이 점수 이상이면 완료로 간주.
-     * 목표 점수(Matching.EXIT_SCORE)와 같게 두어야 전체 자동화가 목표에 못 미친 set 을
-     * '이미 완료'로 넘겨 버리지 않는다.
+     * 목표 점수(Matching.EXIT_SCORE = 8500)보다 낮게 두어, 7000 이상 받아 둔 set 은
+     * 다시 돌리지 않는다.
      */
-    var MATCH_PASS_SCORE = 8500
+    var MATCH_PASS_SCORE = 7000
 
-    /** 스크램블(문장): 최고기록이 이 점수 이상이면 완료로 간주 (목표 점수와 같게). */
-    var SCRAMBLE_PASS_SCORE = 8500
+    /** 스크램블(문장): 최고기록이 이 점수 이상이면 완료로 간주 (목표는 8500). */
+    var SCRAMBLE_PASS_SCORE = 7000
 
     private const val TEST_NEXT_BTN_SELECTOR = ".btn-condition-next"    // '다음' 버튼
     private const val TEST_START_BTN_SELECTOR = ".btn-quiz-start"       // '테스트 시작' 버튼
