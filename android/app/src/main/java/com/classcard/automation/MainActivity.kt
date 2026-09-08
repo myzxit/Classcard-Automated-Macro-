@@ -588,13 +588,50 @@ class MainActivity : AppCompatActivity() {
             advancedList.addView(row)
         }
 
-        addToggle(
-            R.string.set_dark_mode, R.string.set_dark_mode_sub,
+        // 화면 테마: 다크 / 화이트 두 가지 중 하나를 고른다.
+        fun addChoice(
+            titleRes: Int,
+            subRes: Int,
+            labelARes: Int,
+            labelBRes: Int,
+            selectedIsA: Boolean,
+            onSelect: (Boolean) -> Unit,
+        ) {
+            val row = inflater.inflate(R.layout.item_setting_choice, advancedList, false)
+            row.findViewById<TextView>(R.id.settingTitle).setText(titleRes)
+            row.findViewById<TextView>(R.id.settingSub).setText(subRes)
+            val a = row.findViewById<TextView>(R.id.choiceA)
+            val b = row.findViewById<TextView>(R.id.choiceB)
+            a.setText(labelARes)
+            b.setText(labelBRes)
+
+            fun paint(isA: Boolean) {
+                for ((button, on) in listOf(a to isA, b to !isA)) {
+                    button.isSelected = on
+                    button.setTextColor(color(if (on) R.color.primary_dark else R.color.text_primary))
+                    button.setTypeface(
+                        null,
+                        if (on) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL,
+                    )
+                }
+            }
+            paint(selectedIsA)
+
+            a.setOnClickListener { paint(true); onSelect(true) }
+            b.setOnClickListener { paint(false); onSelect(false) }
+            advancedList.addView(row)
+        }
+
+        addChoice(
+            R.string.set_theme, R.string.set_theme_sub,
+            R.string.theme_dark, R.string.theme_light,
             SettingsStore.darkMode(this),
-        ) { value ->
-            SettingsStore.setDarkMode(this, value)
-            // 테마를 바꾸면 액티비티가 다시 만들어지며 새 색이 적용된다.
-            applyNightMode(value)
+        ) { dark ->
+            if (dark != SettingsStore.darkMode(this)) {
+                SettingsStore.setDarkMode(this, dark)
+                // 테마를 바꾸면 액티비티가 다시 만들어지며 새 색이 적용된다.
+                applyNightMode(dark)
+            }
         }
 
         addToggle(

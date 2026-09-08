@@ -19,7 +19,10 @@ const MODES = [
 ];
 
 const SETTINGS = [
-  { key: 'darkMode', title: '다크 모드', sub: '어두운 화면으로 표시 (끄면 밝은 화면)', type: 'toggle' },
+  {
+    key: 'darkMode', title: '화면 테마', sub: '다크 / 화이트 중에서 고르세요',
+    type: 'choice', labelOn: '🌙 다크', labelOff: '☀ 화이트',
+  },
   { key: 'autoLogin', title: '자동 로그인', sub: '저장된 ID/PW로 탭을 열 때 바로 로그인', type: 'toggle' },
   { key: 'keepTab', title: '자동화 후 탭 유지', sub: '끄면 자동화가 끝날 때 탭을 닫음', type: 'toggle' },
   { key: 'sequential', title: '다계정 순차 실행', sub: '크롬은 쿠키를 공유하므로 계정을 하나씩 실행 (끌 수 없음)', type: 'toggle', disabled: true, fixed: true },
@@ -328,7 +331,35 @@ function buildSettings() {
     grow.append(title, sub);
     row.appendChild(grow);
 
-    if (spec.type === 'toggle') {
+    if (spec.type === 'choice') {
+      // 두 가지 중 하나를 고르는 세그먼트 버튼 (예: 다크 / 화이트)
+      const seg = document.createElement('div');
+      seg.className = 'seg';
+      const btnOn = document.createElement('button');
+      const btnOff = document.createElement('button');
+      btnOn.className = btnOff.className = 'seg-btn';
+      btnOn.textContent = spec.labelOn;
+      btnOff.textContent = spec.labelOff;
+
+      const paint = (on) => {
+        btnOn.classList.toggle('active', on);
+        btnOff.classList.toggle('active', !on);
+      };
+      paint(state.settings[spec.key] !== false);
+
+      const pick = (on) => () => {
+        if ((state.settings[spec.key] !== false) === on) return;
+        state.settings[spec.key] = on;
+        send({ type: 'setSettings', patch: { [spec.key]: on } });
+        paint(on);
+        if (spec.key === 'darkMode') applyTheme(on);
+      };
+      btnOn.addEventListener('click', pick(true));
+      btnOff.addEventListener('click', pick(false));
+
+      seg.append(btnOn, btnOff);
+      row.appendChild(seg);
+    } else if (spec.type === 'toggle') {
       const label = document.createElement('label');
       label.className = 'switch';
       const input = document.createElement('input');

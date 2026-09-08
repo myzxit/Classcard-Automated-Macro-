@@ -10,10 +10,12 @@ import { ratio } from '../similarity.js';
 export const CONFIG = {
   testTargetScore: 90,           // Test.py TARGET_SCORE
   testSentenceTargetScore: 100,  // TestSentence.py TARGET_SCORE
-  matchExitMin: 3000,            // Matching.py EXIT_SCORE_MIN
-  matchExitMax: 5000,            // Matching.py EXIT_SCORE_MAX
-  scrambleExitMin: 4000,         // Scramble.py EXIT_SCORE_MIN
-  scrambleExitMax: 5000,         // Scramble.py EXIT_SCORE_MAX
+  // 목표 점수에 도달하면 게임 도중에 빠져나간다(점수는 서버에 저장됨).
+  // 위아래를 같게 두어 실행마다 목표가 흔들리지 않게 한다.
+  matchExitMin: 8500,            // 단어 매칭 목표 점수
+  matchExitMax: 8500,
+  scrambleExitMin: 8500,         // 문장 스크램블 목표 점수
+  scrambleExitMax: 8500,
 };
 
 const GO_RESULT_SELECTOR = 'a.btn-go-result';

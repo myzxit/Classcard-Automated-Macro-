@@ -14,11 +14,11 @@ object Scramble {
     var DEBUG = false
 
     /**
-     * 필수 학습(4000점)을 채우되 끝까지 가지 않도록, 이 범위 안에서 목표 점수를 정해
-     * 도달하면 게임 도중에 빠져나간다 (점수는 저장됨).
+     * 이 점수에 도달하면 게임 도중에 빠져나간다 (점수는 서버에 저장됨).
+     * 범위로 두면 실행마다 목표가 달라지므로, 지정된 목표 점수를 쓰도록 위아래를 같게 둔다.
      */
-    var EXIT_SCORE_MIN = 4000
-    var EXIT_SCORE_MAX = 5000
+    var EXIT_SCORE_MIN = 8500
+    var EXIT_SCORE_MAX = 8500
 
     private const val PROMPT_SELECTOR = ".quest-back"                      // 한국어 문제 문장
     private const val PLACED_SELECTOR = ".user-input-body .user-box"       // 배치한 단어 (? = 빈칸)
