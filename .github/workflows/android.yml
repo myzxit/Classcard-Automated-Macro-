@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -34,12 +37,47 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug
 
+      - name: Rename APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/debug/app-debug.apk \
+             dist/classcard-automation.apk
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: classcard-automation-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: dist/classcard-automation.apk
           if-no-files-found: error
+
+      # 폰에서 바로 받을 수 있도록 고정 링크의 Release 로도 올린다.
+      # (Actions 아티팩트는 zip 이고 로그인이 필요해서 휴대폰에서 받기 불편하다)
+      # 링크: .../releases/download/apk-latest/classcard-automation.apk
+      - name: Publish APK to rolling release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="apk-latest"
+          NOTES="브랜치 \`${GITHUB_REF_NAME}\` / 커밋 \`${GITHUB_SHA:0:7}\` 에서 자동 빌드된 APK입니다.
+
+          아래 **classcard-automation.apk** 를 휴대폰 브라우저로 눌러 받으면 바로 설치할 수 있습니다.
+          (설치 시 '출처를 알 수 없는 앱' 허용이 필요합니다.)"
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes "$NOTES" --prerelease
+          else
+            gh release create "$TAG" \
+              --title "클래스카드 자동화 APK (최신 빌드)" \
+              --notes "$NOTES" \
+              --prerelease
+          fi
+          gh release upload "$TAG" dist/classcard-automation.apk --clobber
+
+          echo "### 📱 APK 다운로드" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/classcard-automation.apk" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload test report
         if: always()

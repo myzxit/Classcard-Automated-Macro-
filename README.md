@@ -59,14 +59,23 @@
 
 ## 설치
 
-### 1) 이미 만들어진 APK 받기 (권장)
+### 1) 휴대폰에서 바로 받기 (권장)
 
-이 저장소에 코드가 올라갈 때마다 GitHub Actions가 APK를 만들어 둡니다.
+코드가 올라갈 때마다 GitHub Actions가 APK를 만들어 **항상 같은 주소**에 올려 둡니다.
+휴대폰 브라우저(크롬 등)에서 아래 주소를 열면 그대로 다운로드됩니다.
 
-1. 저장소 상단의 **Actions** 탭 → 최신 **Android** 실행을 선택
-2. 아래 **Artifacts** 에서 `classcard-automation-debug-apk` 다운로드
-3. 압축을 풀고 `app-debug.apk` 를 폰으로 옮겨 설치
-   (설치 시 "출처를 알 수 없는 앱" 허용이 필요합니다)
+**https://github.com/myzxit/Classcard-Automated-Macro-/releases/download/apk-latest/classcard-automation.apk**
+
+설치 순서:
+
+1. 위 링크를 눌러 `classcard-automation.apk` 다운로드
+2. 다운로드 알림(또는 **파일** 앱 → **다운로드**)에서 APK를 누름
+3. "출처를 알 수 없는 앱" 경고가 뜨면 → **설정** → 해당 브라우저에 **이 소스 허용** 켜기 → 뒤로 → **설치**
+4. "기기가 손상될 수 있다"는 Play 프로텍트 경고는 **무시하고 설치** 를 누르면 됩니다
+   (개인 서명 APK라 항상 뜨는 경고입니다)
+
+> 저장소가 비공개라면 링크를 열 때 GitHub 로그인이 필요합니다.
+> 최신 빌드 목록은 [Releases](https://github.com/myzxit/Classcard-Automated-Macro-/releases) 에서 볼 수 있습니다.
 
 ### 2) 직접 빌드하기
 
