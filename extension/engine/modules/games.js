@@ -10,11 +10,10 @@ import { ratio } from '../similarity.js';
 export const CONFIG = {
   testTargetScore: 90,           // Test.py TARGET_SCORE
   testSentenceTargetScore: 100,  // TestSentence.py TARGET_SCORE
-  // 목표 점수에 도달하면 게임 도중에 빠져나간다(점수는 서버에 저장됨).
-  // 위아래를 같게 두어 실행마다 목표가 흔들리지 않게 한다.
-  matchExitMin: 8500,            // 단어 매칭 목표 점수
+  // 이 범위에서 목표 점수를 뽑아, 도달하면 게임 도중에 빠져나간다(점수는 서버에 저장됨).
+  matchExitMin: 7000,            // 단어 매칭 목표 점수 (7000~8500)
   matchExitMax: 8500,
-  scrambleExitMin: 8500,         // 문장 스크램블 목표 점수
+  scrambleExitMin: 7000,         // 문장 스크램블 목표 점수 (7000~8500)
   scrambleExitMax: 8500,
 };
 

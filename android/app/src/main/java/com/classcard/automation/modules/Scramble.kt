@@ -14,10 +14,10 @@ object Scramble {
     var DEBUG = false
 
     /**
-     * 이 점수에 도달하면 게임 도중에 빠져나간다 (점수는 서버에 저장됨).
-     * 범위로 두면 실행마다 목표가 달라지므로, 지정된 목표 점수를 쓰도록 위아래를 같게 둔다.
+     * 이 범위에서 목표 점수를 뽑아, 도달하면 게임 도중에 빠져나간다 (점수는 서버에 저장됨).
+     * 실행마다 목표가 조금씩 달라져 사람처럼 보인다.
      */
-    var EXIT_SCORE_MIN = 8500
+    var EXIT_SCORE_MIN = 7000
     var EXIT_SCORE_MAX = 8500
 
     private const val PROMPT_SELECTOR = ".quest-back"                      // 한국어 문제 문장
