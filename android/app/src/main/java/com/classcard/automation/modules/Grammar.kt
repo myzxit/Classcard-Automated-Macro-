@@ -104,6 +104,8 @@ object Grammar {
         val answer: String = "",
         val choices: List<Choice> = emptyList(),
         val hasInput: Boolean = false,
+        val blanks: Int = 0,        // 빈칸 수 (배열형은 여러 개)
+        val hint: String = "",      // 화면에 주어진 힌트 단어들
         val selectedIdx: Int = -1,
         val filled: Boolean = false,
         val opening: Boolean = false,
@@ -263,7 +265,7 @@ object Grammar {
             var groups = [
                 ['object', '.gclass-q-input .object-body .object'],
                 ['option', '.inline-box .option-box:not(.hidden) .option-item'],
-                ['scramble', '.scramble-body .scramble-word'],
+                ['scramble', '.test-sentence-words .btn-sentence-word, .scramble-body .scramble-word'],
                 ['group', '.grouping-body .grouping-item'],
                 ['match', '.match-content .match-body .match-item']
             ];
@@ -274,13 +276,27 @@ object Grammar {
                 if (keep.length >= 2) { type = groups[g][0]; found = keep; break; }
             }
 
-            // 입력형(서술형·딕테이션)
-            var input = null;
+            // 입력형(서술형·딕테이션). 배열형은 빈칸이 여러 개라 전부 읽는다.
+            var inputs = [];
             if (!found.length) {
                 var ins = it.querySelectorAll(
                     '.gclass-q-input input[type="text"], .inline-input-body input, .dictation-input, textarea');
-                for (var j = 0; j < ins.length; j++) if (vis(ins[j]) && !ins[j].disabled) { input = ins[j]; break; }
-                if (input) { type = 'input'; input.setAttribute('data-cc-input', '1'); }
+                for (var j = 0; j < ins.length; j++) {
+                    if (!vis(ins[j]) || ins[j].disabled) continue;
+                    ins[j].setAttribute('data-cc-input', String(inputs.length));
+                    inputs.push({ i: inputs.length, filled: !!(ins[j].value || '').trim() });
+                }
+                if (inputs.length) type = 'input';
+            }
+
+            // 힌트: 쓸 단어들이 화면에 주어지는 유형이 있다 (.q-mean-body '힌트 the, tallest, …')
+            var hint = '';
+            var hb = it.querySelector('.q-mean-body');
+            if (hb) {
+                var hc = hb.cloneNode(true);
+                var lb = hc.querySelectorAll('.label');
+                for (var j = 0; j < lb.length; j++) lb[j].parentNode.removeChild(lb[j]);
+                hint = (hc.textContent || '').replace(/\s+/g, ' ').trim();
             }
 
             // ---- 분류형: 줄마다 라디오 보기가 따로 있다
@@ -356,12 +372,13 @@ object Grammar {
                 }
             }
 
-            // 입력형에 이미 답을 써 넣었는지
-            var filled = !!(input && (input.value || '').trim());
+            // 빈칸을 전부 채웠는지
+            var filled = inputs.length > 0;
+            for (var j = 0; j < inputs.length; j++) if (!inputs[j].filled) filled = false;
 
             if (done && !choices.length && !input && !rows.length && !left.length && !tiles.length) continue;
 
-            var sig = question + '#' + selectedIdx + (filled ? '+' : '');
+            var sig = question + '#' + selectedIdx + (filled ? '+' : '') + '@' + inputs.length;
             for (var j = 0; j < choices.length; j++) sig += '|' + choices[j].text;
             for (var j = 0; j < rows.length; j++) sig += '|r' + rows[j].text;
             for (var j = 0; j < left.length; j++) sig += '|l' + left[j].text + (left[j].done ? '*' : '');
@@ -375,7 +392,7 @@ object Grammar {
                 kind: 'quiz', type: type, qid: qid, sig: sig,
                 question: question, answer: answer,
                 choices: choices, selectedIdx: selectedIdx, filled: filled,
-                hasInput: !!input, opening: opening,
+                hasInput: inputs.length > 0, inputs: inputs, hint: hint, opening: opening,
                 rows: rows, left: left, right: right, tiles: tiles,
                 feedback: cls.indexOf(' correct ') >= 0 ? 'correct'
                         : (cls.indexOf(' wrong ') >= 0 ? 'wrong' : 'none'),
@@ -570,6 +587,8 @@ object Grammar {
             answer = data.optString("answer", "").trim(),
             choices = choices,
             hasInput = data.optBoolean("hasInput", false),
+            blanks = data.optJSONArray("inputs")?.length() ?: 0,
+            hint = data.optString("hint", "").trim(),
             selectedIdx = data.optInt("selectedIdx", -1),
             filled = data.optBoolean("filled", false),
             opening = data.optBoolean("opening", false),
@@ -719,6 +738,32 @@ object Grammar {
         return ClassAction.None
     }
 
+    /**
+     * 빈칸(여러 개일 수 있음)에 넣을 값 목록.
+     *
+     * 정답을 알면 정답 문장을 빈칸 수에 맞춰 나눠 넣고,
+     * 모르면 화면에 주어진 힌트 단어("the, tallest, student, …")를 순서대로 넣는다.
+     * 둘 다 없으면 빈 목록(=풀 수 없음).
+     */
+    fun fillValues(count: Int, answer: String?, hint: String): List<String> {
+        if (count <= 0) return emptyList()
+        if (!answer.isNullOrEmpty()) {
+            val words = Norm.splitTargetWords(answer).filter { it.isNotBlank() }
+            if (count == 1) return listOf(answer)
+            if (words.size == count) return words
+            if (words.size > count) {
+                // 빈칸보다 단어가 많으면 마지막 칸에 남은 단어를 몰아 넣는다
+                return words.take(count - 1) + words.drop(count - 1).joinToString(" ")
+            }
+        }
+        if (hint.isNotEmpty()) {
+            val words = hint.split(Regex("[,،]|\\s{2,}")).map { it.trim() }.filter { it.isNotEmpty() }
+            if (words.size >= count) return words.take(count)
+            if (words.isNotEmpty()) return words + List(count - words.size) { "" }
+        }
+        return emptyList()
+    }
+
     /** 페이지 전역 study_data 를 단어장 형태로 읽는다(있을 때만). */
     private suspend fun pageDict(d: Driver): AnswerDict? {
         val cards = d.evalArrayOrNull(
@@ -752,10 +797,10 @@ object Grammar {
         )
     }
 
-    /** 입력형 문제에 정답을 써 넣는다 (값 설정 + input/change 이벤트). */
-    private suspend fun fillInput(d: Driver, value: String): Boolean = d.evalBool(
+    /** 입력형 문제의 index 번째 빈칸에 값을 써 넣는다 (값 설정 + input/change 이벤트). */
+    private suspend fun fillInput(d: Driver, index: Int, value: String): Boolean = d.evalBool(
         """
-        var el = document.querySelector('[data-cc-input="1"]');
+        var el = document.querySelector('[data-cc-input="${index}"]');
         if (!el) return false;
         var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
         var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
@@ -958,20 +1003,28 @@ object Grammar {
                 // ------------------------------------------ 입력형
                 if (state.choices.isEmpty() && state.hasInput) {
                     if (state.filled) {
-                        clickNext(d)          // 이미 써 넣었다 -> 채점하기
+                        clickNext(d)          // 이미 다 써 넣었다 -> 채점하기
                         if (stop.await(700)) break
                         continue
                     }
-                    if (answer.isEmpty()) {
-                        d.log("[문법] 정답을 알 수 없는 입력형 문제 — 건너뜁니다.")
+                    val values = fillValues(state.blanks, answer.ifEmpty { null }, state.hint)
+                    if (values.isEmpty()) {
+                        d.log("[문법] 답을 알 수 없는 입력형 문제(빈칸 ${state.blanks}칸) — 비운 채 넘어갑니다.")
                         clickNext(d)
                         if (stop.await(600)) break
                         continue
                     }
-                    fillInput(d, answer)
-                    if (stop.await(300)) break
+                    if (DEBUG) {
+                        d.log("[문법] (입력) 빈칸 ${values.size}칸 -> ${values.joinToString(" / ").take(60)}")
+                    }
+                    var stopped = false
+                    for ((i, v) in values.withIndex()) {
+                        fillInput(d, i, v)
+                        if (stop.await(120)) { stopped = true; break }
+                    }
+                    if (stopped) break
                     clickNext(d)
-                    if (stop.await(700)) break
+                    if (stop.await(800)) break
                     continue
                 }
 

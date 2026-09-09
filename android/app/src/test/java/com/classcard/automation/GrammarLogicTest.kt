@@ -256,4 +256,43 @@ class GrammarLogicTest {
         val rows = listOf(row(0, "a", listOf("x", "y"), done = true))
         assertNull(Grammar.nextGroupPick(rows, null, emptyMap()))
     }
+
+    // ================================================ 빈칸 채우기
+
+    @JUnitTest
+    fun fillSingleBlankWithWholeAnswer() {
+        assertEquals(
+            listOf("It was the man that stole my bag."),
+            Grammar.fillValues(1, "It was the man that stole my bag.", ""),
+        )
+    }
+
+    @JUnitTest
+    fun fillSplitsAnswerAcrossBlanks() {
+        assertEquals(listOf("It", "is", "Paul"), Grammar.fillValues(3, "It is Paul", ""))
+    }
+
+    @JUnitTest
+    fun fillPutsExtraWordsInLastBlank() {
+        assertEquals(listOf("It", "is Paul who"), Grammar.fillValues(2, "It is Paul who", ""))
+    }
+
+    @JUnitTest
+    fun fillUsesHintWordsWhenAnswerUnknown() {
+        assertEquals(
+            listOf("the", "tallest", "student"),
+            Grammar.fillValues(3, null, "the, tallest, student, is, who, Paul"),
+        )
+    }
+
+    @JUnitTest
+    fun fillLeavesRestEmptyWhenHintTooShort() {
+        assertEquals(listOf("a", "b", ""), Grammar.fillValues(3, null, "a, b"))
+    }
+
+    @JUnitTest
+    fun fillReturnsEmptyWithoutAnswerOrHint() {
+        assertEquals(emptyList<String>(), Grammar.fillValues(2, null, ""))
+        assertEquals(emptyList<String>(), Grammar.fillValues(0, "x", "y"))
+    }
 }

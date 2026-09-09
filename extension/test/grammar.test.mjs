@@ -15,7 +15,7 @@ import * as N from '../engine/norm.js';
 import { buildLookups } from '../engine/modules/games.js';
 import {
   pickChoice, lookupAnswer, nextClassAction,
-  nextScrambleIndex, nextPairAttempt, nextGroupPick,
+  nextScrambleIndex, nextPairAttempt, nextGroupPick, fillValues,
 } from '../engine/modules/grammar.js';
 
 const choices = (...texts) =>
@@ -211,4 +211,33 @@ test('정답 문장에 줄 이름과 보기가 있으면 그것을 고른다', (
 
 test('풀 줄이 없으면 null', () => {
   assert.equal(nextGroupPick([row(0, 'a', ['x', 'y'], true)], null, new Map()), null);
+});
+
+// ---------------------------------------------------------------- 빈칸 채우기
+
+test('빈칸이 하나면 정답을 통째로 넣는다', () => {
+  assert.deepEqual(fillValues(1, 'It was the man that stole my bag.', ''),
+    ['It was the man that stole my bag.']);
+});
+
+test('빈칸 수와 정답 단어 수가 같으면 하나씩 나눠 넣는다', () => {
+  assert.deepEqual(fillValues(3, 'It is Paul', ''), ['It', 'is', 'Paul']);
+});
+
+test('정답 단어가 더 많으면 마지막 칸에 몰아 넣는다', () => {
+  assert.deepEqual(fillValues(2, 'It is Paul who', ''), ['It', 'is Paul who']);
+});
+
+test('정답을 모르면 화면의 힌트 단어를 순서대로 넣는다', () => {
+  assert.deepEqual(fillValues(3, null, 'the, tallest, student, is, who, Paul'),
+    ['the', 'tallest', 'student']);
+});
+
+test('힌트가 빈칸보다 적으면 남는 칸은 비운다', () => {
+  assert.deepEqual(fillValues(3, null, 'a, b'), ['a', 'b', '']);
+});
+
+test('정답도 힌트도 없으면 빈 목록', () => {
+  assert.deepEqual(fillValues(2, null, ''), []);
+  assert.deepEqual(fillValues(0, 'x', 'y'), []);
 });

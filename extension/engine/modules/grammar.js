@@ -194,7 +194,7 @@ for (var i = 0; i < items.length; i++) {
     var groups = [
         ['object', '.gclass-q-input .object-body .object'],
         ['option', '.inline-box .option-box:not(.hidden) .option-item'],
-        ['scramble', '.scramble-body .scramble-word'],
+        ['scramble', '.test-sentence-words .btn-sentence-word, .scramble-body .scramble-word'],
         ['group', '.grouping-body .grouping-item'],
         ['match', '.match-content .match-body .match-item']
     ];
@@ -205,13 +205,27 @@ for (var i = 0; i < items.length; i++) {
         if (keep.length >= 2) { type = groups[g][0]; found = keep; break; }
     }
 
-    // 입력형(서술형·딕테이션)
-    var input = null;
+    // 입력형(서술형·딕테이션). 배열형은 빈칸이 여러 개라 전부 읽는다.
+    var inputs = [];
     if (!found.length) {
         var ins = it.querySelectorAll(
             '.gclass-q-input input[type="text"], .inline-input-body input, .dictation-input, textarea');
-        for (var j = 0; j < ins.length; j++) if (vis(ins[j]) && !ins[j].disabled) { input = ins[j]; break; }
-        if (input) { type = 'input'; input.setAttribute('data-cc-input', '1'); }
+        for (var j = 0; j < ins.length; j++) {
+            if (!vis(ins[j]) || ins[j].disabled) continue;
+            ins[j].setAttribute('data-cc-input', String(inputs.length));
+            inputs.push({ i: inputs.length, filled: !!(ins[j].value || '').trim() });
+        }
+        if (inputs.length) type = 'input';
+    }
+
+    // 힌트: 쓸 단어들이 화면에 주어지는 유형이 있다 (.q-mean-body '힌트 the, tallest, …')
+    var hint = '';
+    var hb = it.querySelector('.q-mean-body');
+    if (hb) {
+        var hc = hb.cloneNode(true);
+        var lb = hc.querySelectorAll('.label');
+        for (var j = 0; j < lb.length; j++) lb[j].parentNode.removeChild(lb[j]);
+        hint = (hc.textContent || '').replace(/\\s+/g, ' ').trim();
     }
 
     // ---- 분류형: 줄마다 라디오 보기가 따로 있다
@@ -287,12 +301,13 @@ for (var i = 0; i < items.length; i++) {
         }
     }
 
-    // 입력형에 이미 답을 써 넣었는지
-    var filled = !!(input && (input.value || '').trim());
+    // 빈칸을 전부 채웠는지
+    var filled = inputs.length > 0;
+    for (var j = 0; j < inputs.length; j++) if (!inputs[j].filled) filled = false;
 
     if (done && !choices.length && !input && !rows.length && !left.length && !tiles.length) continue;
 
-    var sig = question + '#' + selectedIdx + (filled ? '+' : '');
+    var sig = question + '#' + selectedIdx + (filled ? '+' : '') + '@' + inputs.length;
     for (var j = 0; j < choices.length; j++) sig += '|' + choices[j].text;
     for (var j = 0; j < rows.length; j++) sig += '|r' + rows[j].text;
     for (var j = 0; j < left.length; j++) sig += '|l' + left[j].text + (left[j].done ? '*' : '');
@@ -306,7 +321,7 @@ for (var i = 0; i < items.length; i++) {
         kind: 'quiz', type: type, qid: qid, sig: sig,
         question: question, answer: answer,
         choices: choices, selectedIdx: selectedIdx, filled: filled,
-        hasInput: !!input, opening: opening,
+        hasInput: inputs.length > 0, inputs: inputs, hint: hint, opening: opening,
         rows: rows, left: left, right: right, tiles: tiles,
         feedback: cls.indexOf(' correct ') >= 0 ? 'correct'
                 : (cls.indexOf(' wrong ') >= 0 ? 'wrong' : 'none'),
@@ -419,6 +434,8 @@ async function readState(d) {
     question: (data.question || '').trim(),
     answer: (data.answer || '').trim(),
     hasInput: !!data.hasInput,
+    inputs: (data.inputs || []).map((x) => ({ index: x.i, filled: !!x.filled })),
+    hint: (data.hint || '').trim(),
     selectedIdx: typeof data.selectedIdx === 'number' ? data.selectedIdx : -1,
     filled: !!data.filled,
     opening: !!data.opening,
@@ -604,6 +621,37 @@ export function nextClassAction(units, tried) {
   return { action: 'none' };
 }
 
+/**
+ * 빈칸(여러 개일 수 있음)에 넣을 값 목록.
+ *
+ * 정답을 알면 정답 문장을 빈칸 수에 맞춰 나눠 넣고,
+ * 모르면 화면에 주어진 힌트 단어("the, tallest, student, …")를 순서대로 넣는다.
+ * 둘 다 없으면 빈 배열(=풀 수 없음).
+ *
+ * @param {number} count 빈칸 수
+ * @param {string|null} answer 정답 문장
+ * @param {string} hint 힌트 문자열
+ */
+export function fillValues(count, answer, hint) {
+  if (count <= 0) return [];
+  if (answer) {
+    const words = N.splitTargetWords(answer).filter((w) => w.trim());
+    if (count === 1) return [answer];
+    if (words.length === count) return words;
+    if (words.length > count) {
+      // 빈칸보다 단어가 많으면 마지막 칸에 남은 단어를 몰아 넣는다
+      const head = words.slice(0, count - 1);
+      return head.concat([words.slice(count - 1).join(' ')]);
+    }
+  }
+  if (hint) {
+    const words = hint.split(/[,،]|\s{2,}/).map((w) => w.trim()).filter(Boolean);
+    if (words.length >= count) return words.slice(0, count);
+    if (words.length) return words.concat(Array(count - words.length).fill(''));
+  }
+  return [];
+}
+
 /** 페이지 전역 study_data 를 단어장(Map)으로 읽는다(있을 때만). */
 async function pageDict(d) {
   const cards = await d.eval(
@@ -631,10 +679,10 @@ async function clickTagged(d, attr, value, trusted) {
   `);
 }
 
-/** 입력형 문제에 정답을 써 넣는다 (값 설정 + input/change 이벤트). */
-async function fillInput(d, value) {
+/** 입력형 문제의 index 번째 빈칸에 값을 써 넣는다 (값 설정 + input/change 이벤트). */
+async function fillInput(d, index, value) {
   return d.evalBool(`
-    var el = document.querySelector('[data-cc-input="1"]');
+    var el = document.querySelector('[data-cc-input="${index}"]');
     if (!el) return false;
     var setter = Object.getOwnPropertyDescriptor(
         el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
@@ -829,20 +877,27 @@ export async function grammar(d, answerDict, stop) {
       // ---------------------------------------------- 입력형
       if (!state.choices.length && state.hasInput) {
         if (state.filled) {
-          await d.evalBool(CLICK_NEXT_JS);          // 이미 써 넣었다 -> 채점하기
+          await d.evalBool(CLICK_NEXT_JS);          // 이미 다 써 넣었다 -> 채점하기
           if (await stop.await(700)) break;
           continue;
         }
-        if (!answer) {
-          d.log('[문법] 정답을 알 수 없는 입력형 문제 — 건너뜁니다.');
+        const values = fillValues(state.inputs.length, answer, state.hint);
+        if (!values.length) {
+          d.log(`[문법] 답을 알 수 없는 입력형 문제(빈칸 ${state.inputs.length}칸) — 비운 채 넘어갑니다.`);
           await d.evalBool(CLICK_NEXT_JS);
           if (await stop.await(600)) break;
           continue;
         }
-        await fillInput(d, answer);
-        if (await stop.await(300)) break;
+        if (CONFIG.debug) {
+          d.log(`[문법] (입력) 빈칸 ${values.length}칸 -> ${values.join(' / ').slice(0, 60)}`);
+        }
+        for (let i = 0; i < values.length; i++) {
+          await fillInput(d, i, values[i]);
+          if (await stop.await(120)) break;
+        }
+        if (stop.isSet) break;
         await d.evalBool(CLICK_NEXT_JS);
-        if (await stop.await(700)) break;
+        if (await stop.await(800)) break;
         continue;
       }
 
