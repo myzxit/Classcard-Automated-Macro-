@@ -197,12 +197,46 @@ export class Driver {
 
   // --------------------------------------------------------------- 클릭
 
-  /** 합성 클릭 — selector 의 index 번째 요소. */
-  async clickIndex(selector, index) {
+  /**
+   * 클릭 — 원본(Selenium)과 같은 순서로 누른다: **진짜 클릭 먼저, 안 되면 합성 클릭**.
+   *
+   * 클래스카드의 여러 화면(리콜 정답, 문장 암기·문장 리콜·문장 테스트의 낱말 버튼 등)은
+   * 합성 click 을 무시하고 신뢰된 입력에만 반응한다. 파이썬 원본이 `element.click()`
+   * (=진짜 입력)을 먼저 쓰고 실패할 때만 JS 클릭으로 폴백한 것과 같은 규칙이다.
+   *
+   * 좌표 클릭이 엉뚱한 요소(모달·오버레이)를 누르지 않도록, 그 좌표에 실제로 그 요소가
+   * 있는지(elementFromPoint) 확인한 뒤에만 신뢰된 클릭을 보낸다.
+   *
+   * @param {string} pick 요소를 `el` 변수에 담는 JS 조각
+   */
+  async clickSmart(pick) {
+    const trusted = await this.trustedClick(`
+      var el = null;
+      ${pick}
+      if (!el) return null;
+      el.scrollIntoView({ block: 'center', inline: 'center' });
+      var r = el.getBoundingClientRect();
+      if (!r.width || !r.height) return null;
+      var x = r.left + r.width / 2, y = r.top + r.height / 2;
+      if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return null;
+      var at = document.elementFromPoint(x, y);
+      if (!at || !(at === el || el.contains(at) || at.contains(el))) return null;
+      return { x: x, y: y, w: window.innerWidth };`);
+    if (trusted) return true;
+
     return this.evalBool(`
+      var el = null;
+      ${pick}
+      if (!el) return false;
+      el.click();
+      return true;`);
+  }
+
+  /** selector 의 index 번째 요소를 클릭. */
+  async clickIndex(selector, index) {
+    return this.clickSmart(`
       var e = document.querySelectorAll(${JSON.stringify(selector)});
-      if (e[${index}]) { e[${index}].click(); return true; }
-      return false;`);
+      el = e[${index}] || null;`);
   }
 
   async clickFirst(selector) {
@@ -210,12 +244,11 @@ export class Driver {
   }
 
   async clickFirstVisible(selector) {
-    return this.evalBool(`
+    return this.clickSmart(`
       var e = document.querySelectorAll(${JSON.stringify(selector)});
       for (var i = 0; i < e.length; i++) {
-        if (e[i].offsetParent !== null) { e[i].click(); return true; }
-      }
-      return false;`);
+        if (e[i].offsetParent !== null) { el = e[i]; break; }
+      }`);
   }
 
   // ------------------------------------------------------- CDP (신뢰된 입력)
@@ -234,8 +267,13 @@ export class Driver {
       } else {
         this.debuggerFailed = true;
         this.log(
-          `[!] 신뢰된 입력(CDP) 연결 실패: ${message} — 합성 이벤트로 진행합니다. ` +
-            '문장 테스트는 이 경우 동작하지 않을 수 있습니다.',
+          `[!] 신뢰된 입력(CDP) 연결 실패: ${message} — 합성 이벤트로 진행합니다.`,
+          'warn',
+        );
+        this.log(
+          '[!] 클래스카드는 합성 클릭을 무시하는 화면이 많습니다(리콜의 정답 보기, ' +
+            '문장 암기·문장 리콜·문장 테스트의 낱말 버튼). 브라우저 위쪽의 디버깅 안내를 ' +
+            "'취소'하지 말고 그대로 두셔야 정상 동작합니다.",
           'warn',
         );
       }

@@ -128,13 +128,9 @@ async function isFullCardsMode(d) {
 async function ensureFullCardsMode(d, stop) {
   if (await isFullCardsMode(d)) return true;
 
-  const toggled = await d.evalBool(`
+  const toggled = await d.clickSmart(`
     var label = document.querySelector(${JSON.stringify(VIEW_TYPE_TOGGLE_SELECTOR)});
-    if (!label) return false;
-    var a = label.closest('a[data-toggle="dropdown"]');
-    if (!a) return false;
-    a.click();
-    return true;`);
+    if (label) el = label.closest('a[data-toggle="dropdown"]');`);
   if (!toggled) {
     d.log('[전체] 학습구간 드롭다운을 찾지 못했습니다.', 'warn');
     return false;
@@ -142,7 +138,7 @@ async function ensureFullCardsMode(d, stop) {
 
   if (await stop.await(500)) return false;
 
-  const clicked = await d.evalBool(`
+  const clicked = await d.clickSmart(`
     var opt = document.querySelector('.sel-show-type[data-idx="${FULL_CARDS_DATA_IDX}"]');
     if (!opt) {
         var els = document.querySelectorAll('.sel-show-type');
@@ -153,9 +149,7 @@ async function ensureFullCardsMode(d, stop) {
             }
         }
     }
-    if (!opt) return false;
-    opt.click();
-    return true;`);
+    el = opt || null;`);
   if (!clicked) {
     d.log(`[전체] '${FULL_CARDS_LABEL}' 옵션을 찾지 못했습니다.`, 'warn');
     return false;
@@ -370,12 +364,9 @@ export async function runFullAutomation(d, stop) {
 
       let sentenceMode = target.sentence || isSentenceSet(target.name);
 
-      const clicked = await d.evalBool(`
-        var a = document.querySelector(
-            '.set-item a.set-name-a[data-idx=' + JSON.stringify(${JSON.stringify(target.idx)}) + ']');
-        if (!a) return false;
-        a.click();
-        return true;`);
+      const clicked = await d.clickSmart(`
+        el = document.querySelector(
+            '.set-item a.set-name-a[data-idx=' + JSON.stringify(${JSON.stringify(target.idx)}) + ']');`);
       if (!clicked) {
         d.log(`[전체] set 클릭 실패: ${target.name}`, 'warn');
         processed.add(target.idx);

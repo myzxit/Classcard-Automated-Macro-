@@ -194,14 +194,51 @@ class Driver(
     // --------------------------------------------------------------- 클릭
 
     /**
-     * 합성 클릭 (Selenium 의 `driver.execute_script("arguments[0].click()")` 대응).
-     * 셀렉터의 [index] 번째 요소를 클릭한다. 클릭했으면 true.
+     * 클릭 — 원본(Selenium)과 같은 순서로 누른다: **진짜 클릭 먼저, 안 되면 합성 클릭**.
+     *
+     * 클래스카드의 여러 화면(리콜 정답, 문장 암기·문장 리콜·문장 테스트의 낱말 버튼 등)은
+     * 합성 click 을 무시하고 신뢰된 입력에만 반응한다. 파이썬 원본이 `element.click()`
+     * (=진짜 입력)을 먼저 쓰고 실패할 때만 JS 클릭으로 폴백한 것과 같은 규칙이다.
+     *
+     * 좌표 클릭이 엉뚱한 요소(모달·오버레이)를 누르지 않도록, 그 좌표에 실제로 그 요소가
+     * 있는지(elementFromPoint) 확인한 뒤에만 신뢰된 클릭을 보낸다.
+     *
+     * @param pick 요소를 `el` 변수에 담는 JS 조각
      */
-    suspend fun clickIndex(selector: String, index: Int): Boolean = evalBool(
+    suspend fun clickSmart(pick: String): Boolean {
+        val trusted = trustedClick(
+            """
+            var el = null;
+            $pick
+            if (!el) return null;
+            el.scrollIntoView({ block: 'center', inline: 'center' });
+            var r = el.getBoundingClientRect();
+            if (!r.width || !r.height) return null;
+            var x = r.left + r.width / 2, y = r.top + r.height / 2;
+            if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return null;
+            var at = document.elementFromPoint(x, y);
+            if (!at || !(at === el || el.contains(at) || at.contains(el))) return null;
+            return { x: x, y: y, w: window.innerWidth };
+            """
+        )
+        if (trusted) return true
+
+        return evalBool(
+            """
+            var el = null;
+            $pick
+            if (!el) return false;
+            el.click();
+            return true;
+            """
+        )
+    }
+
+    /** 셀렉터의 [index] 번째 요소를 클릭. */
+    suspend fun clickIndex(selector: String, index: Int): Boolean = clickSmart(
         """
         var e = document.querySelectorAll(${selector.jsStr()});
-        if (e[$index]) { e[$index].click(); return true; }
-        return false;
+        el = e[$index] || null;
         """
     )
 
@@ -209,13 +246,12 @@ class Driver(
     suspend fun clickFirst(selector: String): Boolean = clickIndex(selector, 0)
 
     /** 보이는 첫 요소를 클릭. */
-    suspend fun clickFirstVisible(selector: String): Boolean = evalBool(
+    suspend fun clickFirstVisible(selector: String): Boolean = clickSmart(
         """
         var e = document.querySelectorAll(${selector.jsStr()});
         for (var i = 0; i < e.length; i++) {
-            if (e[i].offsetParent !== null) { e[i].click(); return true; }
+            if (e[i].offsetParent !== null) { el = e[i]; break; }
         }
-        return false;
         """
     )
 

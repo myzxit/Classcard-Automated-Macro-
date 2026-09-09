@@ -175,14 +175,10 @@ object AutoAll {
     private suspend fun ensureFullCardsMode(d: Driver, stop: StopFlag): Boolean {
         if (isFullCardsMode(d)) return true
 
-        val toggled = d.evalBool(
+        val toggled = d.clickSmart(
             """
             var label = document.querySelector(${VIEW_TYPE_TOGGLE_SELECTOR.jsStr()});
-            if (!label) return false;
-            var a = label.closest('a[data-toggle="dropdown"]');
-            if (!a) return false;
-            a.click();
-            return true;
+            if (label) el = label.closest('a[data-toggle="dropdown"]');
             """
         )
         if (!toggled) {
@@ -192,7 +188,7 @@ object AutoAll {
 
         if (stop.await(500)) return false
 
-        val clicked = d.evalBool(
+        val clicked = d.clickSmart(
             """
             var opt = document.querySelector('.sel-show-type[data-idx="$FULL_CARDS_DATA_IDX"]');
             if (!opt) {
@@ -204,9 +200,7 @@ object AutoAll {
                     }
                 }
             }
-            if (!opt) return false;
-            opt.click();
-            return true;
+            el = opt || null;
             """
         )
         if (!clicked) {
@@ -457,13 +451,10 @@ object AutoAll {
                     // 셋 목록 아이콘으로 판별, 폴백으로 이름의 '(예문)'
                     var sentenceMode = target.sentence || isSentenceSet(target.name)
 
-                    val clicked = d.evalBool(
+                    val clicked = d.clickSmart(
                         """
-                        var a = document.querySelector(
+                        el = document.querySelector(
                             '.set-item a.set-name-a[data-idx=' + JSON.stringify(${target.idx.jsStr()}) + ']');
-                        if (!a) return false;
-                        a.click();
-                        return true;
                         """
                     )
                     if (!clicked) {

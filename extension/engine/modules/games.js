@@ -802,17 +802,18 @@ export function findPair(lefts, rights, lk) {
   return null;
 }
 
+/** 'stopped' | 'changed' | 'timeout' */
 async function waitBoardChange(d, stop, prevLeft, timeoutMs = 2500) {
   const prev = prevLeft.map((c) => c.raw).join(' ');
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await stop.await(200)) return true;
+    if (await stop.await(200)) return 'stopped';
     const board = await readBoard(d);
     if (!board) continue;
     const cur = board.left.map((c) => c.raw).join(' ');
-    if (cur !== prev) return false;
+    if (cur !== prev) return 'changed';
   }
-  return false;
+  return 'timeout';
 }
 
 async function readMatchScore(d) {
@@ -959,7 +960,7 @@ export async function matching(d, answerDict, stop) {
       if (await stop.await(150)) break;
       await d.clickIndex(LEFT_CARD_SELECTOR, pair.li);
 
-      if (await waitBoardChange(d, stop, lefts, 2500)) break;
+      if (await waitBoardChange(d, stop, lefts, 2500) === 'stopped') break;
     }
   } catch (e) {
     if (!stop.isSet) d.log(`[매칭] 오류: ${e.message}`, 'error');

@@ -184,8 +184,8 @@ object RecallSentence {
         for (token in remainingTokens) {
             if (stop.isSet) break
 
-            val clicked = d.evalIntOrNull(
-                """
+            // 후보 버튼을 찾는 부분(원본과 같은 우선순위: 정확 -> 대소문자 무시 -> 구두점 무시)
+            val find = """
                 var token = ${token.jsStr()};
                 function normUni(s) {
                     var map = {'‘':"'", '’':"'", '‚':"'", '‛':"'",
@@ -199,32 +199,59 @@ object RecallSentence {
                     return out;
                 }
                 var btns = document.querySelectorAll('.btn-scramble.clickable:not(.clicked)');
-                if (!btns.length) return -1;
                 var texts = [];
                 for (var i = 0; i < btns.length; i++) {
                     texts.push(normUni((btns[i].innerText || btns[i].textContent || '').trim()));
                 }
+                var hit = null;
                 for (var i = 0; i < btns.length; i++) {
-                    if (texts[i] === token) { btns[i].click(); return 1; }
+                    if (texts[i] === token) { hit = btns[i]; break; }
                 }
-                for (var i = 0; i < btns.length; i++) {
-                    if (texts[i].toLowerCase() === token.toLowerCase()) { btns[i].click(); return 1; }
-                }
-                var tokenClean = token.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
-                if (tokenClean) {
+                if (!hit) {
                     for (var i = 0; i < btns.length; i++) {
-                        if (texts[i].replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === tokenClean) {
-                            btns[i].click(); return 1;
+                        if (texts[i].toLowerCase() === token.toLowerCase()) { hit = btns[i]; break; }
+                    }
+                }
+                if (!hit) {
+                    var tokenClean = token.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+                    if (tokenClean) {
+                        for (var i = 0; i < btns.length; i++) {
+                            if (texts[i].replace(/[^a-zA-Z0-9]/g, '').toLowerCase() === tokenClean) {
+                                hit = btns[i]; break;
+                            }
                         }
                     }
                 }
-                return 0;
-                """
-            ) ?: 0
+            """.trimIndent()
 
-            // -1: 남은 버튼 없음 -> 중단
-            if (clicked == -1) break
-            if (clicked == 0) {
+            // 남은 버튼이 없으면 이 카드는 끝
+            val none = d.evalBool(find + "\n            return btns.length === 0;")
+            if (none) break
+
+            // 원본(Selenium)은 진짜 클릭을 먼저 보냈다. 이 버튼도 합성 click 을 무시할 수 있으므로
+            // 신뢰된 클릭을 먼저 쓰고, 안 되면 합성 클릭으로 폴백한다.
+            var clicked = d.trustedClick(
+                find + """
+
+                if (!hit) return null;
+                hit.scrollIntoView({ block: 'center', inline: 'center' });
+                var r = hit.getBoundingClientRect();
+                if (!r.width || !r.height) return null;
+                return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: window.innerWidth };
+                """.trimIndent()
+            )
+            if (!clicked) {
+                clicked = d.evalBool(
+                    find + """
+
+                    if (!hit) return false;
+                    hit.click();
+                    return true;
+                    """.trimIndent()
+                )
+            }
+
+            if (!clicked) {
                 // 단독 구두점은 화면에 버튼이 없는 게 정상이므로 skip, 단어면 중단
                 if (Norm.isPunctOnly(token)) continue
                 break
