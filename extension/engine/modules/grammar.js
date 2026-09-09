@@ -153,14 +153,18 @@ if (shown.length) {
     }
 
     // 지금 채워야 할 빈칸의 번호 (페이지 정답 데이터의 인덱스로 쓰인다)
+    // 보기가 없고 직접 써 넣어야 하는 빈칸(키보드가 올라오는 화면)도 여기서 모은다.
     var cnt = -1;
-    var blanks = document.querySelectorAll('.talk-card .user-text');
+    var tinputs = [];
+    var blanks = document.querySelectorAll('.talk-card .user-text, .talk-card input[type="text"], .talk-card textarea');
     for (var i = 0; i < blanks.length; i++) {
-        if (!vis(blanks[i])) continue;
-        if ((blanks[i].value || '').trim()) continue;      // 이미 채워진 칸은 건너뛴다
+        if (!vis(blanks[i]) || blanks[i].disabled || blanks[i].readOnly) continue;
         var dc = blanks[i].getAttribute('data-cnt');
-        cnt = dc === null ? -1 : parseInt(dc, 10);
-        break;
+        var bn = dc === null ? -1 : parseInt(dc, 10);
+        var filled = !!(blanks[i].value || '').trim();
+        blanks[i].setAttribute('data-cc-tinput', String(tinputs.length));
+        tinputs.push({ i: tinputs.length, cnt: bn, filled: filled });
+        if (!filled && cnt < 0) cnt = bn;                  // 이미 채워진 칸은 건너뛴다
     }
 
     // 빈칸에 무엇이 써졌는지 / 고른 표시가 났는지 — 클릭이 먹혔는지 판단하는 근거
@@ -200,7 +204,7 @@ if (shown.length) {
         qid: talkKey,
         sig: talkKey + '|' + tchoices.length + written,
         choices: tchoices, cards: talkCards.length, shown: shown.length,
-        upcoming: upcoming, cnt: cnt, cont: cont
+        upcoming: upcoming, cnt: cnt, cont: cont, inputs: tinputs
     };
 }
 
@@ -303,7 +307,7 @@ for (var i = 0; i < items.length; i++) {
             for (var k = 0; k < opts.length; k++) name = name.replace(opts[k].text, ' ');
             rows.push({
                 i: j,
-                text: name.replace(/\s+/g, ' ').trim(),
+                text: name.replace(/\\s+/g, ' ').trim(),
                 options: opts,
                 done: rcls.indexOf(' correct ') >= 0 || rcls.indexOf(' wrong ') >= 0
             });
@@ -769,6 +773,53 @@ if (talkList || (ALL && ALL.talk.length)) {
 return null;
 `;
 
+/**
+ * 개념 톡에서 직접 써 넣어야 하는 빈칸을, 그 카드의 사이트 정답으로 한 번에 채운다.
+ * 어떤 칸에 무엇을 썼는지 [{i, value}] 로 돌려준다.
+ */
+const TALK_FILL_JS = `
+var out = [];
+var ALL = null;
+try { ALL = (window.__ccGAll && typeof window.__ccGAll === 'object') ? window.__ccGAll : null; } catch (e) {}
+
+// 빈칸이 들어 있는 카드의 정답을 그 카드 번호로 찾는다 (사이트가 채점에 쓰는 arr_card).
+var cards = document.querySelectorAll('.talk-card');
+function answerFor(card) {
+    var idx = -1;
+    for (var i = 0; i < cards.length; i++) if (cards[i] === card) idx = i;
+    if (idx < 0) return null;
+    if (typeof arr_card !== 'undefined' && arr_card && arr_card[idx] && arr_card[idx].answer != null) {
+        return String(arr_card[idx].answer);
+    }
+    if (ALL && ALL.talk[idx] != null) return String(ALL.talk[idx]);
+    return null;
+}
+
+var boxes = document.querySelectorAll('[data-cc-tinput]');
+for (var i = 0; i < boxes.length; i++) {
+    var el = boxes[i];
+    if ((el.value || '').trim()) continue;                 // 이미 쓴 칸은 그대로 둔다
+    var card = el.closest ? el.closest('.talk-card') : null;
+    var raw = card ? answerFor(card) : null;
+    if (raw == null) continue;
+    var parts = String(raw).split(/[|;]/).map(function (x) {
+        return x.replace(/\\s*\\/\\s*/g, ' ').replace(/\\s+/g, ' ').trim();
+    }).filter(Boolean);
+    var dc = el.getAttribute('data-cnt');
+    var n = dc === null ? -1 : parseInt(dc, 10);
+    var v = (n >= 0 ? parts[n] : null) || parts[i] || parts[0];
+    if (!v) continue;
+    var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+    el.focus();
+    setter.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    out.push({ i: Number(el.getAttribute('data-cc-tinput')), value: v });
+}
+return out;
+`;
+
 /** 페이지 정답 문자열을 조각으로 나눈다 (빈칸별 ';', 복수정답 '|'). */
 export function splitAnswers(raw) {
   return String(raw == null ? '' : raw)
@@ -1050,9 +1101,10 @@ async function clickTagged(d, attr, value, trusted) {
 }
 
 /** 입력형 문제의 index 번째 빈칸에 값을 써 넣는다 (값 설정 + input/change 이벤트). */
-async function fillInput(d, index, value) {
+async function fillInput(d, index, value, attr) {
   return d.evalBool(`
-    var el = document.querySelector('[data-cc-input="${index}"]');
+    var el = document.querySelector('[${attr || 'data-cc-input'}="${index}"]');
+    if (el) el.focus();
     if (!el) return false;
     var setter = Object.getOwnPropertyDescriptor(
         el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
@@ -1230,6 +1282,42 @@ export async function grammar(d, answerDict, stop) {
               wrongByQid.get(state.qid).add(pick);
             }
             continue;
+          }
+        }
+
+        // 직접 써 넣어야 하는 빈칸(키보드가 올라오는 화면) — 정답을 써 넣고 확인한다.
+        const empty = (state.inputs || []).filter((x) => !x.filled);
+        if (empty.length) {
+          // 그 칸이 들어 있는 카드의 사이트 정답으로 빈칸을 한 번에 채운다.
+          const written = (await d.eval(TALK_FILL_JS)) || [];
+          for (const w of written) {
+            d.log(`[문법] (개념 톡 입력) ${w.i + 1}번 칸 -> '${w.value}' (사이트 정답)`);
+          }
+          if (written.length) {
+            // 써 넣었으면 Enter(또는 '계속하기')로 확인한다.
+            if (state.cont) {
+              const hit = await clickTagged(d, 'data-cc-cont', 1, talkStuck >= 1);
+              if (!hit) await d.pressEnter();
+            } else {
+              await d.pressEnter();
+            }
+            if (await stop.await(pace())) break;
+            const afterFill = await readState(d);
+            if (afterFill && afterFill.kind === 'talk' && afterFill.sig === state.sig) {
+              talkStuck++;
+              if (talkStuck >= CONFIG.idleGiveUp) {
+                if (await backToClass('개념 톡 입력이 넘어가지 않습니다')) continue;
+                d.log('[문법] 개념 톡 입력이 넘어가지 않습니다 -> 종료');
+                stop.set();
+                break;
+              }
+            } else {
+              talkStuck = 0;
+            }
+            continue;
+          }
+          if (!written.length) {
+            d.log('[문법] 개념 톡 빈칸의 정답을 찾지 못했습니다 — 그대로 넘깁니다.');
           }
         }
 

@@ -64,6 +64,9 @@ object Grammar {
     )
 
     /** 보기 하나. */
+    /** 개념 톡에서 직접 써 넣어야 하는 빈칸. cnt 는 정답 조각 번호(data-cnt). */
+    data class TalkInput(val i: Int, val cnt: Int, val filled: Boolean)
+
     data class Choice(val index: Int, val raw: String) {
         val norm: String = Norm.mnorm(raw)
     }
@@ -118,6 +121,7 @@ object Grammar {
         val choices: List<Choice> = emptyList(),
         val hasInput: Boolean = false,
         val blanks: Int = 0,        // 빈칸 수 (배열형은 여러 개)
+        val talkInputs: List<TalkInput> = emptyList(),  // 개념 톡에서 직접 써 넣어야 하는 빈칸
         val hint: String = "",      // 화면에 주어진 힌트 단어들
         val selectedIdx: Int = -1,
         val filled: Boolean = false,
@@ -233,14 +237,18 @@ object Grammar {
             }
 
             // 지금 채워야 할 빈칸의 번호 (페이지 정답 데이터의 인덱스로 쓰인다)
+            // 보기가 없고 직접 써 넣어야 하는 빈칸(키보드가 올라오는 화면)도 여기서 모은다.
             var cnt = -1;
-            var blanks = document.querySelectorAll('.talk-card .user-text');
+            var tinputs = [];
+            var blanks = document.querySelectorAll('.talk-card .user-text, .talk-card input[type="text"], .talk-card textarea');
             for (var i = 0; i < blanks.length; i++) {
-                if (!vis(blanks[i])) continue;
-                if ((blanks[i].value || '').trim()) continue;      // 이미 채워진 칸은 건너뛴다
+                if (!vis(blanks[i]) || blanks[i].disabled || blanks[i].readOnly) continue;
                 var dc = blanks[i].getAttribute('data-cnt');
-                cnt = dc === null ? -1 : parseInt(dc, 10);
-                break;
+                var bn = dc === null ? -1 : parseInt(dc, 10);
+                var bfilled = !!(blanks[i].value || '').trim();
+                blanks[i].setAttribute('data-cc-tinput', String(tinputs.length));
+                tinputs.push({ i: tinputs.length, cnt: bn, filled: bfilled });
+                if (!bfilled && cnt < 0) cnt = bn;                 // 이미 채워진 칸은 건너뛴다
             }
 
             // 빈칸에 무엇이 써졌는지 / 고른 표시가 났는지 — 클릭이 먹혔는지 판단하는 근거
@@ -280,7 +288,7 @@ object Grammar {
                 qid: talkKey,
                 sig: talkKey + '|' + tchoices.length + written,
                 choices: tchoices, cards: talkCards.length, shown: shown.length,
-                upcoming: upcoming, cnt: cnt, cont: cont
+                upcoming: upcoming, cnt: cnt, cont: cont, inputs: tinputs
             };
         }
 
@@ -656,6 +664,23 @@ object Grammar {
             choices = choices,
             hasInput = data.optBoolean("hasInput", false),
             blanks = data.optJSONArray("inputs")?.length() ?: 0,
+            talkInputs = run {
+                val arr = data.optJSONArray("inputs")
+                val out = ArrayList<TalkInput>()
+                if (data.optString("kind", "") == "talk" && arr != null) {
+                    for (i in 0 until arr.length()) {
+                        val o = arr.optJSONObject(i) ?: continue
+                        out.add(
+                            TalkInput(
+                                i = o.optInt("i", i),
+                                cnt = o.optInt("cnt", -1),
+                                filled = o.optBoolean("filled", false),
+                            )
+                        )
+                    }
+                }
+                out
+            },
             hint = data.optString("hint", "").trim(),
             selectedIdx = data.optInt("selectedIdx", -1),
             filled = data.optBoolean("filled", false),
@@ -878,6 +903,54 @@ object Grammar {
         } catch (e) {}
         try { window.__ccGAll = box; } catch (e) {}
         return out;
+    """
+
+    /**
+     * 개념 톡에서 직접 써 넣어야 하는 빈칸을, 그 카드의 사이트 정답으로 한 번에 채운다.
+     * 어떤 칸에 무엇을 썼는지 [{i, value}] 로 돌려준다.
+     */
+    private val TALK_FILL_JS = """
+
+var out = [];
+var ALL = null;
+try { ALL = (window.__ccGAll && typeof window.__ccGAll === 'object') ? window.__ccGAll : null; } catch (e) {}
+
+// 빈칸이 들어 있는 카드의 정답을 그 카드 번호로 찾는다 (사이트가 채점에 쓰는 arr_card).
+var cards = document.querySelectorAll('.talk-card');
+function answerFor(card) {
+    var idx = -1;
+    for (var i = 0; i < cards.length; i++) if (cards[i] === card) idx = i;
+    if (idx < 0) return null;
+    if (typeof arr_card !== 'undefined' && arr_card && arr_card[idx] && arr_card[idx].answer != null) {
+        return String(arr_card[idx].answer);
+    }
+    if (ALL && ALL.talk[idx] != null) return String(ALL.talk[idx]);
+    return null;
+}
+
+var boxes = document.querySelectorAll('[data-cc-tinput]');
+for (var i = 0; i < boxes.length; i++) {
+    var el = boxes[i];
+    if ((el.value || '').trim()) continue;                 // 이미 쓴 칸은 그대로 둔다
+    var card = el.closest ? el.closest('.talk-card') : null;
+    var raw = card ? answerFor(card) : null;
+    if (raw == null) continue;
+    var parts = String(raw).split(/[|;]/).map(function (x) {
+        return x.replace(/\s*\/\s*/g, ' ').replace(/\s+/g, ' ').trim();
+    }).filter(Boolean);
+    var dc = el.getAttribute('data-cnt');
+    var n = dc === null ? -1 : parseInt(dc, 10);
+    var v = (n >= 0 ? parts[n] : null) || parts[i] || parts[0];
+    if (!v) continue;
+    var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+    el.focus();
+    setter.call(el, v);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    out.push({ i: Number(el.getAttribute('data-cc-tinput')), value: v });
+}
+return out;
     """
 
     /** 정답 문자열을 조각으로 나눈다 (빈칸별 ';', 복수정답 '|'). */
@@ -1177,10 +1250,13 @@ object Grammar {
     }
 
     /** 입력형 문제의 index 번째 빈칸에 값을 써 넣는다 (값 설정 + input/change 이벤트). */
-    private suspend fun fillInput(d: Driver, index: Int, value: String): Boolean = d.evalBool(
+    private suspend fun fillInput(
+        d: Driver, index: Int, value: String, attr: String = "data-cc-input",
+    ): Boolean = d.evalBool(
         """
-        var el = document.querySelector('[data-cc-input="${index}"]');
+        var el = document.querySelector('[${attr}="${index}"]');
         if (!el) return false;
+        el.focus();
         var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
         var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
         setter.call(el, ${value.jsStr()});
@@ -1374,6 +1450,46 @@ object Grammar {
                                 wrongByQid.getOrPut(state.qid) { mutableSetOf() }.add(pick)
                             }
                             continue
+                        }
+                    }
+
+                    // 직접 써 넣어야 하는 빈칸(키보드가 올라오는 화면) — 정답을 써 넣고 확인한다.
+                    val empty = state.talkInputs.filter { !it.filled }
+                    if (empty.isNotEmpty()) {
+                        // 그 칸이 들어 있는 카드의 사이트 정답으로 빈칸을 한 번에 채운다.
+                        val written = d.evalArrayOrNull(TALK_FILL_JS)
+                        val wrote = written?.length() ?: 0
+                        for (i in 0 until wrote) {
+                            val w = written?.optJSONObject(i) ?: continue
+                            d.log(
+                                "[문법] (개념 톡 입력) ${w.optInt("i", i) + 1}번 칸 -> " +
+                                    "'${w.optString("value", "")}' (사이트 정답)"
+                            )
+                        }
+                        if (wrote > 0) {
+                            // 써 넣었으면 Enter(또는 '계속하기')로 확인한다.
+                            if (state.cont) {
+                                if (!clickTagged(d, "data-cc-cont", "1", talkStuck >= 1)) d.pressEnter()
+                            } else {
+                                d.pressEnter()
+                            }
+                            if (stop.await(pace())) break
+                            val afterFill = readState(d)
+                            if (afterFill != null && afterFill.kind == "talk" && afterFill.sig == state.sig) {
+                                talkStuck++
+                                if (talkStuck >= IDLE_GIVE_UP) {
+                                    if (backToClass("개념 톡 입력이 넘어가지 않습니다")) continue
+                                    d.log("[문법] 개념 톡 입력이 넘어가지 않습니다 -> 종료")
+                                    stop.set()
+                                    break
+                                }
+                            } else {
+                                talkStuck = 0
+                            }
+                            continue
+                        }
+                        if (wrote == 0) {
+                            d.log("[문법] 개념 톡 빈칸의 정답을 찾지 못했습니다 — 그대로 넘깁니다.")
                         }
                     }
 
