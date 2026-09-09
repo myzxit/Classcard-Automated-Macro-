@@ -295,4 +295,39 @@ class GrammarLogicTest {
         assertEquals(emptyList<String>(), Grammar.fillValues(2, null, ""))
         assertEquals(emptyList<String>(), Grammar.fillValues(0, "x", "y"))
     }
+
+    // ================================================ 개념 톡 정답 고르기
+    // 실제 개념 톡('강조구문' 유닛)에 나온 문구를 그대로 쓴다.
+
+    @JUnitTest
+    fun talkFindsAnswerWordInNextCard() {
+        val c = choices("인칭", "동사", "부사구", "동사원형", "주어", "목적어")
+        val 해설 = "이때는 '정말 ~하다'라고 해석해서 동사의 뜻을 강조해 줘요."
+        assertEquals(1, Grammar.pickTalkAnswer(c, 해설))
+    }
+
+    @JUnitTest
+    fun talkPicksChoiceQuotedByExplanation() {
+        val c = choices(
+            "1 나는 정말 많은 고기를 먹었다.",
+            "2 나는 시금치를 정말 싫어한다.",
+            "3 나는 엄청 느리게 달린다.",
+        )
+        val 해설 = "'정말'이라는 말을 붙여서 '싫어한다'는 동사의 의미를 강조하고 있어요."
+        assertEquals(1, Grammar.pickTalkAnswer(c, 해설))
+    }
+
+    @JUnitTest
+    fun talkIgnoresTokensCommonToEveryChoice() {
+        val c = choices("나는 정말 먹었다.", "나는 정말 싫어한다.", "나는 정말 달린다.")
+        assertNull(Grammar.pickTalkAnswer(c, "'정말'이라는 말이 붙었어요."))
+    }
+
+    @JUnitTest
+    fun talkReturnsNullWithoutClue() {
+        val c = choices("인칭", "동사", "부사구")
+        assertNull(Grammar.pickTalkAnswer(c, "잘 하셨어요! 이제 끝입니다."))
+        assertNull(Grammar.pickTalkAnswer(c, ""))
+        assertNull(Grammar.pickTalkAnswer(emptyList(), "동사"))
+    }
 }

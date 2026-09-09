@@ -15,7 +15,7 @@ import * as N from '../engine/norm.js';
 import { buildLookups } from '../engine/modules/games.js';
 import {
   pickChoice, lookupAnswer, nextClassAction,
-  nextScrambleIndex, nextPairAttempt, nextGroupPick, fillValues,
+  nextScrambleIndex, nextPairAttempt, nextGroupPick, fillValues, pickTalkAnswer,
 } from '../engine/modules/grammar.js';
 
 const choices = (...texts) =>
@@ -240,4 +240,36 @@ test('힌트가 빈칸보다 적으면 남는 칸은 비운다', () => {
 test('정답도 힌트도 없으면 빈 목록', () => {
   assert.deepEqual(fillValues(2, null, ''), []);
   assert.deepEqual(fillValues(0, 'x', 'y'), []);
+});
+
+// ---------------------------------------------------------------- 개념 톡 정답 고르기
+// 실제 개념 톡('강조구문' 유닛)에 나온 문구를 그대로 쓴다.
+
+test('빈칸: 다음 카드 해설에서 정답 단어를 찾는다', () => {
+  const c = choices('인칭', '동사', '부사구', '동사원형', '주어', '목적어');
+  const 해설 = "이때는 '정말 ~하다'라고 해석해서 동사의 뜻을 강조해 줘요.";
+  assert.equal(pickTalkAnswer(c, 해설), 1);   // 동사
+});
+
+test('객관식: 정답 해설이 인용한 보기를 고른다', () => {
+  const c = choices(
+    '1 나는 정말 많은 고기를 먹었다.',
+    '2 나는 시금치를 정말 싫어한다.',
+    '3 나는 엄청 느리게 달린다.',
+  );
+  const 해설 = "'정말'이라는 말을 붙여서 '싫어한다'는 동사의 의미를 강조하고 있어요.";
+  assert.equal(pickTalkAnswer(c, 해설), 1);   // 2번 보기
+});
+
+test('모든 보기에 공통인 말은 단서로 치지 않는다', () => {
+  // '정말'은 세 보기에 다 있으므로 점수가 되면 안 된다
+  const c = choices('나는 정말 먹었다.', '나는 정말 싫어한다.', '나는 정말 달린다.');
+  assert.equal(pickTalkAnswer(c, "'정말'이라는 말이 붙었어요."), null);
+});
+
+test('단서가 없으면 null', () => {
+  const c = choices('인칭', '동사', '부사구');
+  assert.equal(pickTalkAnswer(c, '잘 하셨어요! 이제 끝입니다.'), null);
+  assert.equal(pickTalkAnswer(c, ''), null);
+  assert.equal(pickTalkAnswer([], '동사'), null);
 });

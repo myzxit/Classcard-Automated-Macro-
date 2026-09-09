@@ -139,12 +139,33 @@ if (talkCards.length) {
         tchoices.push({ i: i, text: txt(picks[i]) });
     }
 
+    // 빈칸에 무엇이 써졌는지 / 고른 표시가 났는지 — 클릭이 먹혔는지 판단하는 근거
+    var written = '';
+    var uts = document.querySelectorAll('.talk-card .user-text');
+    for (var i = 0; i < uts.length; i++) {
+        if (vis(uts[i])) written += '|' + (uts[i].value || '') + (uts[i].className || '');
+    }
+    for (var i = 0; i < picks.length; i++) written += '#' + (picks[i].className || '');
+
+    // 바로 다음 카드의 해설에 정답 단서가 들어 있다.
+    // (예: 빈칸 '___를 강조' -> 다음 카드 "…해석해서 동사의 뜻을 강조해 줘요.")
+    var upcoming = '';
+    if (last) {
+        var nx = last.nextElementSibling;
+        while (nx && !(nx.className || '').match(/talk-card/)) nx = nx.nextElementSibling;
+        if (nx) {
+            var cr = nx.querySelector('.content-row.correct');
+            upcoming = txt(cr || nx);
+        }
+    }
+
+    var talkKey = shown.length + '|' + (last ? (last.getAttribute('data-idx') || '') : '');
     return {
         kind: 'talk', type: talkType,
-        qid: shown.length + '|' + (last ? (last.getAttribute('data-idx') || '') : ''),
-        sig: shown.length + '|' + (last ? (last.getAttribute('data-idx') || '') : '')
-             + '|' + tchoices.length,
-        choices: tchoices, cards: talkCards.length, shown: shown.length
+        qid: talkKey,
+        sig: talkKey + '|' + tchoices.length + written,
+        choices: tchoices, cards: talkCards.length, shown: shown.length,
+        upcoming: upcoming
     };
 }
 
@@ -305,7 +326,7 @@ for (var i = 0; i < items.length; i++) {
     var filled = inputs.length > 0;
     for (var j = 0; j < inputs.length; j++) if (!inputs[j].filled) filled = false;
 
-    if (done && !choices.length && !input && !rows.length && !left.length && !tiles.length) continue;
+    if (done && !choices.length && !inputs.length && !rows.length && !left.length && !tiles.length) continue;
 
     var sig = question + '#' + selectedIdx + (filled ? '+' : '') + '@' + inputs.length;
     for (var j = 0; j < choices.length; j++) sig += '|' + choices[j].text;
@@ -579,6 +600,47 @@ export function nextGroupPick(rows, answer, wrongByRow) {
   return null;
 }
 
+/**
+ * 개념 톡의 정답 고르기.
+ *
+ * 개념 톡은 정답 데이터를 화면에 두지 않지만, **바로 다음 설명 카드가 정답을 풀어서 말해 준다.**
+ *   빈칸  "do(does,did)를 사용해서 ___를 강조" -> 다음 카드 "…해석해서 **동사**의 뜻을 강조해 줘요."
+ *   객관식 "동사를 강조하는 문장은?"          -> 다음 카드 "'정말'을 붙여 '**싫어한다**'는 동사의 의미를…"
+ * 그래서 보기마다 그 해설과 얼마나 겹치는지 점수를 매겨 가장 높은 것을 고른다.
+ * 모든 보기에 공통으로 나오는 말(예: '정말')은 변별력이 없으므로 점수에서 뺀다.
+ *
+ * @returns {number|null} 고를 보기 번호. 단서가 없으면 null.
+ */
+export function pickTalkAnswer(choices, upcoming) {
+  if (!choices || !choices.length || !upcoming) return null;
+  const hay = N.mnorm(upcoming);
+  if (!hay) return null;
+
+  const tokensOf = (text) =>
+    (text || '').split(/[\s,./·"'()[\]?!~]+/)
+      .map((w) => N.mnorm(w))
+      .filter((w) => w.length >= 2);
+
+  // 여러 보기에 공통으로 들어간 토큰은 변별력이 없다
+  const seen = new Map();
+  for (const c of choices) {
+    for (const t of new Set(tokensOf(c.raw))) seen.set(t, (seen.get(t) || 0) + 1);
+  }
+
+  let best = null, bestScore = 0;
+  for (const c of choices) {
+    const whole = N.mnorm(c.raw);
+    let score = 0;
+    if (whole.length >= 2 && hay.includes(whole)) score += whole.length * 3;
+    for (const t of new Set(tokensOf(c.raw))) {
+      if ((seen.get(t) || 0) > 1) continue;      // 공통 토큰은 제외
+      if (hay.includes(t)) score += t.length;
+    }
+    if (score > bestScore) { bestScore = score; best = c.index; }
+  }
+  return bestScore > 0 ? best : null;
+}
+
 /** 단어장에서 지문에 대한 정답을 찾는다. 없으면 null. */
 export function lookupAnswer(question, lookups) {
   if (!lookups || !question) return null;
@@ -714,6 +776,7 @@ export async function grammar(d, answerDict, stop) {
   let idleStreak = 0;
   let ignoredClicks = 0;
   let talkStuck = 0;      // 개념 톡에서 Enter 가 먹히지 않은 연속 횟수
+  const talkTries = new Map();   // 개념 톡 보기별 시도 횟수 (합성 -> 신뢰된 클릭 승격용)
 
   try {
     while (!stop.isSet) {
@@ -751,18 +814,50 @@ export async function grammar(d, answerDict, stop) {
       // ---------------------------------------------- 개념 톡 (설명 카드)
       if (state.kind === 'talk') {
         if (state.choices.length) {
-          // 중간 퀴즈 — 정답이 화면에 없으므로 찍고 오답을 기억한다
-          const wrong = wrongByQid.get(state.qid) || new Set();
-          const pick = pickChoice(state.choices, null, wrong);
+          const tried = wrongByQid.get(state.qid) || new Set();
+          const open = state.choices.filter((c) => !tried.has(c.index));
+
+          // 1순위: 다음 카드 해설에서 정답을 읽어 고른다. 없으면 안 해 본 보기.
+          let pick = pickTalkAnswer(open, state.upcoming);
+          const byHint = pick !== null;
+          if (pick === null) pick = pickChoice(state.choices, null, tried);
+
           if (pick !== null) {
-            if (!wrongByQid.has(state.qid)) wrongByQid.set(state.qid, new Set());
-            wrongByQid.get(state.qid).add(pick);   // 한 번 고른 보기는 다시 고르지 않는다
+            const key = `${state.qid}#${pick}`;
+            const tries = (talkTries.get(key) || 0) + 1;
+            talkTries.set(key, tries);
+            const trusted = tries >= 2;   // 첫 시도가 먹히지 않으면 신뢰된 클릭으로
+
             if (CONFIG.debug) {
               const label = (state.choices.find((c) => c.index === pick) || {}).raw || '';
-              d.log(`[문법] (개념 톡) 보기 ${pick + 1} '${label.slice(0, 20)}'`);
+              d.log(`[문법] (개념 톡) 보기 ${pick + 1} '${label.slice(0, 20)}'` +
+                `${byHint ? ' (해설에서 정답 확인)' : ' (추정)'}${trusted ? ' [신뢰된 클릭]' : ''}`);
             }
-            await clickTagged(d, 'data-cc-opt', pick, false);
+            await clickTagged(d, 'data-cc-opt', pick, trusted);
             if (await stop.await(900)) break;
+
+            const after = await readState(d);
+            if (after && after.kind === 'talk' && after.sig === state.sig) {
+              // 화면이 그대로다. 두 번(합성·신뢰된)까지 눌러 봤으면 오답으로 보고 다음 보기로.
+              if (tries >= 2) {
+                if (!wrongByQid.has(state.qid)) wrongByQid.set(state.qid, new Set());
+                wrongByQid.get(state.qid).add(pick);
+                talkStuck = 0;
+              } else {
+                talkStuck++;
+                if (talkStuck === 1) d.log('[문법] 개념 톡 클릭이 한 번 무시됨 -> 신뢰된 클릭으로 재시도');
+              }
+              if (wrongByQid.get(state.qid) && wrongByQid.get(state.qid).size >= state.choices.length) {
+                d.log('[문법] 개념 톡 보기를 모두 눌러도 넘어가지 않습니다 -> 종료');
+                stop.set();
+                break;
+              }
+            } else {
+              // 화면이 바뀌었다 = 진행됐다
+              talkStuck = 0;
+              if (!wrongByQid.has(state.qid)) wrongByQid.set(state.qid, new Set());
+              wrongByQid.get(state.qid).add(pick);
+            }
             continue;
           }
         }
@@ -774,7 +869,7 @@ export async function grammar(d, answerDict, stop) {
         const after = await readState(d);
         if (after && after.kind === 'talk' && after.sig === state.sig) {
           talkStuck++;
-          if (talkStuck === 3) {
+          if (talkStuck === 2) {
             // Enter 가 안 먹는 화면일 수 있어 카드를 눌러 본다
             await d.evalBool(`
               var cards = document.querySelectorAll('.talk-card');
@@ -783,6 +878,13 @@ export async function grammar(d, answerDict, stop) {
               }
               return false;
             `);
+          }
+          if (talkStuck === 4) {
+            // 그래도 안 되면 화면 가운데를 신뢰된 클릭으로 눌러 포커스를 준 뒤 Enter
+            await d.trustedClick(`
+              return { x: window.innerWidth / 2, y: window.innerHeight / 2, w: window.innerWidth };
+            `);
+            await d.pressEnter();
           }
           if (talkStuck >= CONFIG.idleGiveUp) {
             d.log('[문법] 개념 톡이 더 넘어가지 않습니다 -> 종료');

@@ -114,6 +114,7 @@ object Grammar {
         val units: List<UnitRow> = emptyList(),
         val cards: Int = 0,      // 개념 톡 전체 카드 수
         val shown: Int = 0,      // 개념 톡에서 지금까지 나온 카드 수
+        val upcoming: String = "",  // 다음 설명 카드 (정답 단서)
         val rows: List<Row> = emptyList(),
         val left: List<MatchCell> = emptyList(),
         val right: List<MatchCell> = emptyList(),
@@ -210,12 +211,33 @@ object Grammar {
                 tchoices.push({ i: i, text: txt(picks[i]) });
             }
 
+            // 빈칸에 무엇이 써졌는지 / 고른 표시가 났는지 — 클릭이 먹혔는지 판단하는 근거
+            var written = '';
+            var uts = document.querySelectorAll('.talk-card .user-text');
+            for (var i = 0; i < uts.length; i++) {
+                if (vis(uts[i])) written += '|' + (uts[i].value || '') + (uts[i].className || '');
+            }
+            for (var i = 0; i < picks.length; i++) written += '#' + (picks[i].className || '');
+
+            // 바로 다음 카드의 해설에 정답 단서가 들어 있다.
+            // (예: 빈칸 '___를 강조' -> 다음 카드 "…해석해서 동사의 뜻을 강조해 줘요.")
+            var upcoming = '';
+            if (last) {
+                var nx = last.nextElementSibling;
+                while (nx && !(nx.className || '').match(/talk-card/)) nx = nx.nextElementSibling;
+                if (nx) {
+                    var cr = nx.querySelector('.content-row.correct');
+                    upcoming = txt(cr || nx);
+                }
+            }
+
+            var talkKey = shown.length + '|' + (last ? (last.getAttribute('data-idx') || '') : '');
             return {
                 kind: 'talk', type: talkType,
-                qid: shown.length + '|' + (last ? (last.getAttribute('data-idx') || '') : ''),
-                sig: shown.length + '|' + (last ? (last.getAttribute('data-idx') || '') : '')
-                     + '|' + tchoices.length,
-                choices: tchoices, cards: talkCards.length, shown: shown.length
+                qid: talkKey,
+                sig: talkKey + '|' + tchoices.length + written,
+                choices: tchoices, cards: talkCards.length, shown: shown.length,
+                upcoming: upcoming
             };
         }
 
@@ -376,7 +398,7 @@ object Grammar {
             var filled = inputs.length > 0;
             for (var j = 0; j < inputs.length; j++) if (!inputs[j].filled) filled = false;
 
-            if (done && !choices.length && !input && !rows.length && !left.length && !tiles.length) continue;
+            if (done && !choices.length && !inputs.length && !rows.length && !left.length && !tiles.length) continue;
 
             var sig = question + '#' + selectedIdx + (filled ? '+' : '') + '@' + inputs.length;
             for (var j = 0; j < choices.length; j++) sig += '|' + choices[j].text;
@@ -580,6 +602,7 @@ object Grammar {
             kind = data.optString("kind", "idle"),
             cards = data.optInt("cards", 0),
             shown = data.optInt("shown", 0),
+            upcoming = data.optString("upcoming", "").trim(),
             type = data.optString("type", ""),
             qid = data.optString("qid", ""),
             sig = data.optString("sig", ""),
@@ -698,6 +721,47 @@ object Grammar {
             if (pick != null) return row.index to pick
         }
         return null
+    }
+
+    /**
+     * 개념 톡의 정답 고르기.
+     *
+     * 개념 톡은 정답 데이터를 화면에 두지 않지만, **바로 다음 설명 카드가 정답을 풀어서 말해 준다.**
+     *   빈칸  "do(does,did)를 사용해서 ___를 강조" -> 다음 카드 "…해석해서 동사의 뜻을 강조해 줘요."
+     *   객관식 "동사를 강조하는 문장은?"          -> 다음 카드 "'정말'을 붙여 '싫어한다'는 동사의 의미를…"
+     * 그래서 보기마다 그 해설과 얼마나 겹치는지 점수를 매겨 가장 높은 것을 고른다.
+     * 모든 보기에 공통으로 나오는 말(예: '정말')은 변별력이 없으므로 점수에서 뺀다.
+     *
+     * @return 고를 보기 번호. 단서가 없으면 null.
+     */
+    fun pickTalkAnswer(choices: List<Choice>, upcoming: String?): Int? {
+        if (choices.isEmpty() || upcoming.isNullOrEmpty()) return null
+        val hay = Norm.mnorm(upcoming)
+        if (hay.isEmpty()) return null
+
+        fun tokensOf(text: String): Set<String> =
+            text.split(Regex("[\\s,./·\"'()\\[\\]?!~]+"))
+                .map { Norm.mnorm(it) }
+                .filter { it.length >= 2 }
+                .toSet()
+
+        // 여러 보기에 공통으로 들어간 토큰은 변별력이 없다
+        val seen = HashMap<String, Int>()
+        for (c in choices) for (t in tokensOf(c.raw)) seen[t] = (seen[t] ?: 0) + 1
+
+        var best: Int? = null
+        var bestScore = 0
+        for (c in choices) {
+            val whole = c.norm
+            var score = 0
+            if (whole.length >= 2 && hay.contains(whole)) score += whole.length * 3
+            for (t in tokensOf(c.raw)) {
+                if ((seen[t] ?: 0) > 1) continue     // 공통 토큰은 제외
+                if (hay.contains(t)) score += t.length
+            }
+            if (score > bestScore) { bestScore = score; best = c.index }
+        }
+        return if (bestScore > 0) best else null
     }
 
     /** 단어장/페이지 데이터에서 지문에 대한 정답을 찾는다. 없으면 null. */
@@ -838,6 +902,7 @@ object Grammar {
         var idleStreak = 0
         var ignoredClicks = 0
         var talkStuck = 0      // 개념 톡에서 Enter 가 먹히지 않은 연속 횟수
+        val talkTries = HashMap<String, Int>()   // 개념 톡 보기별 시도 횟수 (합성 -> 신뢰된 클릭 승격)
 
         try {
             while (!stop.isSet) {
@@ -877,17 +942,53 @@ object Grammar {
                 // ------------------------------------------ 개념 톡 (설명 카드)
                 if (state.kind == "talk") {
                     if (state.choices.isNotEmpty()) {
-                        // 중간 퀴즈 — 정답이 화면에 없으므로 찍고 오답을 기억한다
-                        val wrong = wrongByQid.getOrPut(state.qid) { mutableSetOf() }
-                        val pick = pickChoice(state.choices, null, wrong)
+                        val tried = wrongByQid[state.qid] ?: emptySet<Int>()
+                        val open = state.choices.filter { it.index !in tried }
+
+                        // 1순위: 다음 카드 해설에서 정답을 읽어 고른다. 없으면 안 해 본 보기.
+                        var pick = pickTalkAnswer(open, state.upcoming)
+                        val byHint = pick != null
+                        if (pick == null) pick = pickChoice(state.choices, null, tried)
+
                         if (pick != null) {
-                            wrong.add(pick)   // 한 번 고른 보기는 다시 고르지 않는다
+                            val key = "${state.qid}#$pick"
+                            val tries = (talkTries[key] ?: 0) + 1
+                            talkTries[key] = tries
+                            val trusted = tries >= 2   // 첫 시도가 먹히지 않으면 신뢰된 클릭으로
+
                             if (DEBUG) {
                                 val label = state.choices.firstOrNull { it.index == pick }?.raw ?: ""
-                                d.log("[문법] (개념 톡) 보기 ${pick + 1} '${label.take(20)}'")
+                                d.log(
+                                    "[문법] (개념 톡) 보기 ${pick + 1} '${label.take(20)}'" +
+                                        (if (byHint) " (해설에서 정답 확인)" else " (추정)") +
+                                        (if (trusted) " [신뢰된 클릭]" else "")
+                                )
                             }
-                            clickTagged(d, "data-cc-opt", pick.toString(), false)
+                            clickTagged(d, "data-cc-opt", pick.toString(), trusted)
                             if (stop.await(900)) break
+
+                            val after = readState(d)
+                            if (after != null && after.kind == "talk" && after.sig == state.sig) {
+                                // 화면이 그대로다. 두 번(합성·신뢰된)까지 눌러 봤으면 오답으로 보고 다음 보기로.
+                                if (tries >= 2) {
+                                    wrongByQid.getOrPut(state.qid) { mutableSetOf() }.add(pick)
+                                    talkStuck = 0
+                                } else {
+                                    talkStuck++
+                                    if (talkStuck == 1) {
+                                        d.log("[문법] 개념 톡 클릭이 한 번 무시됨 -> 신뢰된 클릭으로 재시도")
+                                    }
+                                }
+                                if ((wrongByQid[state.qid]?.size ?: 0) >= state.choices.size) {
+                                    d.log("[문법] 개념 톡 보기를 모두 눌러도 넘어가지 않습니다 -> 종료")
+                                    stop.set()
+                                    break
+                                }
+                            } else {
+                                // 화면이 바뀌었다 = 진행됐다
+                                talkStuck = 0
+                                wrongByQid.getOrPut(state.qid) { mutableSetOf() }.add(pick)
+                            }
                             continue
                         }
                     }
