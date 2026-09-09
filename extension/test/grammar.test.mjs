@@ -13,7 +13,7 @@ import assert from 'node:assert/strict';
 
 import * as N from '../engine/norm.js';
 import { buildLookups } from '../engine/modules/games.js';
-import { pickChoice, lookupAnswer } from '../engine/modules/grammar.js';
+import { pickChoice, lookupAnswer, nextClassAction } from '../engine/modules/grammar.js';
 
 const choices = (...texts) =>
   texts.map((t, i) => ({ index: i, raw: t, norm: N.mnorm(t) }));
@@ -79,4 +79,56 @@ test('못 찾으면 null', () => {
 
   assert.equal(lookupAnswer('전혀 다른 문장', lk), null);
   assert.equal(lookupAnswer('사과', null), null);
+});
+
+// ---------------------------------------------------------------- 클래스 페이지
+
+const unit = (i, name, stages, opts = {}) => ({
+  i, name, locked: !!opts.locked, hasTitle: opts.hasTitle !== false, stages,
+});
+const stage = (key, title, locked = false) => ({ key, title, locked });
+
+test('잠기지 않은 첫 단계를 STAGE_ORDER 순서로 고른다', () => {
+  const units = [unit(0, '강조구문', [
+    stage('0_1', '연습 문제 A'),
+    stage('0_0', '개념 톡'),
+    stage('0_2', '연습 문제 B', true),
+  ])];
+  const act = nextClassAction(units, new Set());
+  assert.equal(act.action, 'stage');
+  assert.equal(act.stage.title, '개념 톡');
+});
+
+test('이미 눌러 본 단계는 건너뛴다', () => {
+  const units = [unit(0, '강조구문', [stage('0_0', '개념 톡'), stage('0_1', '연습 문제 A')])];
+  const act = nextClassAction(units, new Set(['0_0']));
+  assert.equal(act.stage.title, '연습 문제 A');
+});
+
+test('잠긴 유닛은 통째로 건너뛴다', () => {
+  const units = [
+    unit(0, '잠긴 유닛', [stage('0_0', '개념 톡')], { locked: true }),
+    unit(1, '열린 유닛', [stage('1_0', '실전 문제')]),
+  ];
+  const act = nextClassAction(units, new Set());
+  assert.equal(act.unit.name, '열린 유닛');
+  assert.equal(act.stage.title, '실전 문제');
+});
+
+test('단계가 안 보이는 유닛은 먼저 펼친다', () => {
+  const units = [unit(0, '접힌 유닛', [])];
+  const act = nextClassAction(units, new Set());
+  assert.equal(act.action, 'open');
+  assert.equal(act.unit.i, 0);
+});
+
+test('할 일이 없으면 none', () => {
+  const units = [unit(0, '끝난 유닛', [stage('0_0', '개념 톡')])];
+  assert.equal(nextClassAction(units, new Set(['0_0'])).action, 'none');
+  assert.equal(nextClassAction([], new Set()).action, 'none');
+});
+
+test('STAGE_ORDER 에 없는 이름은 뒤로 밀린다', () => {
+  const units = [unit(0, 'u', [stage('0_0', '알 수 없는 단계'), stage('0_1', '서술형 문제')])];
+  assert.equal(nextClassAction(units, new Set()).stage.title, '서술형 문제');
 });

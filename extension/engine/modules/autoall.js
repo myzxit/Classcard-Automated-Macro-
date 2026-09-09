@@ -9,7 +9,6 @@ import { StopFlag } from '../driver.js';
 import * as Basic from './basic.js';
 import * as Sentence from './sentence.js';
 import * as Games from './games.js';
-import * as Grammar from './grammar.js';
 
 const SET_ITEM_SELECTOR = '.set-item';
 const SET_NAME_LINK_SELECTOR = '.set-item a.set-name-a';
@@ -18,11 +17,6 @@ const RECALL_BTN_SELECTOR = '.btn-summary[onclick*="/Recall/"]';
 const MATCH_BTN_SELECTOR = '.btn-summary[onclick*="/Match/"]';
 const SPELL_BTN_SELECTOR = '.btn-summary[onclick*="/Spell/"]';
 const TEST_BTN_SELECTOR = '.btn-start-speedquiz';
-// 문법훈련 버튼. 실제 마크업을 확인하지 못해 후보를 여러 개 둔다.
-// 셋홈에 이 버튼이 없으면(=문법이 없는 set) 그 단계는 통째로 건너뛴다.
-const GRAMMAR_BTN_SELECTOR =
-  '.btn-summary[onclick*="/Grammar"], .btn-summary[onclick*="/Syntax"], ' +
-  '.btn-summary[onclick*="grammar"], .btn-start-grammar';
 
 const TEST_NEXT_BTN_SELECTOR = '.btn-condition-next';
 const TEST_START_BTN_SELECTOR = '.btn-quiz-start';
@@ -246,10 +240,6 @@ async function processSetDetail(d, sentenceMode, stop) {
   } else {
     if (spellRequired) steps.push(['스펠', SPELL_BTN_SELECTOR, Basic.spell]);
     steps.push(['매칭', MATCH_BTN_SELECTOR, Games.matching]);
-  }
-  // 문법훈련은 있는 set 에서만 (버튼이 없으면 조용히 건너뛴다)
-  if (await d.evalBool(`return !!document.querySelector(${JSON.stringify(GRAMMAR_BTN_SELECTOR)});`)) {
-    steps.push(['문법', GRAMMAR_BTN_SELECTOR, Grammar.grammar]);
   }
   steps.push(['테스트', TEST_BTN_SELECTOR, sentenceMode ? Games.testSentence : Games.test]);
 

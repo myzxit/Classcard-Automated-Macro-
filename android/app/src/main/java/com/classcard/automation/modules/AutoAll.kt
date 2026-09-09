@@ -18,14 +18,6 @@ object AutoAll {
     private const val SPELL_BTN_SELECTOR = ".btn-summary[onclick*=\"/Spell/\"]"
     private const val TEST_BTN_SELECTOR = ".btn-start-speedquiz"
 
-    /**
-     * 문법훈련 버튼. 실제 마크업을 확인하지 못해 후보를 여러 개 둔다.
-     * 셋홈에 이 버튼이 없으면(=문법이 없는 set) 그 단계는 통째로 건너뛴다.
-     */
-    private const val GRAMMAR_BTN_SELECTOR =
-        ".btn-summary[onclick*=\"/Grammar\"], .btn-summary[onclick*=\"/Syntax\"], " +
-            ".btn-summary[onclick*=\"grammar\"], .btn-start-grammar"
-
     /** 단어 테스트: 최고점수가 이 점수 이상이면 완료로 간주. */
     var TEST_PASS_SCORE = 90
 
@@ -329,10 +321,6 @@ object AutoAll {
         } else {
             if (spellRequired) modeSteps.add(ModeStep("스펠", SPELL_BTN_SELECTOR, Spell.run))
             modeSteps.add(ModeStep("매칭", MATCH_BTN_SELECTOR, Matching.run))
-        }
-        // 문법훈련은 있는 set 에서만 (버튼이 없으면 조용히 건너뛴다)
-        if (d.evalBool("return !!document.querySelector(${GRAMMAR_BTN_SELECTOR.jsStr()});")) {
-            modeSteps.add(ModeStep("문법", GRAMMAR_BTN_SELECTOR, Grammar.run))
         }
         modeSteps.add(
             ModeStep(

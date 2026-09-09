@@ -4,6 +4,7 @@ import com.classcard.automation.modules.Grammar
 import com.classcard.automation.modules.Test as TestModule
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test as JUnitTest
 
 /**
@@ -97,5 +98,75 @@ class GrammarLogicTest {
 
         assertNull(Grammar.lookupAnswer("전혀 다른 문장", lk))
         assertNull(Grammar.lookupAnswer("사과", null))
+    }
+
+    // ================================================ 클래스 페이지
+
+    private fun unit(
+        i: Int, name: String, stages: List<Grammar.Stage>,
+        locked: Boolean = false, hasTitle: Boolean = true,
+    ) = Grammar.UnitRow(i, name, locked, hasTitle, stages)
+
+    private fun stage(key: String, title: String, locked: Boolean = false) =
+        Grammar.Stage(key, title, locked)
+
+    @JUnitTest
+    fun classPicksFirstStageInOrder() {
+        val units = listOf(
+            unit(
+                0, "강조구문",
+                listOf(
+                    stage("0_1", "연습 문제 A"),
+                    stage("0_0", "개념 톡"),
+                    stage("0_2", "연습 문제 B", locked = true),
+                ),
+            )
+        )
+        val act = Grammar.nextClassAction(units, emptySet())
+        assertTrue(act is Grammar.ClassAction.Start)
+        assertEquals("개념 톡", (act as Grammar.ClassAction.Start).stage.title)
+    }
+
+    @JUnitTest
+    fun classSkipsTriedStages() {
+        val units = listOf(
+            unit(0, "강조구문", listOf(stage("0_0", "개념 톡"), stage("0_1", "연습 문제 A")))
+        )
+        val act = Grammar.nextClassAction(units, setOf("0_0")) as Grammar.ClassAction.Start
+        assertEquals("연습 문제 A", act.stage.title)
+    }
+
+    @JUnitTest
+    fun classSkipsLockedUnit() {
+        val units = listOf(
+            unit(0, "잠긴 유닛", listOf(stage("0_0", "개념 톡")), locked = true),
+            unit(1, "열린 유닛", listOf(stage("1_0", "실전 문제"))),
+        )
+        val act = Grammar.nextClassAction(units, emptySet()) as Grammar.ClassAction.Start
+        assertEquals("열린 유닛", act.unit.name)
+        assertEquals("실전 문제", act.stage.title)
+    }
+
+    @JUnitTest
+    fun classOpensCollapsedUnitFirst() {
+        val act = Grammar.nextClassAction(listOf(unit(0, "접힌 유닛", emptyList())), emptySet())
+        assertTrue(act is Grammar.ClassAction.Open)
+        assertEquals(0, (act as Grammar.ClassAction.Open).unit.i)
+    }
+
+    @JUnitTest
+    fun classReturnsNoneWhenNothingLeft() {
+        val units = listOf(unit(0, "끝난 유닛", listOf(stage("0_0", "개념 톡"))))
+        assertTrue(Grammar.nextClassAction(units, setOf("0_0")) is Grammar.ClassAction.None)
+        assertTrue(Grammar.nextClassAction(emptyList(), emptySet()) is Grammar.ClassAction.None)
+    }
+
+    @JUnitTest
+    fun classPutsUnknownStageNamesLast() {
+        val units = listOf(
+            unit(0, "u", listOf(stage("0_0", "알 수 없는 단계"), stage("0_1", "서술형 문제")))
+        )
+        val act = Grammar.nextClassAction(units, emptySet()) as Grammar.ClassAction.Start
+        assertEquals("서술형 문제", act.stage.title)
     }
 }
