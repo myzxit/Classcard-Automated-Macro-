@@ -110,6 +110,8 @@ object Grammar {
         val feedback: String = "none",
         val hasNext: Boolean = false,
         val units: List<UnitRow> = emptyList(),
+        val cards: Int = 0,      // 개념 톡 전체 카드 수
+        val shown: Int = 0,      // 개념 톡에서 지금까지 나온 카드 수
         val rows: List<Row> = emptyList(),
         val left: List<MatchCell> = emptyList(),
         val right: List<MatchCell> = emptyList(),
@@ -179,12 +181,48 @@ object Grammar {
             return { kind: 'class', units: units };
         }
 
-        // ================================================ 2) 종료 화면
+        // ================================================ 2) 개념 톡 (grammarTalk)
+        // 설명 카드(.talk-card)를 Enter 로 한 장씩 넘기는 화면. 중간에 객관식/빈칸이 섞여 있다.
+        var talkCards = document.querySelectorAll('.talk-card');
+        if (talkCards.length) {
+            var shown = [];
+            for (var i = 0; i < talkCards.length; i++) if (vis(talkCards[i])) shown.push(talkCards[i]);
+            var last = shown.length ? shown[shown.length - 1] : null;
+
+            // 빈칸 채우기: 아래 .select-body 에서 고른다
+            var picks = [];
+            var sopts = document.querySelectorAll('.select-body .select-option');
+            for (var i = 0; i < sopts.length; i++) if (vis(sopts[i])) picks.push(sopts[i]);
+
+            // 객관식: 마지막(현재) 카드 안의 보기
+            var talkType = picks.length ? 'talk-select' : '';
+            if (!picks.length && last) {
+                var oi = last.querySelectorAll('.content-row.option-item');
+                for (var i = 0; i < oi.length; i++) if (vis(oi[i])) picks.push(oi[i]);
+                if (picks.length) talkType = 'talk-option';
+            }
+
+            var tchoices = [];
+            for (var i = 0; i < picks.length; i++) {
+                picks[i].setAttribute('data-cc-opt', String(i));
+                tchoices.push({ i: i, text: txt(picks[i]) });
+            }
+
+            return {
+                kind: 'talk', type: talkType,
+                qid: shown.length + '|' + (last ? (last.getAttribute('data-idx') || '') : ''),
+                sig: shown.length + '|' + (last ? (last.getAttribute('data-idx') || '') : '')
+                     + '|' + tchoices.length,
+                choices: tchoices, cards: talkCards.length, shown: shown.length
+            };
+        }
+
+        // ================================================ 3) 종료 화면
         if (any(END_SEL)) {
             return { kind: 'end' };
         }
 
-        // ================================================ 3) 문법 문제 화면
+        // ================================================ 4) 문법 문제 화면
         // 문제는 .flip-card 로 겹겹이 쌓여 있고 현재 카드에만 .showing 이 붙는다.
         // (.next / .hidden 카드도 화면에 걸쳐 보일 수 있어 반드시 .showing 으로 좁힌다)
         var items = document.querySelectorAll('.flip-card.showing .gclass-q-item');
@@ -345,7 +383,7 @@ object Grammar {
             };
         }
 
-        // ================================================ 4) 이름을 모르는 화면 (폴백)
+        // ================================================ 5) 이름을 모르는 화면 (폴백)
         var question = '';
         var qSel = ['.quest-front', '.quest-back', '.quest-body', '.question-body',
                     '.quiz-question', '.txt-question', '.card-question'];
@@ -523,6 +561,8 @@ object Grammar {
 
         return State(
             kind = data.optString("kind", "idle"),
+            cards = data.optInt("cards", 0),
+            shown = data.optInt("shown", 0),
             type = data.optString("type", ""),
             qid = data.optString("qid", ""),
             sig = data.optString("sig", ""),
@@ -752,6 +792,7 @@ object Grammar {
         var lastQid = ""
         var idleStreak = 0
         var ignoredClicks = 0
+        var talkStuck = 0      // 개념 톡에서 Enter 가 먹히지 않은 연속 횟수
 
         try {
             while (!stop.isSet) {
@@ -785,6 +826,57 @@ object Grammar {
                     }
                     if (stop.isSet) break
                     if (stop.await(1500)) break
+                    continue
+                }
+
+                // ------------------------------------------ 개념 톡 (설명 카드)
+                if (state.kind == "talk") {
+                    if (state.choices.isNotEmpty()) {
+                        // 중간 퀴즈 — 정답이 화면에 없으므로 찍고 오답을 기억한다
+                        val wrong = wrongByQid.getOrPut(state.qid) { mutableSetOf() }
+                        val pick = pickChoice(state.choices, null, wrong)
+                        if (pick != null) {
+                            wrong.add(pick)   // 한 번 고른 보기는 다시 고르지 않는다
+                            if (DEBUG) {
+                                val label = state.choices.firstOrNull { it.index == pick }?.raw ?: ""
+                                d.log("[문법] (개념 톡) 보기 ${pick + 1} '${label.take(20)}'")
+                            }
+                            clickTagged(d, "data-cc-opt", pick.toString(), false)
+                            if (stop.await(900)) break
+                            continue
+                        }
+                    }
+
+                    // 보기가 없으면 Enter 로 다음 설명 카드를 넘긴다
+                    d.pressEnter()
+                    if (stop.await(700)) break
+
+                    val after = readState(d)
+                    if (after != null && after.kind == "talk" && after.sig == state.sig) {
+                        talkStuck++
+                        if (talkStuck == 3) {
+                            // Enter 가 안 먹는 화면일 수 있어 카드를 눌러 본다
+                            d.evalBool(
+                                """
+                                var cards = document.querySelectorAll('.talk-card');
+                                for (var i = cards.length - 1; i >= 0; i--) {
+                                    if (cards[i].offsetParent !== null) { cards[i].click(); return true; }
+                                }
+                                return false;
+                                """
+                            )
+                        }
+                        if (talkStuck >= IDLE_GIVE_UP) {
+                            d.log("[문법] 개념 톡이 더 넘어가지 않습니다 -> 종료")
+                            stop.set()
+                            break
+                        }
+                    } else {
+                        if (talkStuck > 0) talkStuck = 0
+                        if (after != null && after.kind == "talk" && DEBUG) {
+                            d.log("[문법] (개념 톡) ${after.shown}/${after.cards}장")
+                        }
+                    }
                     continue
                 }
 
