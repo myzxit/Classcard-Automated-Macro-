@@ -1381,7 +1381,7 @@ object Grammar {
                     // 화면에 '계속하기 (Enter)' 링크가 있으면 그걸 누른다 —
                     // 폰에서는 키보드 포커스가 없어 Enter 만으로는 넘어가지 않는 화면이 있다.
                     if (state.cont) {
-                        if (!clickTagged(d, "data-cc-cont", 1, talkStuck >= 1)) d.pressEnter()
+                        if (!clickTagged(d, "data-cc-cont", "1", talkStuck >= 1)) d.pressEnter()
                     } else {
                         d.pressEnter()
                     }
