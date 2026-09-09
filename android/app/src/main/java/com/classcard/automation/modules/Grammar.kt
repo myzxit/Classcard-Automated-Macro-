@@ -159,14 +159,18 @@ object Grammar {
                 var u = unitItems[i];
                 var title = u.querySelector('.unit-title');
                 var nameEl = u.querySelector('.unit-name');
+                var uname = txt(nameEl);
                 var stages = [];
                 var boxes = u.querySelectorAll('.unit-set-list .set-box');
                 for (var j = 0; j < boxes.length; j++) {
                     var b = boxes[j];
-                    b.setAttribute('data-cc-stage', i + '_' + j);
+                    var stitle = txt(b.querySelector('.title')) || txt(b);
+                    // 페이지를 다시 열어도 변하지 않는 키 (자리 번호를 쓰면 잠금이 풀릴 때 어긋난다)
+                    var skey = uname + '|' + stitle;
+                    b.setAttribute('data-cc-stage', skey);
                     stages.push({
-                        key: i + '_' + j,
-                        title: txt(b.querySelector('.title')) || txt(b),
+                        key: skey,
+                        title: stitle,
                         locked: b.className.indexOf('lock') >= 0,
                         visible: vis(b)
                     });
@@ -174,7 +178,7 @@ object Grammar {
                 u.setAttribute('data-cc-unit', String(i));
                 units.push({
                     i: i,
-                    name: txt(nameEl),
+                    name: uname,
                     locked: u.className.indexOf('lock') >= 0,
                     open: !!(title && title.getAttribute('data-open') === '1'),
                     hasTitle: !!title,
@@ -187,10 +191,12 @@ object Grammar {
         // ================================================ 2) 개념 톡 (grammarTalk)
         // 설명 카드(.talk-card)를 Enter 로 한 장씩 넘기는 화면. 중간에 객관식/빈칸이 섞여 있다.
         var talkCards = document.querySelectorAll('.talk-card');
-        if (talkCards.length) {
-            var shown = [];
-            for (var i = 0; i < talkCards.length; i++) if (vis(talkCards[i])) shown.push(talkCards[i]);
-            var last = shown.length ? shown[shown.length - 1] : null;
+        var shown = [];
+        for (var i = 0; i < talkCards.length; i++) if (vis(talkCards[i])) shown.push(talkCards[i]);
+        // 카드가 하나도 안 보이면 개념 톡 화면이 아니다(끝났거나 다른 화면).
+        // 여기서 걸러 두지 않으면 종료 화면을 개념 톡으로 오인한다.
+        if (shown.length) {
+            var last = shown[shown.length - 1];
 
             // 빈칸 채우기: 아래 .select-body 에서 고른다
             var picks = [];
@@ -903,6 +909,21 @@ object Grammar {
         var ignoredClicks = 0
         var talkStuck = 0      // 개념 톡에서 Enter 가 먹히지 않은 연속 횟수
         val talkTries = HashMap<String, Int>()   // 개념 톡 보기별 시도 횟수 (합성 -> 신뢰된 클릭 승격)
+        var classUrl = ""                        // 문법 클래스 페이지 주소 (단계가 끝나면 여기로 돌아온다)
+
+        /**
+         * 한 단계(개념 톡·연습 문제 …)가 끝났을 때 클래스 페이지로 돌아간다.
+         * 돌아가면 다음 단계를 이어서 진행한다. 돌아갈 곳이 없으면 false.
+         */
+        suspend fun backToClass(why: String): Boolean {
+            if (classUrl.isEmpty()) return false
+            d.log("[문법] $why -> 클래스 페이지로 돌아가 다음 단계를 진행합니다.")
+            d.loadUrl(classUrl)
+            d.waitForLoad(15000)
+            talkTries.clear()
+            stop.await(800)
+            return true
+        }
 
         try {
             while (!stop.isSet) {
@@ -914,6 +935,7 @@ object Grammar {
 
                 // ------------------------------------------ 문법 클래스 페이지
                 if (state.kind == "class") {
+                    d.currentUrl().let { if (it.isNotEmpty()) classUrl = it }
                     if (!DRIVE_CLASS_PAGE) {
                         d.log("[문법] 클래스 페이지입니다. 학습할 단계를 직접 열고 다시 실행하세요.")
                         stop.set()
@@ -980,6 +1002,7 @@ object Grammar {
                                     }
                                 }
                                 if ((wrongByQid[state.qid]?.size ?: 0) >= state.choices.size) {
+                                    if (backToClass("개념 톡에서 더 진행되지 않습니다")) continue
                                     d.log("[문법] 개념 톡 보기를 모두 눌러도 넘어가지 않습니다 -> 종료")
                                     stop.set()
                                     break
@@ -1013,6 +1036,7 @@ object Grammar {
                             )
                         }
                         if (talkStuck >= IDLE_GIVE_UP) {
+                            if (backToClass("개념 톡이 끝났거나 더 넘어가지 않습니다")) continue
                             d.log("[문법] 개념 톡이 더 넘어가지 않습니다 -> 종료")
                             stop.set()
                             break
@@ -1027,6 +1051,7 @@ object Grammar {
                 }
 
                 if (state.kind == "end") {
+                    if (backToClass("한 단계를 마쳤습니다")) continue
                     d.log("[문법] 종료 화면 감지 -> 끝")
                     stop.set()
                     break
@@ -1050,6 +1075,7 @@ object Grammar {
                             d.log("[문법] 문제도 버튼도 찾지 못했습니다. DEBUG 를 켜고 다시 실행해 보세요.")
                         }
                         if (idleStreak >= IDLE_GIVE_UP) {
+                            if (backToClass("이 단계에서 더 풀 문제가 없습니다")) { idleStreak = 0; continue }
                             d.log("[문법] 더 이상 풀 문제가 없습니다 -> 종료")
                             stop.set()
                             break
