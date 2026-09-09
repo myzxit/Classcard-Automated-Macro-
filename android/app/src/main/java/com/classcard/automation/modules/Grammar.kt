@@ -39,6 +39,12 @@ object Grammar {
      */
     var STEP_DELAY_MS = 3000L
 
+    /**
+     * 사이트 정답 데이터를 미리 다 읽어 둔 화면에서 쓰는 대기 시간(ms).
+     * 찍을 필요가 없으므로 기다리지 않고 바로바로 눌러 한 번에 다 맞춘다.
+     */
+    var KNOWN_STEP_MS = 700L
+
     /** 한 문제에서 이만큼 시도해도 넘어가지 않으면 다음 문제로 넘긴다. */
     var MAX_TRY_PER_QUESTION = 6
 
@@ -123,6 +129,7 @@ object Grammar {
         val shown: Int = 0,      // 개념 톡에서 지금까지 나온 카드 수
         val upcoming: String = "",  // 다음 설명 카드 (정답 단서)
         val cnt: Int = -1,          // 지금 채울 빈칸 번호 (페이지 정답 데이터의 인덱스)
+        val cont: Boolean = false,  // '계속하기 (Enter)' 링크가 있는가
         val rows: List<Row> = emptyList(),
         val left: List<MatchCell> = emptyList(),
         val right: List<MatchCell> = emptyList(),
@@ -256,13 +263,24 @@ object Grammar {
                 }
             }
 
+            // 카드 아래의 '계속하기 (Enter)' 링크. Enter 가 안 먹는 기기(폰)에서는 이걸 누른다.
+            var cont = false;
+            var links = document.querySelectorAll('a, .btn-next-talk, .talk-next, .btn-talk-next');
+            for (var i = 0; i < links.length; i++) {
+                if (!vis(links[i])) continue;
+                var lt = (links[i].textContent || '');
+                if (lt.indexOf('계속하기') < 0 && lt.indexOf('다음으로') < 0) continue;
+                links[i].setAttribute('data-cc-cont', '1');
+                cont = true;
+            }
+
             var talkKey = shown.length + '|' + (last ? (last.getAttribute('data-idx') || '') : '');
             return {
                 kind: 'talk', type: talkType,
                 qid: talkKey,
                 sig: talkKey + '|' + tchoices.length + written,
                 choices: tchoices, cards: talkCards.length, shown: shown.length,
-                upcoming: upcoming, cnt: cnt
+                upcoming: upcoming, cnt: cnt, cont: cont
             };
         }
 
@@ -629,6 +647,7 @@ object Grammar {
             shown = data.optInt("shown", 0),
             upcoming = data.optString("upcoming", "").trim(),
             cnt = data.optInt("cnt", -1),
+            cont = data.optBoolean("cont", false),
             type = data.optString("type", ""),
             qid = data.optString("qid", ""),
             sig = data.optString("sig", ""),
@@ -765,10 +784,14 @@ object Grammar {
             return r.width > 0 && r.height > 0;
         }
 
-        // ---- 문제 화면: 지금 보이는 카드의 card_idx 로 arr_answer 에서 찾는다
+        // 화면에 들어올 때 통째로 읽어 둔 정답표(없으면 그때그때 전역에서 읽는다)
+        var ALL = null;
+        try { ALL = (window.__ccGAll && typeof window.__ccGAll === 'object') ? window.__ccGAll : null; } catch (e) {}
+
+        // ---- 문제 화면: 지금 보이는 카드의 card_idx 로 정답표에서 찾는다
         var card = document.querySelector('.flip-card.showing');
         var list = (typeof arr_answer !== 'undefined' && arr_answer) ? arr_answer : null;
-        if (card && list && list.length) {
+        if (card && (list && list.length || ALL && ALL.order.length)) {
             var id = null;
             var ci = card.querySelector('[name="card_idx[]"], .card_idx');
             if (ci && ci.value) id = String(ci.value);
@@ -777,28 +800,43 @@ object Grammar {
                 if (item) id = item.getAttribute('data-idx');
             }
             if (id) {
-                for (var i = 0; i < list.length; i++) {
-                    if (String(list[i].card_idx) === String(id)) {
-                        return { src: 'arr_answer', answer: String(list[i].answer == null ? '' : list[i].answer) };
+                if (list) {
+                    for (var i = 0; i < list.length; i++) {
+                        if (String(list[i].card_idx) === String(id)) {
+                            return { src: 'arr_answer', answer: String(list[i].answer == null ? '' : list[i].answer) };
+                        }
                     }
+                }
+                if (ALL && ALL.byCard[id] != null) {
+                    return { src: '미리 읽은 정답표', answer: String(ALL.byCard[id]) };
                 }
             }
             // id 로 못 찾으면 카드 순서로 맞춰 본다
             var cards = document.querySelectorAll('.flip-card');
             for (var i = 0; i < cards.length; i++) {
-                if (cards[i] === card && list[i]) {
+                if (cards[i] !== card) continue;
+                if (list && list[i]) {
                     return { src: 'arr_answer(순서)', answer: String(list[i].answer == null ? '' : list[i].answer) };
+                }
+                if (ALL && ALL.order[i] != null) {
+                    return { src: '미리 읽은 정답표(순서)', answer: String(ALL.order[i]) };
                 }
             }
         }
 
         // ---- 개념 톡: 마지막으로 보이는 카드가 지금 카드
-        if (typeof arr_card !== 'undefined' && arr_card && arr_card.length) {
+        var talkList = (typeof arr_card !== 'undefined' && arr_card && arr_card.length) ? arr_card : null;
+        if (talkList || (ALL && ALL.talk.length)) {
             var tc = document.querySelectorAll('.talk-card');
             var idx = -1;
             for (var i = 0; i < tc.length; i++) if (vis(tc[i])) idx = i;
-            if (idx >= 0 && arr_card[idx]) {
-                return { src: 'arr_card', answer: String(arr_card[idx].answer == null ? '' : arr_card[idx].answer) };
+            if (idx >= 0) {
+                if (talkList && talkList[idx]) {
+                    return { src: 'arr_card', answer: String(talkList[idx].answer == null ? '' : talkList[idx].answer) };
+                }
+                if (ALL && ALL.talk[idx] != null) {
+                    return { src: '미리 읽은 정답표', answer: String(ALL.talk[idx]) };
+                }
             }
         }
         return null;
@@ -812,12 +850,18 @@ object Grammar {
     private val CHECK_ANSWER_SOURCE_JS = """
 
         var out = { quiz: 0, quizWith: 0, talk: 0, talkWith: 0 };
+        // 이 화면의 정답을 통째로 담아 둔다. 문제를 풀 때마다 다시 읽지 않고 여기서 꺼내 쓴다.
+        var box = { byCard: {}, order: [], talk: [] };
         try {
             if (typeof arr_answer !== 'undefined' && arr_answer && arr_answer.length) {
                 out.quiz = arr_answer.length;
                 for (var i = 0; i < arr_answer.length; i++) {
-                    var a = arr_answer[i] && arr_answer[i].answer;
-                    if (a != null && String(a).trim()) out.quizWith++;
+                    var row = arr_answer[i] || {};
+                    var a = row.answer;
+                    var v = a == null ? '' : String(a);
+                    box.order.push(v);
+                    if (row.card_idx != null) box.byCard[String(row.card_idx)] = v;
+                    if (v.trim()) out.quizWith++;
                 }
             }
         } catch (e) {}
@@ -826,10 +870,13 @@ object Grammar {
                 out.talk = arr_card.length;
                 for (var i = 0; i < arr_card.length; i++) {
                     var a = arr_card[i] && arr_card[i].answer;
-                    if (a != null && String(a).trim()) out.talkWith++;
+                    var v = a == null ? '' : String(a);
+                    box.talk.push(v);
+                    if (v.trim()) out.talkWith++;
                 }
             }
         } catch (e) {}
+        try { window.__ccGAll = box; } catch (e) {}
         return out;
     """
 
@@ -876,12 +923,12 @@ object Grammar {
         val talk = v.optInt("talk", 0)
         if (quiz > 0) {
             val w = v.optInt("quizWith", 0)
-            d.log("[문법] $label 정답 데이터 확인 — 문항 ${quiz}개 중 정답 ${w}개 읽음")
+            d.log("[문법] $label 정답 데이터 확인 — 문항 ${quiz}개 중 정답 ${w}개를 한 번에 읽었습니다.")
             return w > 0
         }
         if (talk > 0) {
             val w = v.optInt("talkWith", 0)
-            d.log("[문법] $label 정답 데이터 확인 — 카드 ${talk}장 중 정답 ${w}개 읽음")
+            d.log("[문법] $label 정답 데이터 확인 — 카드 ${talk}장 중 정답 ${w}개를 한 번에 읽었습니다.")
             return w > 0
         }
         d.log("[문법] $label 정답 데이터를 찾지 못했습니다 — 화면 정보와 채점 결과로 풉니다.")
@@ -1171,6 +1218,10 @@ object Grammar {
         var ignoredClicks = 0
         var talkStuck = 0      // 개념 톡에서 Enter 가 먹히지 않은 연속 횟수
         var checkedScreen = ""  // 정답 데이터를 확인한 화면 (단계가 바뀌면 다시 확인한다)
+        var fastScreen = false  // 이 화면의 정답을 전부 읽어 뒀는가 (읽어 뒀으면 빠르게 진행)
+
+        /** 한 동작 뒤에 기다릴 시간. 정답을 다 아는 화면은 짧게. */
+        fun pace(): Long = if (fastScreen) KNOWN_STEP_MS else STEP_DELAY_MS
         val talkTries = HashMap<String, Int>()   // 개념 톡 보기별 시도 횟수 (합성 -> 신뢰된 클릭 승격)
         var classUrl = ""                        // 문법 클래스 페이지 주소 (단계가 끝나면 여기로 돌아온다)
 
@@ -1184,6 +1235,8 @@ object Grammar {
             d.loadUrl(classUrl)
             d.waitForLoad(15000)
             talkTries.clear()
+            checkedScreen = ""
+            fastScreen = false
             stop.await(STEP_DELAY_MS)
             return true
         }
@@ -1216,6 +1269,7 @@ object Grammar {
                         is ClassAction.Start -> {
                             triedStages.add(act.stage.key)
                             checkedScreen = ""        // 새 단계 -> 정답 데이터를 다시 확인한다
+                            fastScreen = false
                             d.log("[문법] '${act.unit.name}' — ${act.stage.title} 시작")
                             clickTagged(d, "data-cc-stage", act.stage.key, false)
                         }
@@ -1223,6 +1277,17 @@ object Grammar {
                     if (stop.isSet) break
                     if (stop.await(STEP_DELAY_MS)) break
                     continue
+                }
+
+                // 새 화면(단계)에 들어왔으면 그 화면의 정답을 전부 한 번에 읽어 둔다.
+                // 읽어 뒀으면(fastScreen) 문제마다 찍어 볼 필요가 없으므로 기다리지 않고 바로 푼다.
+                if (state.kind == "talk" || state.kind == "quiz") {
+                    val screen = state.kind + "|" + d.currentUrl()
+                    if (screen != checkedScreen) {
+                        checkedScreen = screen
+                        fastScreen = checkAnswerSource(d, if (state.kind == "talk") "개념 톡" else "문제 화면")
+                        if (fastScreen) d.log("[문법] 정답을 다 읽었습니다 — 기다리지 않고 한 번에 풉니다.")
+                    }
                 }
 
                 // ------------------------------------------ 개념 톡 (설명 카드)
@@ -1283,7 +1348,7 @@ object Grammar {
                                 )
                             }
                             clickTagged(d, "data-cc-opt", pick.toString(), trusted)
-                            if (stop.await(STEP_DELAY_MS)) break
+                            if (stop.await(pace())) break
 
                             val after = readState(d)
                             if (after != null && after.kind == "talk" && after.sig == state.sig) {
@@ -1312,9 +1377,15 @@ object Grammar {
                         }
                     }
 
-                    // 보기가 없으면 Enter 로 다음 설명 카드를 넘긴다
-                    d.pressEnter()
-                    if (stop.await(STEP_DELAY_MS)) break
+                    // 보기가 없으면 다음 설명 카드로 넘긴다.
+                    // 화면에 '계속하기 (Enter)' 링크가 있으면 그걸 누른다 —
+                    // 폰에서는 키보드 포커스가 없어 Enter 만으로는 넘어가지 않는 화면이 있다.
+                    if (state.cont) {
+                        if (!clickTagged(d, "data-cc-cont", 1, talkStuck >= 1)) d.pressEnter()
+                    } else {
+                        d.pressEnter()
+                    }
+                    if (stop.await(pace())) break
 
                     val after = readState(d)
                     if (after != null && after.kind == "talk" && after.sig == state.sig) {
@@ -1344,15 +1415,6 @@ object Grammar {
                         }
                     }
                     continue
-                }
-
-                // 새 화면(단계)에 들어왔으면 그 화면의 정답 데이터를 한 번 확인한다
-                if (state.kind == "talk" || state.kind == "quiz") {
-                    val screen = state.kind + "|" + d.currentUrl()
-                    if (screen != checkedScreen) {
-                        checkedScreen = screen
-                        checkAnswerSource(d, if (state.kind == "talk") "개념 톡" else "문제 화면")
-                    }
                 }
 
                 if (state.kind == "end") {
@@ -1414,7 +1476,7 @@ object Grammar {
                 // (분류·짝맞추기는 줄/칸 단위로 채점되므로 문항 단위 채점만 본다)
                 if (state.feedback != "none" && state.type != "group" && state.type != "match") {
                     clickNext(d)
-                    if (stop.await(STEP_DELAY_MS)) break
+                    if (stop.await(pace())) break
                     continue
                 }
 
@@ -1461,7 +1523,7 @@ object Grammar {
                 if (state.choices.isEmpty() && state.hasInput) {
                     if (state.filled) {
                         clickNext(d)          // 이미 다 써 넣었다 -> 채점하기
-                        if (stop.await(STEP_DELAY_MS)) break
+                        if (stop.await(pace())) break
                         continue
                     }
                     val values = if (answerList.size == state.blanks) answerList
@@ -1469,7 +1531,7 @@ object Grammar {
                     if (values.isEmpty()) {
                         d.log("[문법] 답을 알 수 없는 입력형 문제(빈칸 ${state.blanks}칸) — 비운 채 넘어갑니다.")
                         clickNext(d)
-                        if (stop.await(STEP_DELAY_MS)) break
+                        if (stop.await(pace())) break
                         continue
                     }
                     if (DEBUG) {
@@ -1482,7 +1544,7 @@ object Grammar {
                     }
                     if (stopped) break
                     clickNext(d)
-                    if (stop.await(STEP_DELAY_MS)) break
+                    if (stop.await(pace())) break
                     continue
                 }
 
@@ -1493,7 +1555,7 @@ object Grammar {
                     if (tile == null) {
                         scrambleClicks.remove(qid)
                         clickNext(d)
-                        if (stop.await(STEP_DELAY_MS)) break
+                        if (stop.await(pace())) break
                         continue
                     }
                     if (DEBUG) {
@@ -1513,7 +1575,7 @@ object Grammar {
                     )
                     if (pick == null) {
                         clickNext(d)
-                        if (stop.await(STEP_DELAY_MS)) break
+                        if (stop.await(pace())) break
                         continue
                     }
                     val (rowIdx, optIdx) = pick
@@ -1531,14 +1593,14 @@ object Grammar {
                     if (pair == null) {
                         failedPairs.remove(qid)
                         clickNext(d)
-                        if (stop.await(STEP_DELAY_MS)) break
+                        if (stop.await(pace())) break
                         continue
                     }
                     val (l, r) = pair
                     clickTagged(d, "data-cc-left", l.toString(), ignoredClicks >= TRUSTED_AFTER)
                     if (stop.await(250)) break
                     clickTagged(d, "data-cc-right", r.toString(), ignoredClicks >= TRUSTED_AFTER)
-                    if (stop.await(STEP_DELAY_MS)) break
+                    if (stop.await(pace())) break
 
                     // 짝이 맞으면 두 칸 모두 .end 가 된다. 아니면 실패로 기억한다.
                     val afterPair = readState(d)
@@ -1558,7 +1620,7 @@ object Grammar {
                 // 이미 하나를 골라 둔 상태면 채점하기를 눌러 결과를 받는다.
                 if (state.selectedIdx >= 0) {
                     clickNext(d)
-                    if (stop.await(STEP_DELAY_MS)) break
+                    if (stop.await(pace())) break
                     continue
                 }
 
@@ -1589,7 +1651,7 @@ object Grammar {
                     continue
                 }
 
-                if (stop.await(STEP_DELAY_MS)) break
+                if (stop.await(pace())) break
                 val after = readState(d)
                 // 화면도 그대로고 채점 표시도 없으면 클릭이 먹히지 않은 것으로 본다.
                 if (after != null && after.kind == "quiz" &&

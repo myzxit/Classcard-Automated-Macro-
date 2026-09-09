@@ -27,6 +27,9 @@ export const CONFIG = {
   // 문법훈련은 소리를 읽어 주고 카드가 애니메이션으로 나타나므로, 빨리 누르면
   // 페이지가 아직 못 받는다. 넉넉히 3초를 기다린다.
   stepDelayMs: 3000,
+  // 사이트 정답 데이터를 미리 다 읽어 둔 화면은 찍을 필요가 없다.
+  // 이럴 때는 기다리지 않고 바로바로 눌러 문제를 한 번에 다 맞춘다.
+  knownStepMs: 700,
   maxTryPerQuestion: 6,  // 한 문제에서 이만큼 시도하면 다음으로 넘어간다
   idleGiveUp: 30,        // 문제도 버튼도 못 찾은 채 이만큼 반복하면(≈12초) 종료
   driveClassPage: true,  // 클래스 페이지에서 유닛/단계를 스스로 눌러 진행할지
@@ -180,13 +183,24 @@ if (shown.length) {
         }
     }
 
+    // 카드 아래의 '계속하기 (Enter)' 링크. Enter 가 안 먹는 기기(폰)에서는 이걸 누른다.
+    var cont = false;
+    var links = document.querySelectorAll('a, .btn-next-talk, .talk-next, .btn-talk-next');
+    for (var i = 0; i < links.length; i++) {
+        if (!vis(links[i])) continue;
+        var lt = (links[i].textContent || '');
+        if (lt.indexOf('계속하기') < 0 && lt.indexOf('다음으로') < 0) continue;
+        links[i].setAttribute('data-cc-cont', '1');
+        cont = true;
+    }
+
     var talkKey = shown.length + '|' + (last ? (last.getAttribute('data-idx') || '') : '');
     return {
         kind: 'talk', type: talkType,
         qid: talkKey,
         sig: talkKey + '|' + tchoices.length + written,
         choices: tchoices, cards: talkCards.length, shown: shown.length,
-        upcoming: upcoming, cnt: cnt
+        upcoming: upcoming, cnt: cnt, cont: cont
     };
 }
 
@@ -630,12 +644,18 @@ export function nextGroupPick(rows, answer, wrongByRow) {
  */
 const CHECK_ANSWER_SOURCE_JS = `
 var out = { quiz: 0, quizWith: 0, talk: 0, talkWith: 0 };
+// 이 화면의 정답을 통째로 담아 둔다. 문제를 풀 때마다 다시 읽지 않고 여기서 꺼내 쓴다.
+var box = { byCard: {}, order: [], talk: [] };
 try {
     if (typeof arr_answer !== 'undefined' && arr_answer && arr_answer.length) {
         out.quiz = arr_answer.length;
         for (var i = 0; i < arr_answer.length; i++) {
-            var a = arr_answer[i] && arr_answer[i].answer;
-            if (a != null && String(a).trim()) out.quizWith++;
+            var row = arr_answer[i] || {};
+            var a = row.answer;
+            var v = a == null ? '' : String(a);
+            box.order.push(v);
+            if (row.card_idx != null) box.byCard[String(row.card_idx)] = v;
+            if (v.trim()) out.quizWith++;
         }
     }
 } catch (e) {}
@@ -644,23 +664,30 @@ try {
         out.talk = arr_card.length;
         for (var i = 0; i < arr_card.length; i++) {
             var a = arr_card[i] && arr_card[i].answer;
-            if (a != null && String(a).trim()) out.talkWith++;
+            var v = a == null ? '' : String(a);
+            box.talk.push(v);
+            if (v.trim()) out.talkWith++;
         }
     }
 } catch (e) {}
+try { window.__ccGAll = box; } catch (e) {}
 return out;
 `;
 
-/** 새 화면에 들어갈 때마다 정답 데이터를 확인해 로그에 남긴다. */
+/**
+ * 새 화면에 들어갈 때마다 그 화면의 정답을 **전부** 한 번에 읽어 둔다.
+ * (문제마다 다시 뒤지지 않고, 읽어 둔 표에서 꺼내 바로 정답을 누른다)
+ * 읽은 정답이 있으면 true — 이 화면은 찍지 않고 다 맞출 수 있다는 뜻이다.
+ */
 async function checkAnswerSource(d, label) {
   const v = await d.eval(CHECK_ANSWER_SOURCE_JS);
   if (!v) return false;
   if (v.quiz) {
-    d.log(`[문법] ${label} 정답 데이터 확인 — 문항 ${v.quiz}개 중 정답 ${v.quizWith}개 읽음`);
+    d.log(`[문법] ${label} 정답 데이터 확인 — 문항 ${v.quiz}개 중 정답 ${v.quizWith}개를 한 번에 읽었습니다.`);
     return v.quizWith > 0;
   }
   if (v.talk) {
-    d.log(`[문법] ${label} 정답 데이터 확인 — 카드 ${v.talk}장 중 정답 ${v.talkWith}개 읽음`);
+    d.log(`[문법] ${label} 정답 데이터 확인 — 카드 ${v.talk}장 중 정답 ${v.talkWith}개를 한 번에 읽었습니다.`);
     return v.talkWith > 0;
   }
   d.log(`[문법] ${label} 정답 데이터를 찾지 못했습니다 — 화면 정보와 채점 결과로 풉니다.`);
@@ -684,10 +711,14 @@ function vis(el) {
     return r.width > 0 && r.height > 0;
 }
 
-// ---- 문제 화면: 지금 보이는 카드의 card_idx 로 arr_answer 에서 찾는다
+// 화면에 들어올 때 통째로 읽어 둔 정답표(없으면 그때그때 전역에서 읽는다)
+var ALL = null;
+try { ALL = (window.__ccGAll && typeof window.__ccGAll === 'object') ? window.__ccGAll : null; } catch (e) {}
+
+// ---- 문제 화면: 지금 보이는 카드의 card_idx 로 정답표에서 찾는다
 var card = document.querySelector('.flip-card.showing');
 var list = (typeof arr_answer !== 'undefined' && arr_answer) ? arr_answer : null;
-if (card && list && list.length) {
+if (card && (list && list.length || ALL && ALL.order.length)) {
     var id = null;
     var ci = card.querySelector('[name="card_idx[]"], .card_idx');
     if (ci && ci.value) id = String(ci.value);
@@ -696,28 +727,43 @@ if (card && list && list.length) {
         if (item) id = item.getAttribute('data-idx');
     }
     if (id) {
-        for (var i = 0; i < list.length; i++) {
-            if (String(list[i].card_idx) === String(id)) {
-                return { src: 'arr_answer', answer: String(list[i].answer == null ? '' : list[i].answer) };
+        if (list) {
+            for (var i = 0; i < list.length; i++) {
+                if (String(list[i].card_idx) === String(id)) {
+                    return { src: 'arr_answer', answer: String(list[i].answer == null ? '' : list[i].answer) };
+                }
             }
+        }
+        if (ALL && ALL.byCard[id] != null) {
+            return { src: '미리 읽은 정답표', answer: String(ALL.byCard[id]) };
         }
     }
     // id 로 못 찾으면 카드 순서로 맞춰 본다
     var cards = document.querySelectorAll('.flip-card');
     for (var i = 0; i < cards.length; i++) {
-        if (cards[i] === card && list[i]) {
+        if (cards[i] !== card) continue;
+        if (list && list[i]) {
             return { src: 'arr_answer(순서)', answer: String(list[i].answer == null ? '' : list[i].answer) };
+        }
+        if (ALL && ALL.order[i] != null) {
+            return { src: '미리 읽은 정답표(순서)', answer: String(ALL.order[i]) };
         }
     }
 }
 
 // ---- 개념 톡: 마지막으로 보이는 카드가 지금 카드
-if (typeof arr_card !== 'undefined' && arr_card && arr_card.length) {
+var talkList = (typeof arr_card !== 'undefined' && arr_card && arr_card.length) ? arr_card : null;
+if (talkList || (ALL && ALL.talk.length)) {
     var tc = document.querySelectorAll('.talk-card');
     var idx = -1;
     for (var i = 0; i < tc.length; i++) if (vis(tc[i])) idx = i;
-    if (idx >= 0 && arr_card[idx]) {
-        return { src: 'arr_card', answer: String(arr_card[idx].answer == null ? '' : arr_card[idx].answer) };
+    if (idx >= 0) {
+        if (talkList && talkList[idx]) {
+            return { src: 'arr_card', answer: String(talkList[idx].answer == null ? '' : talkList[idx].answer) };
+        }
+        if (ALL && ALL.talk[idx] != null) {
+            return { src: '미리 읽은 정답표', answer: String(ALL.talk[idx]) };
+        }
     }
 }
 return null;
@@ -1039,6 +1085,10 @@ export async function grammar(d, answerDict, stop) {
   let ignoredClicks = 0;
   let talkStuck = 0;      // 개념 톡에서 Enter 가 먹히지 않은 연속 횟수
   let checkedScreen = '';  // 정답 데이터를 확인한 화면 (단계가 바뀌면 다시 확인한다)
+  let fastScreen = false;  // 이 화면의 정답을 전부 읽어 뒀는가 (읽어 뒀으면 빠르게 진행)
+
+  /** 한 동작 뒤에 기다릴 시간. 정답을 다 아는 화면은 짧게. */
+  const pace = () => (fastScreen ? CONFIG.knownStepMs : CONFIG.stepDelayMs);
   const talkTries = new Map();   // 개념 톡 보기별 시도 횟수 (합성 -> 신뢰된 클릭 승격용)
   let classUrl = '';             // 문법 클래스 페이지 주소 (단계가 끝나면 여기로 돌아온다)
 
@@ -1052,6 +1102,8 @@ export async function grammar(d, answerDict, stop) {
     await d.loadUrl(classUrl);
     await d.waitForLoad(15000);
     talkTries.clear();
+    checkedScreen = '';
+    fastScreen = false;
     await stop.await(CONFIG.stepDelayMs);
     return true;
   };
@@ -1084,11 +1136,23 @@ export async function grammar(d, answerDict, stop) {
         } else {
           triedStages.add(act.stage.key);
           checkedScreen = '';        // 새 단계 -> 정답 데이터를 다시 확인한다
+          fastScreen = false;
           d.log(`[문법] '${act.unit.name}' — ${act.stage.title} 시작`);
           await clickTagged(d, 'data-cc-stage', act.stage.key, false);
         }
         if (await stop.await(CONFIG.stepDelayMs)) break;
         continue;
+      }
+
+      // 새 화면(단계)에 들어왔으면 그 화면의 정답을 전부 한 번에 읽어 둔다.
+      // 읽어 뒀으면(fastScreen) 문제마다 찍어 볼 필요가 없으므로 기다리지 않고 바로 푼다.
+      if (state.kind === 'talk' || state.kind === 'quiz') {
+        const screen = state.kind + '|' + (await d.currentUrl());
+        if (screen !== checkedScreen) {
+          checkedScreen = screen;
+          fastScreen = await checkAnswerSource(d, state.kind === 'talk' ? '개념 톡' : '문제 화면');
+          if (fastScreen) d.log('[문법] 정답을 다 읽었습니다 — 기다리지 않고 한 번에 풉니다.');
+        }
       }
 
       // ---------------------------------------------- 개념 톡 (설명 카드)
@@ -1140,7 +1204,7 @@ export async function grammar(d, answerDict, stop) {
                 `${trusted ? ' [신뢰된 클릭]' : ''}`);
             }
             await clickTagged(d, 'data-cc-opt', pick, trusted);
-            if (await stop.await(CONFIG.stepDelayMs)) break;
+            if (await stop.await(pace())) break;
 
             const after = await readState(d);
             if (after && after.kind === 'talk' && after.sig === state.sig) {
@@ -1169,9 +1233,16 @@ export async function grammar(d, answerDict, stop) {
           }
         }
 
-        // 보기가 없으면 Enter 로 다음 설명 카드를 넘긴다
-        await d.pressEnter();
-        if (await stop.await(CONFIG.stepDelayMs)) break;
+        // 보기가 없으면 다음 설명 카드로 넘긴다.
+        // 화면에 '계속하기 (Enter)' 링크가 있으면 그걸 누른다 —
+        // 폰에서는 키보드 포커스가 없어 Enter 만으로는 넘어가지 않는 화면이 있다.
+        if (state.cont) {
+          const hit = await clickTagged(d, 'data-cc-cont', 1, talkStuck >= 1);
+          if (!hit) await d.pressEnter();
+        } else {
+          await d.pressEnter();
+        }
+        if (await stop.await(pace())) break;
 
         const after = await readState(d);
         if (after && after.kind === 'talk' && after.sig === state.sig) {
@@ -1206,15 +1277,6 @@ export async function grammar(d, answerDict, stop) {
           }
         }
         continue;
-      }
-
-      // 새 화면(단계)에 들어왔으면 그 화면의 정답 데이터를 한 번 확인한다
-      if (state.kind === 'talk' || state.kind === 'quiz') {
-        const screen = state.kind + '|' + (await d.currentUrl());
-        if (screen !== checkedScreen) {
-          checkedScreen = screen;
-          await checkAnswerSource(d, state.kind === 'talk' ? '개념 톡' : '문제 화면');
-        }
       }
 
       if (state.kind === 'end') {
@@ -1277,7 +1339,7 @@ export async function grammar(d, answerDict, stop) {
       // (분류·짝맞추기는 줄/칸 단위로 채점되므로 문항 단위 채점만 본다)
       if (state.feedback !== 'none' && state.type !== 'group' && state.type !== 'match') {
         await d.evalBool(CLICK_NEXT_JS);
-        if (await stop.await(CONFIG.stepDelayMs)) break;
+        if (await stop.await(pace())) break;
         continue;
       }
 
@@ -1317,7 +1379,7 @@ export async function grammar(d, answerDict, stop) {
       if (!state.choices.length && state.hasInput) {
         if (state.filled) {
           await d.evalBool(CLICK_NEXT_JS);          // 이미 다 써 넣었다 -> 채점하기
-          if (await stop.await(CONFIG.stepDelayMs)) break;
+          if (await stop.await(pace())) break;
           continue;
         }
         const values = (answerList.length === state.inputs.length)
@@ -1326,7 +1388,7 @@ export async function grammar(d, answerDict, stop) {
         if (!values.length) {
           d.log(`[문법] 답을 알 수 없는 입력형 문제(빈칸 ${state.inputs.length}칸) — 비운 채 넘어갑니다.`);
           await d.evalBool(CLICK_NEXT_JS);
-          if (await stop.await(CONFIG.stepDelayMs)) break;
+          if (await stop.await(pace())) break;
           continue;
         }
         if (CONFIG.debug) {
@@ -1338,7 +1400,7 @@ export async function grammar(d, answerDict, stop) {
         }
         if (stop.isSet) break;
         await d.evalBool(CLICK_NEXT_JS);
-        if (await stop.await(CONFIG.stepDelayMs)) break;
+        if (await stop.await(pace())) break;
         continue;
       }
 
@@ -1350,7 +1412,7 @@ export async function grammar(d, answerDict, stop) {
           // 문장 완성 -> 채점/다음
           scrambleClicks.delete(qid);
           await d.evalBool(CLICK_NEXT_JS);
-          if (await stop.await(CONFIG.stepDelayMs)) break;
+          if (await stop.await(pace())) break;
           continue;
         }
         if (CONFIG.debug) {
@@ -1369,7 +1431,7 @@ export async function grammar(d, answerDict, stop) {
         const pick = nextGroupPick(state.rows, answer, wrongByRow.get(qid));
         if (!pick) {
           await d.evalBool(CLICK_NEXT_JS);
-          if (await stop.await(CONFIG.stepDelayMs)) break;
+          if (await stop.await(pace())) break;
           continue;
         }
         if (CONFIG.debug) d.log(`[문법] (분류) ${pick.row + 1}번째 줄 -> 보기 ${pick.option + 1}`);
@@ -1387,13 +1449,13 @@ export async function grammar(d, answerDict, stop) {
         if (!pair) {
           failedPairs.delete(qid);
           await d.evalBool(CLICK_NEXT_JS);
-          if (await stop.await(CONFIG.stepDelayMs)) break;
+          if (await stop.await(pace())) break;
           continue;
         }
         await clickTagged(d, 'data-cc-left', pair.left, ignoredClicks >= TRUSTED_AFTER);
         if (await stop.await(250)) break;
         await clickTagged(d, 'data-cc-right', pair.right, ignoredClicks >= TRUSTED_AFTER);
-        if (await stop.await(CONFIG.stepDelayMs)) break;
+        if (await stop.await(pace())) break;
 
         // 짝이 맞으면 두 칸 모두 .end 가 된다. 아니면 실패로 기억한다.
         const afterPair = await readState(d);
@@ -1413,7 +1475,7 @@ export async function grammar(d, answerDict, stop) {
       // 이미 하나를 골라 둔 상태면 채점하기를 눌러 결과를 받는다.
       if (state.selectedIdx >= 0) {
         await d.evalBool(CLICK_NEXT_JS);
-        if (await stop.await(CONFIG.stepDelayMs)) break;
+        if (await stop.await(pace())) break;
         continue;
       }
 
@@ -1443,7 +1505,7 @@ export async function grammar(d, answerDict, stop) {
         continue;
       }
 
-      if (await stop.await(CONFIG.stepDelayMs)) break;
+      if (await stop.await(pace())) break;
       const after = await readState(d);
       // 화면도 그대로고 채점 표시도 없으면 클릭이 먹히지 않은 것으로 본다.
       if (after && after.kind === 'quiz' && after.sig === state.sig && after.feedback === 'none') {
