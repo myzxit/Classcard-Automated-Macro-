@@ -32,6 +32,13 @@ object Grammar {
     /** 진단용: true 면 문제별 파싱 결과와 클릭 판단을 로그에 출력. */
     var DEBUG = false
 
+    /**
+     * 한 동작(보기 클릭·채점하기·Enter·화면 이동) 뒤에 기다리는 시간(ms).
+     * 문법훈련은 소리를 읽어 주고 카드가 애니메이션으로 나타나므로, 빨리 누르면
+     * 페이지가 아직 못 받는다. 넉넉히 3초를 기다린다.
+     */
+    var STEP_DELAY_MS = 3000L
+
     /** 한 문제에서 이만큼 시도해도 넘어가지 않으면 다음 문제로 넘긴다. */
     var MAX_TRY_PER_QUESTION = 6
 
@@ -1037,7 +1044,7 @@ object Grammar {
             d.loadUrl(classUrl)
             d.waitForLoad(15000)
             talkTries.clear()
-            stop.await(800)
+            stop.await(STEP_DELAY_MS)
             return true
         }
 
@@ -1073,7 +1080,7 @@ object Grammar {
                         }
                     }
                     if (stop.isSet) break
-                    if (stop.await(1500)) break
+                    if (stop.await(STEP_DELAY_MS)) break
                     continue
                 }
 
@@ -1116,7 +1123,7 @@ object Grammar {
                                 )
                             }
                             clickTagged(d, "data-cc-opt", pick.toString(), trusted)
-                            if (stop.await(900)) break
+                            if (stop.await(STEP_DELAY_MS)) break
 
                             val after = readState(d)
                             if (after != null && after.kind == "talk" && after.sig == state.sig) {
@@ -1147,7 +1154,7 @@ object Grammar {
 
                     // 보기가 없으면 Enter 로 다음 설명 카드를 넘긴다
                     d.pressEnter()
-                    if (stop.await(700)) break
+                    if (stop.await(STEP_DELAY_MS)) break
 
                     val after = readState(d)
                     if (after != null && after.kind == "talk" && after.sig == state.sig) {
@@ -1238,7 +1245,7 @@ object Grammar {
                 // (분류·짝맞추기는 줄/칸 단위로 채점되므로 문항 단위 채점만 본다)
                 if (state.feedback != "none" && state.type != "group" && state.type != "match") {
                     clickNext(d)
-                    if (stop.await(600)) break
+                    if (stop.await(STEP_DELAY_MS)) break
                     continue
                 }
 
@@ -1271,14 +1278,14 @@ object Grammar {
                 if (state.choices.isEmpty() && state.hasInput) {
                     if (state.filled) {
                         clickNext(d)          // 이미 다 써 넣었다 -> 채점하기
-                        if (stop.await(700)) break
+                        if (stop.await(STEP_DELAY_MS)) break
                         continue
                     }
                     val values = fillValues(state.blanks, answer.ifEmpty { null }, state.hint)
                     if (values.isEmpty()) {
                         d.log("[문법] 답을 알 수 없는 입력형 문제(빈칸 ${state.blanks}칸) — 비운 채 넘어갑니다.")
                         clickNext(d)
-                        if (stop.await(600)) break
+                        if (stop.await(STEP_DELAY_MS)) break
                         continue
                     }
                     if (DEBUG) {
@@ -1291,7 +1298,7 @@ object Grammar {
                     }
                     if (stopped) break
                     clickNext(d)
-                    if (stop.await(800)) break
+                    if (stop.await(STEP_DELAY_MS)) break
                     continue
                 }
 
@@ -1302,7 +1309,7 @@ object Grammar {
                     if (tile == null) {
                         scrambleClicks.remove(qid)
                         clickNext(d)
-                        if (stop.await(700)) break
+                        if (stop.await(STEP_DELAY_MS)) break
                         continue
                     }
                     if (DEBUG) {
@@ -1322,7 +1329,7 @@ object Grammar {
                     )
                     if (pick == null) {
                         clickNext(d)
-                        if (stop.await(700)) break
+                        if (stop.await(STEP_DELAY_MS)) break
                         continue
                     }
                     val (rowIdx, optIdx) = pick
@@ -1340,14 +1347,14 @@ object Grammar {
                     if (pair == null) {
                         failedPairs.remove(qid)
                         clickNext(d)
-                        if (stop.await(700)) break
+                        if (stop.await(STEP_DELAY_MS)) break
                         continue
                     }
                     val (l, r) = pair
                     clickTagged(d, "data-cc-left", l.toString(), ignoredClicks >= TRUSTED_AFTER)
                     if (stop.await(250)) break
                     clickTagged(d, "data-cc-right", r.toString(), ignoredClicks >= TRUSTED_AFTER)
-                    if (stop.await(600)) break
+                    if (stop.await(STEP_DELAY_MS)) break
 
                     // 짝이 맞으면 두 칸 모두 .end 가 된다. 아니면 실패로 기억한다.
                     val afterPair = readState(d)
@@ -1367,7 +1374,7 @@ object Grammar {
                 // 이미 하나를 골라 둔 상태면 채점하기를 눌러 결과를 받는다.
                 if (state.selectedIdx >= 0) {
                     clickNext(d)
-                    if (stop.await(800)) break
+                    if (stop.await(STEP_DELAY_MS)) break
                     continue
                 }
 
@@ -1396,7 +1403,7 @@ object Grammar {
                     continue
                 }
 
-                if (stop.await(700)) break
+                if (stop.await(STEP_DELAY_MS)) break
                 val after = readState(d)
                 // 화면도 그대로고 채점 표시도 없으면 클릭이 먹히지 않은 것으로 본다.
                 if (after != null && after.kind == "quiz" &&

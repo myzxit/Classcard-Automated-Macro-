@@ -23,6 +23,10 @@ import { buildLookups } from './games.js';
 
 export const CONFIG = {
   debug: false,          // 진단 로그
+  // 한 동작(보기 클릭·채점하기·Enter·화면 이동) 뒤에 기다리는 시간.
+  // 문법훈련은 소리를 읽어 주고 카드가 애니메이션으로 나타나므로, 빨리 누르면
+  // 페이지가 아직 못 받는다. 넉넉히 3초를 기다린다.
+  stepDelayMs: 3000,
   maxTryPerQuestion: 6,  // 한 문제에서 이만큼 시도하면 다음으로 넘어간다
   idleGiveUp: 30,        // 문제도 버튼도 못 찾은 채 이만큼 반복하면(≈12초) 종료
   driveClassPage: true,  // 클래스 페이지에서 유닛/단계를 스스로 눌러 진행할지
@@ -903,7 +907,7 @@ export async function grammar(d, answerDict, stop) {
     await d.loadUrl(classUrl);
     await d.waitForLoad(15000);
     talkTries.clear();
-    await stop.await(800);
+    await stop.await(CONFIG.stepDelayMs);
     return true;
   };
 
@@ -937,7 +941,7 @@ export async function grammar(d, answerDict, stop) {
           d.log(`[문법] '${act.unit.name}' — ${act.stage.title} 시작`);
           await clickTagged(d, 'data-cc-stage', act.stage.key, false);
         }
-        if (await stop.await(1500)) break;
+        if (await stop.await(CONFIG.stepDelayMs)) break;
         continue;
       }
 
@@ -976,7 +980,7 @@ export async function grammar(d, answerDict, stop) {
                 `${trusted ? ' [신뢰된 클릭]' : ''}`);
             }
             await clickTagged(d, 'data-cc-opt', pick, trusted);
-            if (await stop.await(900)) break;
+            if (await stop.await(CONFIG.stepDelayMs)) break;
 
             const after = await readState(d);
             if (after && after.kind === 'talk' && after.sig === state.sig) {
@@ -1007,7 +1011,7 @@ export async function grammar(d, answerDict, stop) {
 
         // 보기가 없으면 Enter 로 다음 설명 카드를 넘긴다
         await d.pressEnter();
-        if (await stop.await(700)) break;
+        if (await stop.await(CONFIG.stepDelayMs)) break;
 
         const after = await readState(d);
         if (after && after.kind === 'talk' && after.sig === state.sig) {
@@ -1104,7 +1108,7 @@ export async function grammar(d, answerDict, stop) {
       // (분류·짝맞추기는 줄/칸 단위로 채점되므로 문항 단위 채점만 본다)
       if (state.feedback !== 'none' && state.type !== 'group' && state.type !== 'match') {
         await d.evalBool(CLICK_NEXT_JS);
-        if (await stop.await(600)) break;
+        if (await stop.await(CONFIG.stepDelayMs)) break;
         continue;
       }
 
@@ -1131,14 +1135,14 @@ export async function grammar(d, answerDict, stop) {
       if (!state.choices.length && state.hasInput) {
         if (state.filled) {
           await d.evalBool(CLICK_NEXT_JS);          // 이미 다 써 넣었다 -> 채점하기
-          if (await stop.await(700)) break;
+          if (await stop.await(CONFIG.stepDelayMs)) break;
           continue;
         }
         const values = fillValues(state.inputs.length, answer, state.hint);
         if (!values.length) {
           d.log(`[문법] 답을 알 수 없는 입력형 문제(빈칸 ${state.inputs.length}칸) — 비운 채 넘어갑니다.`);
           await d.evalBool(CLICK_NEXT_JS);
-          if (await stop.await(600)) break;
+          if (await stop.await(CONFIG.stepDelayMs)) break;
           continue;
         }
         if (CONFIG.debug) {
@@ -1150,7 +1154,7 @@ export async function grammar(d, answerDict, stop) {
         }
         if (stop.isSet) break;
         await d.evalBool(CLICK_NEXT_JS);
-        if (await stop.await(800)) break;
+        if (await stop.await(CONFIG.stepDelayMs)) break;
         continue;
       }
 
@@ -1162,7 +1166,7 @@ export async function grammar(d, answerDict, stop) {
           // 문장 완성 -> 채점/다음
           scrambleClicks.delete(qid);
           await d.evalBool(CLICK_NEXT_JS);
-          if (await stop.await(700)) break;
+          if (await stop.await(CONFIG.stepDelayMs)) break;
           continue;
         }
         if (CONFIG.debug) {
@@ -1181,7 +1185,7 @@ export async function grammar(d, answerDict, stop) {
         const pick = nextGroupPick(state.rows, answer, wrongByRow.get(qid));
         if (!pick) {
           await d.evalBool(CLICK_NEXT_JS);
-          if (await stop.await(700)) break;
+          if (await stop.await(CONFIG.stepDelayMs)) break;
           continue;
         }
         if (CONFIG.debug) d.log(`[문법] (분류) ${pick.row + 1}번째 줄 -> 보기 ${pick.option + 1}`);
@@ -1199,13 +1203,13 @@ export async function grammar(d, answerDict, stop) {
         if (!pair) {
           failedPairs.delete(qid);
           await d.evalBool(CLICK_NEXT_JS);
-          if (await stop.await(700)) break;
+          if (await stop.await(CONFIG.stepDelayMs)) break;
           continue;
         }
         await clickTagged(d, 'data-cc-left', pair.left, ignoredClicks >= TRUSTED_AFTER);
         if (await stop.await(250)) break;
         await clickTagged(d, 'data-cc-right', pair.right, ignoredClicks >= TRUSTED_AFTER);
-        if (await stop.await(600)) break;
+        if (await stop.await(CONFIG.stepDelayMs)) break;
 
         // 짝이 맞으면 두 칸 모두 .end 가 된다. 아니면 실패로 기억한다.
         const afterPair = await readState(d);
@@ -1225,7 +1229,7 @@ export async function grammar(d, answerDict, stop) {
       // 이미 하나를 골라 둔 상태면 채점하기를 눌러 결과를 받는다.
       if (state.selectedIdx >= 0) {
         await d.evalBool(CLICK_NEXT_JS);
-        if (await stop.await(800)) break;
+        if (await stop.await(CONFIG.stepDelayMs)) break;
         continue;
       }
 
@@ -1253,7 +1257,7 @@ export async function grammar(d, answerDict, stop) {
         continue;
       }
 
-      if (await stop.await(700)) break;
+      if (await stop.await(CONFIG.stepDelayMs)) break;
       const after = await readState(d);
       // 화면도 그대로고 채점 표시도 없으면 클릭이 먹히지 않은 것으로 본다.
       if (after && after.kind === 'quiz' && after.sig === state.sig && after.feedback === 'none') {
