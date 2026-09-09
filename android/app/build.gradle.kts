@@ -11,17 +11,37 @@ android {
         applicationId = "com.classcard.automation"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 3
+        versionName = "3.0.0"
     }
 
     buildFeatures {
         buildConfig = true
     }
 
+    /*
+     * 고정 서명 키.
+     *
+     * 기본 debug 키는 빌드하는 기계마다(=CI 러너마다) 새로 만들어지기 때문에,
+     * 빌드할 때마다 서명이 달라져 폰에서 "앱이 설치되지 않음"이 뜬다.
+     * 저장소에 넣어 둔 키로 항상 같게 서명해, 새 APK 를 덮어 설치할 수 있게 한다.
+     *
+     * 개인용 앱이라 스토어에 올리지 않으므로 비밀번호를 그대로 둔다.
+     * (이 키를 가진 사람은 같은 패키지 이름으로 서명할 수 있으니, 배포용으로는 쓰지 말 것)
+     */
+    signingConfigs {
+        create("shared") {
+            storeFile = rootProject.file("keystore/classcard.jks")
+            storePassword = "classcard"
+            keyAlias = "classcard"
+            keyPassword = "classcard"
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("shared")
         }
         release {
             isMinifyEnabled = false
@@ -29,8 +49,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // 서명 설정이 없어도 CI에서 조립만은 가능하도록 debug 서명을 사용한다.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("shared")
         }
     }
 
