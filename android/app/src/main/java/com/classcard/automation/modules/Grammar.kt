@@ -115,6 +115,7 @@ object Grammar {
         val cards: Int = 0,      // 개념 톡 전체 카드 수
         val shown: Int = 0,      // 개념 톡에서 지금까지 나온 카드 수
         val upcoming: String = "",  // 다음 설명 카드 (정답 단서)
+        val cnt: Int = -1,          // 지금 채울 빈칸 번호 (페이지 정답 데이터의 인덱스)
         val rows: List<Row> = emptyList(),
         val left: List<MatchCell> = emptyList(),
         val right: List<MatchCell> = emptyList(),
@@ -217,6 +218,17 @@ object Grammar {
                 tchoices.push({ i: i, text: txt(picks[i]) });
             }
 
+            // 지금 채워야 할 빈칸의 번호 (페이지 정답 데이터의 인덱스로 쓰인다)
+            var cnt = -1;
+            var blanks = document.querySelectorAll('.talk-card .user-text');
+            for (var i = 0; i < blanks.length; i++) {
+                if (!vis(blanks[i])) continue;
+                if ((blanks[i].value || '').trim()) continue;      // 이미 채워진 칸은 건너뛴다
+                var dc = blanks[i].getAttribute('data-cnt');
+                cnt = dc === null ? -1 : parseInt(dc, 10);
+                break;
+            }
+
             // 빈칸에 무엇이 써졌는지 / 고른 표시가 났는지 — 클릭이 먹혔는지 판단하는 근거
             var written = '';
             var uts = document.querySelectorAll('.talk-card .user-text');
@@ -243,7 +255,7 @@ object Grammar {
                 qid: talkKey,
                 sig: talkKey + '|' + tchoices.length + written,
                 choices: tchoices, cards: talkCards.length, shown: shown.length,
-                upcoming: upcoming
+                upcoming: upcoming, cnt: cnt
             };
         }
 
@@ -609,6 +621,7 @@ object Grammar {
             cards = data.optInt("cards", 0),
             shown = data.optInt("shown", 0),
             upcoming = data.optString("upcoming", "").trim(),
+            cnt = data.optInt("cnt", -1),
             type = data.optString("type", ""),
             qid = data.optString("qid", ""),
             sig = data.optString("sig", ""),
@@ -727,6 +740,109 @@ object Grammar {
             if (pick != null) return row.index to pick
         }
         return null
+    }
+
+    /**
+     * 페이지가 들고 있는 정답 데이터를 실행 중에 찾아낸다.
+     *
+     * 개념 톡은 정답을 화면에 그리지 않지만, 채점을 브라우저에서 하므로
+     * 정답이 페이지의 전역 변수 어딘가에 들어 있다. 그래서 전역을 훑어
+     * "지금 보기 중 하나와 정확히 같은 문자열"을 찾는다.
+     * (확장프로그램 grammar.js 의 FIND_ANSWER_JS 와 같은 스크립트)
+     */
+    private fun findAnswerJs(options: List<String>, cnt: Int): String {
+        val arr = JSONArray()
+        for (o in options) arr.put(o)
+        return FIND_ANSWER_TEMPLATE
+            .replace("__OPTIONS__", arr.toString())
+            .replace("__CNT__", cnt.toString())
+    }
+
+    private val FIND_ANSWER_TEMPLATE = """
+
+        var OPT = __OPTIONS__;
+        var CNT = __CNT__;
+        // 보기 텍스트에는 번호가 붙어 있다('4인칭'). 숫자·공백·문장부호를 떼고 비교한다.
+        var norm = function (s) {
+            return String(s == null ? '' : s).replace(/[^A-Za-z\\uac00-\\ud7a3]/g, '');
+        };
+        var optSet = {};
+        for (var i = 0; i < OPT.length; i++) optSet[norm(OPT[i])] = true;
+
+        var hits = {}, namedHits = {}, nodes = 0, indexedOnly = false;
+        // 이름이 정답을 뜻하는 자리(answer, ans, correct …)에서 나온 값은 따로 모아 우선한다.
+        var ANSWER_KEY = /(^|[^a-z])(ans|answer|correct|right|solution)([^a-z]|${'$'})|정답/i;
+
+        function look(v, depth, named) {
+            if (nodes++ > 60000 || v == null || depth > 4) return;   // 정답이 중첩돼 있어도 닿도록
+            if (typeof v === 'string') {
+                var n = norm(v);
+                if (n && optSet[n]) {
+                    hits[n] = (hits[n] || 0) + 1;
+                    if (named) namedHits[n] = (namedHits[n] || 0) + 1;
+                }
+                return;
+            }
+            if (typeof v !== 'object') return;
+            if (Array.isArray(v)) {
+                if (indexedOnly) {
+                    // 1차: 배열은 '이번 빈칸 번호' 자리만 본다 (정답 배열이면 그 자리가 답)
+                    if (CNT >= 0 && CNT < v.length) look(v[CNT], depth + 1, named);
+                    return;
+                }
+                for (var i = 0; i < v.length && i < 200; i++) look(v[i], depth + 1, named);
+                return;
+            }
+            for (var k in v) {
+                try { look(v[k], depth + 1, named || ANSWER_KEY.test(k)); } catch (e) {}
+            }
+        }
+
+        var skip = { window: 1, self: 1, top: 1, parent: 1, document: 1, location: 1, frames: 1 };
+        function sweep() {
+            // 브라우저 기본 전역이 수천 개라 그대로 훑으면 페이지 변수에 닿기 전에 예산이 끝난다.
+            // 페이지가 나중에 만든 전역이 뒤쪽에 오므로 뒤에서부터 본다.
+            var keys = Object.getOwnPropertyNames(window);
+            for (var i = keys.length - 1; i >= 0; i--) {
+                var k = keys[i];
+                if (skip[k]) continue;
+                var v;
+                try { v = window[k]; } catch (e) { continue; }
+                if (v == null || typeof v === 'function') continue;
+                if (typeof v !== 'string' && typeof v !== 'object') continue;
+                if (v === window || v.nodeType || v.window === v) continue;   // DOM/창 객체는 건너뛴다
+                try { look(v, 0, ANSWER_KEY.test(k)); } catch (e) {}
+            }
+            return Object.keys(hits);
+        }
+
+        // 1차: 빈칸 번호 자리만 (정답 배열에 다른 문제의 답이 같이 들어 있어도 헷갈리지 않는다)
+        if (CNT >= 0) {
+            indexedOnly = true;
+            var indexed = sweep();
+            if (indexed.length === 1) return indexed[0];
+        }
+
+        // 2차: 전체를 훑는다.
+        hits = {}; namedHits = {}; nodes = 0; indexedOnly = false;
+        var found = sweep();
+
+        // 이름이 '정답'인 자리에서 나온 값이 하나면 그것을 믿는다
+        // (보기 목록도 전역에 있는 경우가 많아, 그냥 세면 여러 개가 걸린다)
+        var named = Object.keys(namedHits);
+        if (named.length === 1) return named[0];
+
+        // 그 밖에는 보기와 맞는 값이 딱 하나일 때만 믿는다
+        return found.length === 1 ? found[0] : '';
+    """
+
+    /** 테스트용: 만들어지는 스크립트를 확인한다. */
+    fun findAnswerJsForTest(options: List<String>, cnt: Int): String = findAnswerJs(options, cnt)
+
+    /** 페이지 전역에서 이번 문제의 정답 문자열을 찾는다. 못 찾거나 애매하면 null. */
+    private suspend fun findAnswerInPage(d: Driver, options: List<String>, cnt: Int): String? {
+        val v = d.evalStringOrNull(findAnswerJs(options, cnt)) ?: return null
+        return v.trim().ifEmpty { null }
     }
 
     /**
@@ -967,9 +1083,23 @@ object Grammar {
                         val tried = wrongByQid[state.qid] ?: emptySet<Int>()
                         val open = state.choices.filter { it.index !in tried }
 
-                        // 1순위: 다음 카드 해설에서 정답을 읽어 고른다. 없으면 안 해 본 보기.
-                        var pick = pickTalkAnswer(open, state.upcoming)
-                        val byHint = pick != null
+                        // 1순위: 페이지가 들고 있는 정답 데이터, 2순위: 다음 카드 해설, 3순위: 안 해 본 보기
+                        var pick: Int? = null
+                        var how = "추정"
+                        val scanned = findAnswerInPage(d, state.choices.map { it.raw }, state.cnt)
+                        if (scanned != null) {
+                            val hit = state.choices.firstOrNull {
+                                Norm.mnorm(it.raw) == Norm.mnorm(scanned)
+                            }
+                            if (hit != null && hit.index !in tried) {
+                                pick = hit.index
+                                how = "페이지 정답 데이터"
+                            }
+                        }
+                        if (pick == null) {
+                            pick = pickTalkAnswer(open, state.upcoming)
+                            if (pick != null) how = "해설에서 정답 확인"
+                        }
                         if (pick == null) pick = pickChoice(state.choices, null, tried)
 
                         if (pick != null) {
@@ -981,8 +1111,7 @@ object Grammar {
                             if (DEBUG) {
                                 val label = state.choices.firstOrNull { it.index == pick }?.raw ?: ""
                                 d.log(
-                                    "[문법] (개념 톡) 보기 ${pick + 1} '${label.take(20)}'" +
-                                        (if (byHint) " (해설에서 정답 확인)" else " (추정)") +
+                                    "[문법] (개념 톡) 보기 ${pick + 1} '${label.take(20)}' ($how)" +
                                         (if (trusted) " [신뢰된 클릭]" else "")
                                 )
                             }
@@ -1124,8 +1253,19 @@ object Grammar {
                 }
                 triesByQid[qid] = tries + 1
 
-                // 정답: 화면에 들어 있는 것 > 단어장
-                val answer = state.answer.ifEmpty { lookupAnswer(state.question, lookups) ?: "" }
+                // 정답: 화면에 들어 있는 것 > 단어장 > 페이지가 들고 있는 정답 데이터
+                var answer = state.answer.ifEmpty { lookupAnswer(state.question, lookups) ?: "" }
+                var answerFrom = when {
+                    state.answer.isNotEmpty() -> "화면의 정답"
+                    answer.isNotEmpty() -> "단어장"
+                    else -> ""
+                }
+                if (answer.isEmpty() && state.choices.isNotEmpty()) {
+                    findAnswerInPage(d, state.choices.map { it.raw }, -1)?.let {
+                        answer = it
+                        answerFrom = "페이지 정답 데이터"
+                    }
+                }
 
                 // ------------------------------------------ 입력형
                 if (state.choices.isEmpty() && state.hasInput) {

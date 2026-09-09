@@ -330,4 +330,17 @@ class GrammarLogicTest {
         assertNull(Grammar.pickTalkAnswer(c, ""))
         assertNull(Grammar.pickTalkAnswer(emptyList(), "동사"))
     }
+
+    // ================================================ 페이지 정답 찾기 스크립트
+
+    @JUnitTest
+    fun findAnswerScriptCarriesOptionsAndBlankIndex() {
+        // 실제 실행은 브라우저에서 하지만, 보기와 빈칸 번호가 스크립트에 제대로 박히는지 확인한다.
+        val js = Grammar.findAnswerJsForTest(listOf("1동사원형", "4인칭"), 1)
+        assertTrue(js.contains("\"1동사원형\""))
+        assertTrue(js.contains("\"4인칭\""))
+        assertTrue(js.contains("var CNT = 1;"))
+        assertTrue(js.contains("__OPTIONS__").not())
+        assertTrue(js.contains("__CNT__").not())
+    }
 }

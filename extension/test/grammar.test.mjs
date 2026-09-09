@@ -16,6 +16,7 @@ import { buildLookups } from '../engine/modules/games.js';
 import {
   pickChoice, lookupAnswer, nextClassAction,
   nextScrambleIndex, nextPairAttempt, nextGroupPick, fillValues, pickTalkAnswer,
+  FIND_ANSWER_JS,
 } from '../engine/modules/grammar.js';
 
 const choices = (...texts) =>
@@ -272,4 +273,52 @@ test('단서가 없으면 null', () => {
   assert.equal(pickTalkAnswer(c, '잘 하셨어요! 이제 끝입니다.'), null);
   assert.equal(pickTalkAnswer(c, ''), null);
   assert.equal(pickTalkAnswer([], '동사'), null);
+});
+
+// ---------------------------------------------------------------- 페이지 정답 찾기
+// 개념 톡은 정답을 화면에 그리지 않는다. 채점을 브라우저가 하므로 정답이 전역 변수에
+// 들어 있고, 그것을 실행 중에 찾아낸다. 아래는 그 스크립트를 가짜 window 로 돌린 것.
+
+const runScan = (win, options, cnt) =>
+  new Function('window', 'Object', FIND_ANSWER_JS(options, cnt))(win, Object);
+
+test('빈칸 번호에 해당하는 자리의 정답을 찾는다', () => {
+  const win = { arr_talk_answer: ['동사', '인칭'] };
+  const opts = ['1동사원형', '2부사구', '3동사', '4인칭'];
+  assert.equal(runScan(win, opts, 0), '동사');
+  assert.equal(runScan(win, opts, 1), '인칭');
+});
+
+test('보기에 붙은 번호는 무시하고 맞춘다', () => {
+  assert.equal(runScan({ ans: ['목적어'] }, ['1주어', '2목적어'], 0), '목적어');
+});
+
+test('중첩된 객체 안에 있어도 찾는다', () => {
+  const win = { quiz: { data: { answers: ['who'] } } };
+  assert.equal(runScan(win, ['which', 'who', 'where'], 0), 'who');
+});
+
+test('보기와 맞는 값이 여럿이면 쓰지 않는다', () => {
+  // 칸 번호가 없고(-1) 정답 배열에 보기 두 개가 다 들어 있으면 확신할 수 없다
+  const win = { pool: ['동사', '인칭'] };
+  assert.equal(runScan(win, ['동사', '인칭'], -1), '');
+});
+
+test('없으면 빈 문자열', () => {
+  assert.equal(runScan({ x: ['전혀다른값'] }, ['동사', '인칭'], 0), '');
+});
+
+test('보기 목록도 전역에 있을 때, 이름이 정답인 자리를 고른다', () => {
+  // 실제 페이지에는 보기 목록과 정답이 함께 전역에 있다.
+  // 그냥 세면 보기가 다 걸리므로, answer/정답 같은 이름이 붙은 자리를 우선한다.
+  const win = {
+    QUIZ: { options: ['which', 'who', 'where'] },
+    quiz_answer_data: { current: { answer: 'who' } },
+  };
+  assert.equal(runScan(win, ['which', 'who', 'where'], -1), 'who');
+});
+
+test('이름이 정답인 자리가 여럿이면 쓰지 않는다', () => {
+  const win = { a: { answer: 'who' }, b: { answer: 'where' } };
+  assert.equal(runScan(win, ['which', 'who', 'where'], -1), '');
 });
