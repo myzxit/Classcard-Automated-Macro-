@@ -750,6 +750,145 @@ object Grammar {
     }
 
     /**
+     * 사이트가 채점에 쓰는 정답 데이터를 그대로 읽는다.
+     *
+     * 실제 소스(classcard.net/scripts/v2/gclass_test.js, grammar_talk.js)를 확인한 결과:
+     *   문제 화면 : var answer = obj_answer['q' + card_idx]  <- arr_answer[{card_idx, answer}]
+     *   개념 톡   : var card_obj = arr_card[card_idx]; card_obj.answer
+     * 즉 정답은 페이지 전역 arr_answer / arr_card 에 들어 있다. 그것을 그대로 쓴다.
+     */
+    private val READ_PAGE_ANSWER_JS = """
+
+        function vis(el) {
+            if (!el || el.offsetParent === null) return false;
+            var r = el.getBoundingClientRect();
+            return r.width > 0 && r.height > 0;
+        }
+
+        // ---- 문제 화면: 지금 보이는 카드의 card_idx 로 arr_answer 에서 찾는다
+        var card = document.querySelector('.flip-card.showing');
+        var list = (typeof arr_answer !== 'undefined' && arr_answer) ? arr_answer : null;
+        if (card && list && list.length) {
+            var id = null;
+            var ci = card.querySelector('[name="card_idx[]"], .card_idx');
+            if (ci && ci.value) id = String(ci.value);
+            if (!id) {
+                var item = card.querySelector('.gclass-q-item');
+                if (item) id = item.getAttribute('data-idx');
+            }
+            if (id) {
+                for (var i = 0; i < list.length; i++) {
+                    if (String(list[i].card_idx) === String(id)) {
+                        return { src: 'arr_answer', answer: String(list[i].answer == null ? '' : list[i].answer) };
+                    }
+                }
+            }
+            // id 로 못 찾으면 카드 순서로 맞춰 본다
+            var cards = document.querySelectorAll('.flip-card');
+            for (var i = 0; i < cards.length; i++) {
+                if (cards[i] === card && list[i]) {
+                    return { src: 'arr_answer(순서)', answer: String(list[i].answer == null ? '' : list[i].answer) };
+                }
+            }
+        }
+
+        // ---- 개념 톡: 마지막으로 보이는 카드가 지금 카드
+        if (typeof arr_card !== 'undefined' && arr_card && arr_card.length) {
+            var tc = document.querySelectorAll('.talk-card');
+            var idx = -1;
+            for (var i = 0; i < tc.length; i++) if (vis(tc[i])) idx = i;
+            if (idx >= 0 && arr_card[idx]) {
+                return { src: 'arr_card', answer: String(arr_card[idx].answer == null ? '' : arr_card[idx].answer) };
+            }
+        }
+        return null;
+    """
+
+    /**
+     * 이 화면에 정답 데이터가 실려 있는지 확인한다.
+     * 단계(개념 톡·연습 문제·서술형·실전·누적오답복습)마다 페이지가 새로 열리고
+     * 정답 데이터도 새로 실리므로, 새 화면에 들어갈 때마다 한 번 확인해 로그에 남긴다.
+     */
+    private val CHECK_ANSWER_SOURCE_JS = """
+
+        var out = { quiz: 0, quizWith: 0, talk: 0, talkWith: 0 };
+        try {
+            if (typeof arr_answer !== 'undefined' && arr_answer && arr_answer.length) {
+                out.quiz = arr_answer.length;
+                for (var i = 0; i < arr_answer.length; i++) {
+                    var a = arr_answer[i] && arr_answer[i].answer;
+                    if (a != null && String(a).trim()) out.quizWith++;
+                }
+            }
+        } catch (e) {}
+        try {
+            if (typeof arr_card !== 'undefined' && arr_card && arr_card.length) {
+                out.talk = arr_card.length;
+                for (var i = 0; i < arr_card.length; i++) {
+                    var a = arr_card[i] && arr_card[i].answer;
+                    if (a != null && String(a).trim()) out.talkWith++;
+                }
+            }
+        } catch (e) {}
+        return out;
+    """
+
+    /** 정답 문자열을 조각으로 나눈다 (빈칸별 ';', 복수정답 '|'). */
+    fun splitAnswers(raw: String?): List<String> =
+        (raw ?: "").split(Regex("[|;]"))
+            .map { it.replace(Regex("\\s*/\\s*"), " ").replace(Regex("\\s+"), " ").trim() }
+            .filter { it.isNotEmpty() }
+
+    /** 정답 후보들 중 하나와 실제로 맞는 보기를 고른다. 맞는 게 없으면 null. */
+    fun pickByAnswers(choices: List<Choice>, answers: List<String>, wrong: Set<Int>): Int? {
+        val open = choices.filter { it.index !in wrong }
+        val list = answers.map { Norm.mnorm(it).lowercase() }.filter { it.isNotEmpty() }
+        if (open.isEmpty() || list.isEmpty()) return null
+
+        // 1) 정확히 같은 보기부터. ('동사' 정답이 '동사원형' 보기에 걸리면 안 된다)
+        for (am in list) {
+            open.firstOrNull { it.norm.lowercase() == am }?.let { return it.index }
+        }
+        // 2) 정확히 같은 게 없을 때만 포함 관계로
+        for (am in list) {
+            open.firstOrNull {
+                val cn = it.norm.lowercase()
+                cn.isNotEmpty() && (cn.contains(am) || am.contains(cn))
+            }?.let { return it.index }
+        }
+        return null
+    }
+
+    /** 사이트 정답 데이터. (어디서 읽었는지, 정답 조각들) */
+    private data class PageAnswer(val src: String, val answers: List<String>)
+
+    private suspend fun readPageAnswer(d: Driver): PageAnswer? {
+        val o = d.evalObjectOrNull(READ_PAGE_ANSWER_JS) ?: return null
+        val answers = splitAnswers(o.optString("answer", ""))
+        if (answers.isEmpty()) return null
+        return PageAnswer(o.optString("src", "arr"), answers)
+    }
+
+    /** 새 화면에 들어갈 때마다 정답 데이터를 확인해 로그에 남긴다. */
+    private suspend fun checkAnswerSource(d: Driver, label: String): Boolean {
+        val v = d.evalObjectOrNull(CHECK_ANSWER_SOURCE_JS) ?: return false
+        val quiz = v.optInt("quiz", 0)
+        val talk = v.optInt("talk", 0)
+        if (quiz > 0) {
+            val w = v.optInt("quizWith", 0)
+            d.log("[문법] $label 정답 데이터 확인 — 문항 ${quiz}개 중 정답 ${w}개 읽음")
+            return w > 0
+        }
+        if (talk > 0) {
+            val w = v.optInt("talkWith", 0)
+            d.log("[문법] $label 정답 데이터 확인 — 카드 ${talk}장 중 정답 ${w}개 읽음")
+            return w > 0
+        }
+        d.log("[문법] $label 정답 데이터를 찾지 못했습니다 — 화면 정보와 채점 결과로 풉니다.")
+        return false
+    }
+
+    /**
      * 페이지가 들고 있는 정답 데이터를 실행 중에 찾아낸다.
      *
      * 개념 톡은 정답을 화면에 그리지 않지만, 채점을 브라우저에서 하므로
@@ -1031,6 +1170,7 @@ object Grammar {
         var idleStreak = 0
         var ignoredClicks = 0
         var talkStuck = 0      // 개념 톡에서 Enter 가 먹히지 않은 연속 횟수
+        var checkedScreen = ""  // 정답 데이터를 확인한 화면 (단계가 바뀌면 다시 확인한다)
         val talkTries = HashMap<String, Int>()   // 개념 톡 보기별 시도 횟수 (합성 -> 신뢰된 클릭 승격)
         var classUrl = ""                        // 문법 클래스 페이지 주소 (단계가 끝나면 여기로 돌아온다)
 
@@ -1075,6 +1215,7 @@ object Grammar {
                         }
                         is ClassAction.Start -> {
                             triedStages.add(act.stage.key)
+                            checkedScreen = ""        // 새 단계 -> 정답 데이터를 다시 확인한다
                             d.log("[문법] '${act.unit.name}' — ${act.stage.title} 시작")
                             clickTagged(d, "data-cc-stage", act.stage.key, false)
                         }
@@ -1090,10 +1231,29 @@ object Grammar {
                         val tried = wrongByQid[state.qid] ?: emptySet<Int>()
                         val open = state.choices.filter { it.index !in tried }
 
-                        // 1순위: 페이지가 들고 있는 정답 데이터, 2순위: 다음 카드 해설, 3순위: 안 해 본 보기
+                        // 1순위: 사이트가 채점에 쓰는 정답(arr_card), 2순위: 전역 훑기,
+                        // 3순위: 다음 카드 해설, 4순위: 안 해 본 보기
                         var pick: Int? = null
                         var how = "추정"
-                        val scanned = findAnswerInPage(d, state.choices.map { it.raw }, state.cnt)
+
+                        val page = readPageAnswer(d)
+                        if (page != null) {
+                            // 빈칸이 여러 개면 지금 채울 칸의 정답부터 본다
+                            val ordered =
+                                if (state.cnt >= 0 && state.cnt < page.answers.size) {
+                                    listOf(page.answers[state.cnt]) + page.answers
+                                } else {
+                                    page.answers
+                                }
+                            val hit = pickByAnswers(state.choices, ordered, tried)
+                            if (hit != null) {
+                                pick = hit
+                                how = "사이트 정답(${page.src})"
+                            }
+                        }
+
+                        val scanned = if (pick != null) null
+                            else findAnswerInPage(d, state.choices.map { it.raw }, state.cnt)
                         if (scanned != null) {
                             val hit = state.choices.firstOrNull {
                                 Norm.mnorm(it.raw) == Norm.mnorm(scanned)
@@ -1186,6 +1346,15 @@ object Grammar {
                     continue
                 }
 
+                // 새 화면(단계)에 들어왔으면 그 화면의 정답 데이터를 한 번 확인한다
+                if (state.kind == "talk" || state.kind == "quiz") {
+                    val screen = state.kind + "|" + d.currentUrl()
+                    if (screen != checkedScreen) {
+                        checkedScreen = screen
+                        checkAnswerSource(d, if (state.kind == "talk") "개념 톡" else "문제 화면")
+                    }
+                }
+
                 if (state.kind == "end") {
                     if (backToClass("한 단계를 마쳤습니다")) continue
                     d.log("[문법] 종료 화면 감지 -> 끝")
@@ -1260,16 +1429,30 @@ object Grammar {
                 }
                 triesByQid[qid] = tries + 1
 
-                // 정답: 화면에 들어 있는 것 > 단어장 > 페이지가 들고 있는 정답 데이터
-                var answer = state.answer.ifEmpty { lookupAnswer(state.question, lookups) ?: "" }
-                var answerFrom = when {
-                    state.answer.isNotEmpty() -> "화면의 정답"
-                    answer.isNotEmpty() -> "단어장"
-                    else -> ""
+                // 정답: 사이트가 채점에 쓰는 정답(arr_answer) > 화면의 정답 > 단어장 > 전역 훑기
+                var answer = ""
+                var answerFrom = ""
+                var answerList: List<String> = emptyList()
+
+                val pageAns = readPageAnswer(d)
+                if (pageAns != null) {
+                    answerList = pageAns.answers
+                    answer = pageAns.answers.first()
+                    answerFrom = "사이트 정답(${pageAns.src})"
+                }
+                if (answer.isEmpty()) {
+                    answer = state.answer.ifEmpty { lookupAnswer(state.question, lookups) ?: "" }
+                    answerFrom = when {
+                        state.answer.isNotEmpty() -> "화면의 정답"
+                        answer.isNotEmpty() -> "단어장"
+                        else -> ""
+                    }
+                    if (answer.isNotEmpty()) answerList = listOf(answer)
                 }
                 if (answer.isEmpty() && state.choices.isNotEmpty()) {
                     findAnswerInPage(d, state.choices.map { it.raw }, -1)?.let {
                         answer = it
+                        answerList = listOf(it)
                         answerFrom = "페이지 정답 데이터"
                     }
                 }
@@ -1281,7 +1464,8 @@ object Grammar {
                         if (stop.await(STEP_DELAY_MS)) break
                         continue
                     }
-                    val values = fillValues(state.blanks, answer.ifEmpty { null }, state.hint)
+                    val values = if (answerList.size == state.blanks) answerList
+                        else fillValues(state.blanks, answer.ifEmpty { null }, state.hint)
                     if (values.isEmpty()) {
                         d.log("[문법] 답을 알 수 없는 입력형 문제(빈칸 ${state.blanks}칸) — 비운 채 넘어갑니다.")
                         clickNext(d)
@@ -1378,7 +1562,9 @@ object Grammar {
                     continue
                 }
 
-                val pick = pickChoice(state.choices, answer.ifEmpty { null }, wrongByQid[qid] ?: emptySet())
+                val wrongSet = wrongByQid[qid] ?: emptySet()
+                val pick = pickByAnswers(state.choices, answerList, wrongSet)
+                    ?: pickChoice(state.choices, answer.ifEmpty { null }, wrongSet)
                 if (pick == null) {
                     if (stop.await(400)) break
                     continue

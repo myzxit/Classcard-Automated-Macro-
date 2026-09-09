@@ -343,4 +343,43 @@ class GrammarLogicTest {
         assertTrue(js.contains("__OPTIONS__").not())
         assertTrue(js.contains("__CNT__").not())
     }
+
+    // ================================================ 사이트 정답으로 고르기
+    // 실제 소스 확인 결과, 정답은 arr_answer/arr_card 에 ';' 또는 '|' 로 묶여 온다.
+
+    @JUnitTest
+    fun splitsAnswerString() {
+        assertEquals(listOf("동사", "인칭"), Grammar.splitAnswers("동사;인칭"))
+        assertEquals(listOf("who", "that"), Grammar.splitAnswers("who|that"))
+        assertEquals(listOf("do does"), Grammar.splitAnswers("do / does"))
+        assertEquals(emptyList<String>(), Grammar.splitAnswers(""))
+    }
+
+    @JUnitTest
+    fun picksExactChoiceFirst() {
+        // '동사' 가 정답인데 '동사원형' 을 고르면 안 된다
+        val c = choices("1동사원형", "2부사구", "3동사", "4인칭")
+        assertEquals(2, Grammar.pickByAnswers(c, listOf("동사"), emptySet()))
+        assertEquals(0, Grammar.pickByAnswers(c, listOf("동사원형"), emptySet()))
+    }
+
+    @JUnitTest
+    fun picksByContainmentWhenNoExact() {
+        val c = choices("in", "on", "at")
+        assertEquals(2, Grammar.pickByAnswers(c, listOf("at night"), emptySet()))
+    }
+
+    @JUnitTest
+    fun skipsAlreadyWrongChoices() {
+        val c = choices("who", "that")
+        assertNull(Grammar.pickByAnswers(c, listOf("who"), setOf(0)))
+        assertEquals(1, Grammar.pickByAnswers(c, listOf("who", "that"), setOf(0)))
+    }
+
+    @JUnitTest
+    fun returnsNullWhenNoChoiceMatches() {
+        val c = choices("a", "b")
+        assertNull(Grammar.pickByAnswers(c, listOf("zzz"), emptySet()))
+        assertNull(Grammar.pickByAnswers(c, emptyList(), emptySet()))
+    }
 }

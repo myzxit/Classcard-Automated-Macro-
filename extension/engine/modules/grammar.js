@@ -622,6 +622,150 @@ export function nextGroupPick(rows, answer, wrongByRow) {
 }
 
 /**
+ * 이 화면에 정답 데이터가 실려 있는지 확인한다.
+ *
+ * 문법은 단계(개념 톡·연습 문제·서술형·실전·누적오답복습)마다 페이지가 새로 열리고,
+ * 그때마다 정답 데이터도 새로 실린다. 그래서 새 화면에 들어갈 때마다 한 번 확인해
+ * 로그에 남긴다 — 정답으로 풀 수 있는 화면인지 바로 알 수 있다.
+ */
+const CHECK_ANSWER_SOURCE_JS = `
+var out = { quiz: 0, quizWith: 0, talk: 0, talkWith: 0 };
+try {
+    if (typeof arr_answer !== 'undefined' && arr_answer && arr_answer.length) {
+        out.quiz = arr_answer.length;
+        for (var i = 0; i < arr_answer.length; i++) {
+            var a = arr_answer[i] && arr_answer[i].answer;
+            if (a != null && String(a).trim()) out.quizWith++;
+        }
+    }
+} catch (e) {}
+try {
+    if (typeof arr_card !== 'undefined' && arr_card && arr_card.length) {
+        out.talk = arr_card.length;
+        for (var i = 0; i < arr_card.length; i++) {
+            var a = arr_card[i] && arr_card[i].answer;
+            if (a != null && String(a).trim()) out.talkWith++;
+        }
+    }
+} catch (e) {}
+return out;
+`;
+
+/** 새 화면에 들어갈 때마다 정답 데이터를 확인해 로그에 남긴다. */
+async function checkAnswerSource(d, label) {
+  const v = await d.eval(CHECK_ANSWER_SOURCE_JS);
+  if (!v) return false;
+  if (v.quiz) {
+    d.log(`[문법] ${label} 정답 데이터 확인 — 문항 ${v.quiz}개 중 정답 ${v.quizWith}개 읽음`);
+    return v.quizWith > 0;
+  }
+  if (v.talk) {
+    d.log(`[문법] ${label} 정답 데이터 확인 — 카드 ${v.talk}장 중 정답 ${v.talkWith}개 읽음`);
+    return v.talkWith > 0;
+  }
+  d.log(`[문법] ${label} 정답 데이터를 찾지 못했습니다 — 화면 정보와 채점 결과로 풉니다.`);
+  return false;
+}
+
+/**
+ * 사이트가 채점에 쓰는 정답 데이터를 그대로 읽는다.
+ *
+ * 실제 소스(classcard.net/scripts/v2/gclass_test.js, grammar_talk.js)를 확인한 결과:
+ *   문제 화면  : var answer = obj_answer['q' + card_idx]  ← arr_answer[{card_idx, answer}] 에서 만든다
+ *   개념 톡    : var card_obj = arr_card[card_idx]; card_obj.answer
+ * 즉 정답은 페이지 전역 arr_answer / arr_card 에 들어 있다. 그것을 그대로 쓴다.
+ *
+ * 정답 문자열은 여러 개일 수 있다 — 빈칸별로 ';', 객관식 복수정답은 '|' 로 구분된다.
+ */
+const READ_PAGE_ANSWER_JS = `
+function vis(el) {
+    if (!el || el.offsetParent === null) return false;
+    var r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+}
+
+// ---- 문제 화면: 지금 보이는 카드의 card_idx 로 arr_answer 에서 찾는다
+var card = document.querySelector('.flip-card.showing');
+var list = (typeof arr_answer !== 'undefined' && arr_answer) ? arr_answer : null;
+if (card && list && list.length) {
+    var id = null;
+    var ci = card.querySelector('[name="card_idx[]"], .card_idx');
+    if (ci && ci.value) id = String(ci.value);
+    if (!id) {
+        var item = card.querySelector('.gclass-q-item');
+        if (item) id = item.getAttribute('data-idx');
+    }
+    if (id) {
+        for (var i = 0; i < list.length; i++) {
+            if (String(list[i].card_idx) === String(id)) {
+                return { src: 'arr_answer', answer: String(list[i].answer == null ? '' : list[i].answer) };
+            }
+        }
+    }
+    // id 로 못 찾으면 카드 순서로 맞춰 본다
+    var cards = document.querySelectorAll('.flip-card');
+    for (var i = 0; i < cards.length; i++) {
+        if (cards[i] === card && list[i]) {
+            return { src: 'arr_answer(순서)', answer: String(list[i].answer == null ? '' : list[i].answer) };
+        }
+    }
+}
+
+// ---- 개념 톡: 마지막으로 보이는 카드가 지금 카드
+if (typeof arr_card !== 'undefined' && arr_card && arr_card.length) {
+    var tc = document.querySelectorAll('.talk-card');
+    var idx = -1;
+    for (var i = 0; i < tc.length; i++) if (vis(tc[i])) idx = i;
+    if (idx >= 0 && arr_card[idx]) {
+        return { src: 'arr_card', answer: String(arr_card[idx].answer == null ? '' : arr_card[idx].answer) };
+    }
+}
+return null;
+`;
+
+/** 페이지 정답 문자열을 조각으로 나눈다 (빈칸별 ';', 복수정답 '|'). */
+export function splitAnswers(raw) {
+  return String(raw == null ? '' : raw)
+    .split(/[|;]/)
+    .map((x) => x.replace(/\s*\/\s*/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+/** 정답 후보들 중 하나와 실제로 맞는 보기를 고른다. 맞는 게 없으면 null. */
+export function pickByAnswers(choices, answers, wrong) {
+  const open = (choices || []).filter((c) => !wrong || !wrong.has(c.index));
+  const list = (answers || []).map((a) => N.mnorm(a).toLowerCase()).filter(Boolean);
+  if (!open.length || !list.length) return null;
+
+  // 1) 정확히 같은 보기부터. ('동사' 정답이 '동사원형' 보기에 걸리면 안 된다)
+  for (const am of list) {
+    const hit = open.find((c) => c.norm.toLowerCase() === am);
+    if (hit) return hit.index;
+  }
+  // 2) 정확히 같은 게 없을 때만 포함 관계로 (정답이 문장이고 보기가 그 일부인 경우 등)
+  for (const am of list) {
+    const hit = open.find((c) => {
+      const cn = c.norm.toLowerCase();
+      return cn && (cn.includes(am) || am.includes(cn));
+    });
+    if (hit) return hit.index;
+  }
+  return null;
+}
+
+/** 사이트 정답 데이터를 읽는다. { src, answers[] } 또는 null. */
+async function readPageAnswer(d) {
+  try {
+    const v = await d.eval(READ_PAGE_ANSWER_JS);
+    if (!v || !v.answer) return null;
+    const answers = splitAnswers(v.answer);
+    return answers.length ? { src: v.src, answers, raw: String(v.answer) } : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
  * 페이지가 들고 있는 정답 데이터를 실행 중에 찾아낸다.
  *
  * 개념 톡은 정답을 화면에 그리지 않지만, 채점을 브라우저에서 하므로
@@ -894,6 +1038,7 @@ export async function grammar(d, answerDict, stop) {
   let idleStreak = 0;
   let ignoredClicks = 0;
   let talkStuck = 0;      // 개념 톡에서 Enter 가 먹히지 않은 연속 횟수
+  let checkedScreen = '';  // 정답 데이터를 확인한 화면 (단계가 바뀌면 다시 확인한다)
   const talkTries = new Map();   // 개념 톡 보기별 시도 횟수 (합성 -> 신뢰된 클릭 승격용)
   let classUrl = '';             // 문법 클래스 페이지 주소 (단계가 끝나면 여기로 돌아온다)
 
@@ -938,6 +1083,7 @@ export async function grammar(d, answerDict, stop) {
           await d.clickFirstVisible(`[data-cc-unit="${act.unit.i}"] .unit-title`);
         } else {
           triedStages.add(act.stage.key);
+          checkedScreen = '';        // 새 단계 -> 정답 데이터를 다시 확인한다
           d.log(`[문법] '${act.unit.name}' — ${act.stage.title} 시작`);
           await clickTagged(d, 'data-cc-stage', act.stage.key, false);
         }
@@ -951,15 +1097,29 @@ export async function grammar(d, answerDict, stop) {
           const tried = wrongByQid.get(state.qid) || new Set();
           const open = state.choices.filter((c) => !tried.has(c.index));
 
-          // 1순위: 페이지가 들고 있는 정답 데이터, 2순위: 다음 카드 해설, 3순위: 안 해 본 보기
+          // 1순위: 사이트가 채점에 쓰는 정답(arr_card), 2순위: 전역 훑기,
+          // 3순위: 다음 카드 해설, 4순위: 안 해 본 보기
           let pick = null;
           let how = '추정';
-          const scanned = await findAnswerInPage(
-            d, state.choices.map((c) => c.raw), typeof state.cnt === 'number' ? state.cnt : -1,
-          );
-          if (scanned) {
-            const hit = state.choices.find((c) => N.mnorm(c.raw) === N.mnorm(scanned));
-            if (hit && !tried.has(hit.index)) { pick = hit.index; how = '페이지 정답 데이터'; }
+
+          const page = await readPageAnswer(d);
+          if (page) {
+            // 빈칸이 여러 개면 지금 채울 칸의 정답부터 본다
+            const ordered = state.cnt >= 0 && page.answers[state.cnt]
+              ? [page.answers[state.cnt]].concat(page.answers)
+              : page.answers;
+            const hit = pickByAnswers(state.choices, ordered, tried);
+            if (hit !== null) { pick = hit; how = `사이트 정답(${page.src})`; }
+          }
+
+          if (pick === null) {
+            const scanned = await findAnswerInPage(
+              d, state.choices.map((c) => c.raw), typeof state.cnt === 'number' ? state.cnt : -1,
+            );
+            if (scanned) {
+              const hit = state.choices.find((c) => N.mnorm(c.raw) === N.mnorm(scanned));
+              if (hit && !tried.has(hit.index)) { pick = hit.index; how = '페이지 정답 데이터'; }
+            }
           }
           if (pick === null) {
             pick = pickTalkAnswer(open, state.upcoming);
@@ -1048,6 +1208,15 @@ export async function grammar(d, answerDict, stop) {
         continue;
       }
 
+      // 새 화면(단계)에 들어왔으면 그 화면의 정답 데이터를 한 번 확인한다
+      if (state.kind === 'talk' || state.kind === 'quiz') {
+        const screen = state.kind + '|' + (await d.currentUrl());
+        if (screen !== checkedScreen) {
+          checkedScreen = screen;
+          await checkAnswerSource(d, state.kind === 'talk' ? '개념 톡' : '문제 화면');
+        }
+      }
+
       if (state.kind === 'end') {
         if (await backToClass('한 단계를 마쳤습니다')) continue;
         d.log('[문법] 종료 화면 감지 -> 끝');
@@ -1123,12 +1292,25 @@ export async function grammar(d, answerDict, stop) {
       }
       triesByQid.set(qid, tries + 1);
 
-      // 정답: 화면에 들어 있는 것 > 단어장 > 페이지가 들고 있는 정답 데이터
-      let answer = state.answer || lookupAnswer(state.question, lookups);
-      let answerFrom = state.answer ? '화면의 정답' : (answer ? '단어장' : '');
+      // 정답: 사이트가 채점에 쓰는 정답(arr_answer) > 화면의 정답 > 단어장 > 전역 훑기
+      let answer = '';
+      let answerFrom = '';
+      let answerList = [];
+
+      const page = await readPageAnswer(d);
+      if (page) {
+        answerList = page.answers;
+        answer = page.answers[0];
+        answerFrom = `사이트 정답(${page.src})`;
+      }
+      if (!answer) {
+        answer = state.answer || lookupAnswer(state.question, lookups) || '';
+        answerFrom = state.answer ? '화면의 정답' : (answer ? '단어장' : '');
+        if (answer) answerList = [answer];
+      }
       if (!answer && state.choices.length) {
         const scanned = await findAnswerInPage(d, state.choices.map((c) => c.raw), -1);
-        if (scanned) { answer = scanned; answerFrom = '페이지 정답 데이터'; }
+        if (scanned) { answer = scanned; answerList = [scanned]; answerFrom = '페이지 정답 데이터'; }
       }
 
       // ---------------------------------------------- 입력형
@@ -1138,7 +1320,9 @@ export async function grammar(d, answerDict, stop) {
           if (await stop.await(CONFIG.stepDelayMs)) break;
           continue;
         }
-        const values = fillValues(state.inputs.length, answer, state.hint);
+        const values = (answerList.length === state.inputs.length)
+          ? answerList                                   // 빈칸 수와 정답 조각 수가 같으면 그대로
+          : fillValues(state.inputs.length, answer, state.hint);
         if (!values.length) {
           d.log(`[문법] 답을 알 수 없는 입력형 문제(빈칸 ${state.inputs.length}칸) — 비운 채 넘어갑니다.`);
           await d.evalBool(CLICK_NEXT_JS);
@@ -1233,7 +1417,9 @@ export async function grammar(d, answerDict, stop) {
         continue;
       }
 
-      const pick = pickChoice(state.choices, answer, wrongByQid.get(qid) || new Set());
+      const wrongSet = wrongByQid.get(qid) || new Set();
+      const pick = pickByAnswers(state.choices, answerList, wrongSet)
+        ?? pickChoice(state.choices, answer, wrongSet);
       if (pick === null) {
         if (await stop.await(400)) break;
         continue;

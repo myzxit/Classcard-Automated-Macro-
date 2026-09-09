@@ -16,7 +16,7 @@ import { buildLookups } from '../engine/modules/games.js';
 import {
   pickChoice, lookupAnswer, nextClassAction,
   nextScrambleIndex, nextPairAttempt, nextGroupPick, fillValues, pickTalkAnswer,
-  FIND_ANSWER_JS,
+  FIND_ANSWER_JS, splitAnswers, pickByAnswers,
 } from '../engine/modules/grammar.js';
 
 const choices = (...texts) =>
@@ -321,4 +321,38 @@ test('보기 목록도 전역에 있을 때, 이름이 정답인 자리를 고�
 test('이름이 정답인 자리가 여럿이면 쓰지 않는다', () => {
   const win = { a: { answer: 'who' }, b: { answer: 'where' } };
   assert.equal(runScan(win, ['which', 'who', 'where'], -1), '');
+});
+
+// ---------------------------------------------------------------- 사이트 정답으로 고르기
+// 실제 소스 확인 결과, 정답은 arr_answer/arr_card 에 ';' 또는 '|' 로 묶여 온다.
+
+test('정답 문자열을 조각으로 나눈다', () => {
+  assert.deepEqual(splitAnswers('동사;인칭'), ['동사', '인칭']);
+  assert.deepEqual(splitAnswers('who|that'), ['who', 'that']);
+  assert.deepEqual(splitAnswers('do / does'), ['do does']);
+  assert.deepEqual(splitAnswers(''), []);
+});
+
+test('정확히 같은 보기를 먼저 고른다', () => {
+  // '동사' 가 정답인데 '동사원형' 을 고르면 안 된다
+  const c = choices('1동사원형', '2부사구', '3동사', '4인칭');
+  assert.equal(pickByAnswers(c, ['동사'], new Set()), 2);
+  assert.equal(pickByAnswers(c, ['동사원형'], new Set()), 0);
+});
+
+test('정확히 같은 게 없으면 포함 관계로 고른다', () => {
+  const c = choices('in', 'on', 'at');
+  assert.equal(pickByAnswers(c, ['at night'], new Set()), 2);
+});
+
+test('이미 틀린 보기는 빼고 고른다', () => {
+  const c = choices('who', 'that');
+  assert.equal(pickByAnswers(c, ['who'], new Set([0])), null);
+  assert.equal(pickByAnswers(c, ['who', 'that'], new Set([0])), 1);
+});
+
+test('맞는 보기가 없으면 null', () => {
+  const c = choices('a', 'b');
+  assert.equal(pickByAnswers(c, ['zzz'], new Set()), null);
+  assert.equal(pickByAnswers(c, [], new Set()), null);
 });
