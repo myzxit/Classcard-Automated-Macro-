@@ -307,6 +307,69 @@ export function buildMaps(answerDict) {
   return { m, mnp };
 }
 
+/**
+ * 이 페이지가 들고 있는 카드 목록(study_data / card_list)을 읽는다.
+ * 단어장을 안 가져왔거나 제시문이 단어장과 조금 달라도, 페이지 자신의 데이터로 맞출 수 있다.
+ */
+async function pageCards(d) {
+  const arr = await d.eval(`
+    var src = null;
+    if (typeof study_data !== 'undefined' && study_data && study_data.length) src = study_data;
+    else if (typeof card_list !== 'undefined' && card_list && card_list.length) src = card_list;
+    if (!src) return null;
+    var out = [];
+    for (var i = 0; i < src.length; i++) {
+        var c = src[i] || {};
+        out.push({ front: String(c.front == null ? '' : c.front),
+                   back: String(c.back == null ? '' : c.back) });
+    }
+    return out;`);
+  return Array.isArray(arr) && arr.length ? arr : null;
+}
+
+/**
+ * 정답 후보 영어 문장들 — 페이지가 로그한 정답(preload 캡처) + 지금까지 모은 카드 목록.
+ */
+async function answerCandidates(d, maps) {
+  const out = [];
+  const logged = await d.eval(
+    'return (window.__cc_answers && window.__cc_answers.length) ? window.__cc_answers : null;',
+  );
+  if (Array.isArray(logged)) for (const x of logged) if (x) out.push(String(x));
+  for (const v of maps.m.values()) if (v) out.push(String(v));
+  return out;
+}
+
+/**
+ * 화면의 버튼(낱말)들과 **낱말 구성이 정확히 같은** 후보 문장을 고른다.
+ * 제시문 매칭이 실패해도, 버튼이 곧 그 문장의 낱말이므로 이걸로 정답을 특정할 수 있다.
+ */
+async function pickByTiles(d, candidates) {
+  if (!candidates || !candidates.length) return null;
+  const tiles = await listButtons(d);
+  const bag = (arr) => arr.map((t) => N.normEn(String(t).replace(/\*$/, ''))).filter(Boolean).sort().join('|');
+  const want = bag(tiles);
+  if (!want) return null;
+  for (const cand of candidates) {
+    if (bag(N.parseEnglishWords(cand)) === want) return cand;
+  }
+  return null;
+}
+
+/** 페이지 카드 목록을 {한글 -> 영어} 맵에 더한다. 이미 있는 키는 덮어쓰지 않는다. */
+function addCardsToMaps(maps, cards) {
+  for (const c of cards || []) {
+    const back = String(c.back || '').trim();
+    const front = String(c.front || '').trim();
+    if (!back || !front) continue;
+    const k = N.normalizeKor(back);
+    const knp = N.normalizeKor(N.stripParensSimple(back));
+    if (!maps.m.has(k)) maps.m.set(k, front);
+    if (!maps.mnp.has(knp)) maps.mnp.set(knp, front);
+  }
+  return maps;
+}
+
 export function matchEnglish(promptRaw, maps) {
   const p = N.normalizeKor(promptRaw);
   if (maps.m.has(p)) return maps.m.get(p);
@@ -543,13 +606,21 @@ async function clickSentence(d, english, makeWrong, stop) {
 export async function testSentence(d, answerDict, stop) {
   d.log('[문장 테스트] 시작');
 
-  if (!answerDict || !answerDict.size) {
-    d.log('[문장 테스트] 단어장 비어있음. 종료', 'error');
-    return;
+  // 정답은 페이지가 들고 있는 카드 목록에서 먼저 찾는다(단어장이 없어도 풀 수 있다).
+  const maps = buildMaps(answerDict || new Map());
+  const cards = await pageCards(d);
+  if (cards) {
+    addCardsToMaps(maps, cards);
+    d.log(`[문장 테스트] 페이지 카드 목록 로드 (카드 ${cards.length}개)`);
   }
-
-  const maps = buildMaps(answerDict);
-  d.log(`[문장 테스트] 매칭 데이터 로드 완료 (카드 ${answerDict.size}개)`);
+  if (answerDict && answerDict.size) {
+    d.log(`[문장 테스트] 단어장 로드 (카드 ${answerDict.size}개)`);
+  }
+  if (!maps.m.size) {
+    // 카드 목록도 단어장도 없으면, 사이트가 콘솔에 남기는 정답(arr_front)에 기댄다.
+    // 그것도 없으면 문제마다 '매칭 실패' 로그가 남는다.
+    d.log('[문장 테스트] 카드 목록·단어장이 없습니다 — 페이지가 남기는 정답으로 풉니다.', 'warn');
+  }
 
   const total = await countTotal(d);
   const wrongIdx = planWrongIndices(total, CONFIG.testSentenceTargetScore);
@@ -597,9 +668,23 @@ export async function testSentence(d, answerDict, stop) {
         continue;
       }
 
-      const english = matchEnglish(q.prompt, maps);
+      let english = matchEnglish(q.prompt, maps);
       if (!english) {
-        d.log(`[문장 테스트] 매칭 실패: '${q.prompt}'`, 'warn');
+        // 화면이 바뀌어 카드 목록이 새로 실렸을 수 있다 — 한 번 다시 읽어 본다.
+        const fresh = await pageCards(d);
+        if (fresh) {
+          addCardsToMaps(maps, fresh);
+          english = matchEnglish(q.prompt, maps);
+        }
+      }
+      if (!english) {
+        // 제시문으로 못 찾으면, 화면의 버튼들과 낱말이 정확히 일치하는 정답 문장을 고른다.
+        // (페이지가 로그하는 정답 arr_front + 카드 목록의 영어 문장이 후보)
+        english = await pickByTiles(d, await answerCandidates(d, maps));
+        if (english) d.log(`[문장 테스트] 화면 버튼과 맞는 정답 문장을 찾았습니다: '${english}'`);
+      }
+      if (!english) {
+        d.log(`[문장 테스트] 매칭 실패(건너뜀): '${q.prompt}'`, 'warn');
         answeredQids.add(q.qid);
         if (await stop.await(300)) break;
         continue;

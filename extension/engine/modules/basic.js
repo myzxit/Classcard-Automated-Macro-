@@ -173,6 +173,22 @@ async function clickAnswer(d, stop) {
     if (await stop.await(200)) return;
   }
 
+  // 원본(Selenium)은 진짜 마우스 클릭을 보냈다. 이 카드도 합성 click 은 무시하므로
+  // 신뢰된 클릭을 먼저 쓰고, 불가능할 때만 합성 클릭으로 폴백한다.
+  const locator = `
+    var cards = document.querySelectorAll('.showing');
+    for (var i = 0; i < cards.length; i++) {
+        if (cards[i].offsetParent === null) continue;
+        var t = cards[i].querySelector('.answer');
+        if (!t) continue;
+        t.scrollIntoView({ block: 'center', inline: 'center' });
+        var r = t.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: window.innerWidth };
+    }
+    return null;`;
+  if (await d.trustedClick(locator)) return;
+
   await d.evalBool(`
     var cards = document.querySelectorAll('.showing');
     for (var i = 0; i < cards.length; i++) {

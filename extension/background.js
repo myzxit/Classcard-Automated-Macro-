@@ -291,15 +291,20 @@ async function closeSession(accountId) {
 const MODES = {
   auto_all: { label: '전체 자동화', flow: AutoAll.runFullAutomation },
   one_set: { label: '한 세트 자동화', flow: AutoAll.runSingleSet },
-  memorize: { label: '암기', fn: Basic.memorize },
-  recall: { label: '리콜', fn: Basic.recall },
-  spell: { label: '스펠', fn: Basic.spell },
-  memorize_sentence: { label: '문장 암기', fn: Sentence.memorizeSentence },
-  recall_sentence: { label: '문장 리콜', fn: Sentence.recallSentence },
-  test: { label: '단어 테스트', fn: Games.test },
-  test_sentence: { label: '문장 테스트', fn: Games.testSentence },
-  matching: { label: '단어 매칭', fn: Games.matching },
-  scramble: { label: '문장 스크램블', fn: Games.scramble },
+  // noDict: 단어장 없이도 (화면·페이지 데이터만으로) 풀 수 있는 모드.
+  // 단어장이 있으면 그대로 넘겨 주고, 없으면 없는 채로 실행한다.
+  memorize: { label: '암기', fn: Basic.memorize, noDict: true },          // 정답이 필요 없다
+  recall: { label: '리콜', fn: Basic.recall, noDict: true },              // 정답이 필요 없다
+  spell: { label: '스펠', fn: Basic.spell },                              // 단어장 필수
+  // 문장 암기는 화면에서 정답 문장을 직접 읽는다 (단어장은 폴백).
+  memorize_sentence: { label: '문장 암기', fn: Sentence.memorizeSentence, noDict: true },
+  // 문장 리콜은 페이지가 로그하는 정답을 캡처한다.
+  recall_sentence: { label: '문장 리콜', fn: Sentence.recallSentence, noDict: true },
+  test: { label: '단어 테스트', fn: Games.test },                          // 단어장 필수
+  // 문장 테스트는 페이지 카드 목록(study_data)에서 정답을 읽으므로 단어장이 없어도 된다.
+  test_sentence: { label: '문장 테스트', fn: Games.testSentence, noDict: true },
+  matching: { label: '단어 매칭', fn: Games.matching, noDict: true },      // card_list 폴백
+  scramble: { label: '문장 스크램블', fn: Games.scramble, noDict: true },   // 페이지 데이터 폴백
   // 문법훈련은 단어장 없이도 (보기를 확인해 가며) 풀 수 있다.
   grammar: { label: '문법', fn: Grammar.grammar, noDict: true },
 };

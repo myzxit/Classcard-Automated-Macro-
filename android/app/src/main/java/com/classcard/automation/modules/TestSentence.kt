@@ -26,7 +26,7 @@ object TestSentence {
     )
 
     /** 한글(back) -> 영어(front) 정규화 맵 2종. m: 한글 그대로, mnp: 괄호 제거 버전(폴백). */
-    class Maps(val m: Map<String, String>, val mnp: Map<String, String>)
+    class Maps(val m: HashMap<String, String>, val mnp: HashMap<String, String>)
 
     fun buildMaps(d: Driver?, answerDict: AnswerDict): Maps {
         val m = HashMap<String, String>()
@@ -36,8 +36,71 @@ object TestSentence {
             m[Norm.normalizeKor(back)] = front
             mnp[Norm.normalizeKor(Norm.stripParensSimple(back))] = front
         }
-        d?.log("[문장 테스트] 매칭 데이터 로드 완료 (카드 ${answerDict.size}개)")
+        if (answerDict.isNotEmpty()) d?.log("[문장 테스트] 단어장 로드 (카드 ${answerDict.size}개)")
         return Maps(m, mnp)
+    }
+
+    /**
+     * 이 페이지가 들고 있는 카드 목록(study_data / card_list)을 읽는다.
+     * 단어장을 안 가져왔거나 제시문이 조금 달라도, 페이지 자신의 데이터로 맞출 수 있다.
+     */
+    private suspend fun pageCards(d: Driver): List<Pair<String, String>> {
+        val arr = d.evalArrayOrNull(
+            """
+            var src = null;
+            if (typeof study_data !== 'undefined' && study_data && study_data.length) src = study_data;
+            else if (typeof card_list !== 'undefined' && card_list && card_list.length) src = card_list;
+            if (!src) return null;
+            var out = [];
+            for (var i = 0; i < src.length; i++) {
+                var c = src[i] || {};
+                out.push({ front: String(c.front == null ? '' : c.front),
+                           back: String(c.back == null ? '' : c.back) });
+            }
+            return out;
+            """
+        ) ?: return emptyList()
+        val out = ArrayList<Pair<String, String>>()
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            out.add(o.optString("front", "").trim() to o.optString("back", "").trim())
+        }
+        return out
+    }
+
+    /** 페이지 카드 목록을 맵에 더한다. 이미 있는 키는 덮어쓰지 않는다. */
+    private fun addCardsToMaps(maps: Maps, cards: List<Pair<String, String>>) {
+        for ((front, back) in cards) {
+            if (front.isEmpty() || back.isEmpty()) continue
+            maps.m.putIfAbsent(Norm.normalizeKor(back), front)
+            maps.mnp.putIfAbsent(Norm.normalizeKor(Norm.stripParensSimple(back)), front)
+        }
+    }
+
+    /** 정답 후보 영어 문장 — 페이지가 로그한 정답(preload 캡처) + 지금까지 모은 카드 목록. */
+    private suspend fun answerCandidates(d: Driver, maps: Maps): List<String> {
+        val out = ArrayList<String>()
+        out.addAll(
+            d.evalStringList(
+                "return (window.__cc_answers && window.__cc_answers.length) ? window.__cc_answers : [];"
+            )
+        )
+        out.addAll(maps.m.values)
+        return out.filter { it.isNotBlank() }
+    }
+
+    /**
+     * 화면의 버튼(낱말)들과 낱말 구성이 정확히 같은 후보 문장을 고른다.
+     * 제시문 매칭이 실패해도, 버튼이 곧 그 문장의 낱말이므로 정답을 특정할 수 있다.
+     */
+    private suspend fun pickByTiles(d: Driver, candidates: List<String>): String? {
+        if (candidates.isEmpty()) return null
+        fun bag(words: List<String>) =
+            words.map { Norm.normEn(it.removeSuffix("*")) }.filter { it.isNotEmpty() }.sorted()
+                .joinToString("|")
+        val want = bag(listButtons(d))
+        if (want.isEmpty()) return null
+        return candidates.firstOrNull { bag(Norm.parseEnglishWords(it)) == want }
     }
 
     /** 한글 프롬프트로 영어 정답 문장 조회. 실패 시 괄호 제거 폴백. */
@@ -315,10 +378,18 @@ object TestSentence {
 
         AntiBlur.inject(d) // 백그라운드 실행 시 '이탈 감지' 우회
 
-        if (answerDict.isNullOrEmpty()) {
-            d.log("[문장 테스트] answer_dict 비어있음. 종료")
-        } else {
-            val maps = buildMaps(d, answerDict)
+        run {
+            // 정답은 페이지가 들고 있는 카드 목록에서 먼저 찾는다(단어장이 없어도 풀 수 있다).
+            val maps = buildMaps(d, answerDict ?: emptyMap())
+            val cards = pageCards(d)
+            if (cards.isNotEmpty()) {
+                addCardsToMaps(maps, cards)
+                d.log("[문장 테스트] 페이지 카드 목록 로드 (카드 ${cards.size}개)")
+            }
+            if (maps.m.isEmpty()) {
+                // 카드 목록도 단어장도 없으면 사이트가 콘솔에 남기는 정답(arr_front)에 기댄다.
+                d.log("[문장 테스트] 카드 목록·단어장이 없습니다 — 페이지가 남기는 정답으로 풉니다.")
+            }
 
             val total = countTotal(d)
             val wrongIdx = Test.planWrongIndices(total, TARGET_SCORE)
@@ -374,9 +445,24 @@ object TestSentence {
                     }
 
                     // 뒷면(단어 배열) -> 정답 조회 후 클릭
-                    val english = matchEnglish(q.prompt, maps)
+                    var english = matchEnglish(q.prompt, maps)
                     if (english == null) {
-                        d.log("[문장 테스트] 매칭 실패: '${q.prompt}'")
+                        // 화면이 바뀌어 카드 목록이 새로 실렸을 수 있다 — 한 번 다시 읽어 본다.
+                        val fresh = pageCards(d)
+                        if (fresh.isNotEmpty()) {
+                            addCardsToMaps(maps, fresh)
+                            english = matchEnglish(q.prompt, maps)
+                        }
+                    }
+                    if (english == null) {
+                        // 제시문으로 못 찾으면, 화면의 버튼들과 낱말이 정확히 일치하는 정답 문장을 고른다.
+                        english = pickByTiles(d, answerCandidates(d, maps))
+                        if (english != null) {
+                            d.log("[문장 테스트] 화면 버튼과 맞는 정답 문장을 찾았습니다: '$english'")
+                        }
+                    }
+                    if (english == null) {
+                        d.log("[문장 테스트] 매칭 실패(건너뜀): '${q.prompt}'")
                         answeredQids.add(q.qid)  // 건너뜀 (해당 문항 오답 처리)
                         if (stop.await(300)) break
                         continue

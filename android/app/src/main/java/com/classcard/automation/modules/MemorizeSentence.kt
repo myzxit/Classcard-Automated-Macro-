@@ -75,32 +75,50 @@ object MemorizeSentence {
         }
     }
 
-    /** 단일 raw 토큰으로 화면 scramble-item 한 개 매칭 + 클릭. 못 찾으면 false. */
+    /**
+     * 단일 raw 토큰으로 화면 scramble-item 한 개 매칭 + 클릭. 못 찾으면 false.
+     *
+     * 이 스크램블 타일은 합성 click 을 무시하고 신뢰된 입력에만 반응한다
+     * (원본이 Selenium 의 진짜 클릭을 쓴 이유. 문장 테스트도 같은 이유로 CDP 를 쓴다).
+     * 그래서 신뢰된 클릭을 먼저 보내고, 불가능할 때만 합성 클릭으로 폴백한다.
+     */
     private suspend fun tryClickToken(d: Driver, rawToken: String): Boolean {
-        if (rawToken == "-" || rawToken == "–" || rawToken == "—") {
-            return d.evalBool(
-                """
-                var items = document.querySelectorAll('.active .scramble-item:not(.clicked)');
-                for (var i = 0; i < items.length; i++) {
-                    var t = (items[i].textContent || '').trim();
-                    if (t === '-' || t === '–' || t === '—') { items[i].click(); return true; }
-                }
-                return false;
-                """
-            )
-        }
-        val cleaned = rawToken.replace(Regex("[^a-zA-Z0-9]"), "")
-        if (cleaned.isEmpty()) return false
-        return d.evalBool(
-            """
+        val isDash = rawToken == "-" || rawToken == "–" || rawToken == "—"
+        val cleaned = if (isDash) "" else rawToken.replace(Regex("[^a-zA-Z0-9]"), "")
+        if (!isDash && cleaned.isEmpty()) return false
+
+        val find = """
+            var DASH = $isDash;
             var target = ${cleaned.jsStr()};
             var items = document.querySelectorAll('.active .scramble-item:not(.clicked)');
+            var hit = null;
             for (var i = 0; i < items.length; i++) {
-                var t = (items[i].textContent || '').trim().replace(/[^a-zA-Z0-9]/g, '');
-                if (t === target) { items[i].click(); return true; }
+                var raw = (items[i].textContent || '').trim();
+                var t = DASH ? raw : raw.replace(/[^a-zA-Z0-9]/g, '');
+                var ok = DASH ? (raw === '-' || raw === '–' || raw === '—') : (t === target);
+                if (ok) { hit = items[i]; break; }
             }
-            return false;
-            """
+        """.trimIndent()
+
+        val clicked = d.trustedClick(
+            find + """
+
+            if (!hit) return null;
+            hit.scrollIntoView({ block: 'center', inline: 'center' });
+            var r = hit.getBoundingClientRect();
+            if (!r.width || !r.height) return null;
+            return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: window.innerWidth };
+            """.trimIndent()
+        )
+        if (clicked) return true
+
+        return d.evalBool(
+            find + """
+
+            if (!hit) return false;
+            hit.click();
+            return true;
+            """.trimIndent()
         )
     }
 

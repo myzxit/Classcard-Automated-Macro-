@@ -77,15 +77,33 @@ class MainActivity : AppCompatActivity() {
             Mode.Flow("one_set", R.string.mode_one_set, R.string.modes_help_one_set) { c, t ->
                 c.startSingleSet(t)
             },
-            Mode.Single("memorize", R.string.mode_memorize, Memorize.run),
-            Mode.Single("recall", R.string.mode_recall, Recall.run),
-            Mode.Single("spell", R.string.mode_spell, Spell.run),
-            Mode.Single("memorize_sentence", R.string.mode_memorize_sentence, MemorizeSentence.run),
-            Mode.Single("recall_sentence", R.string.mode_recall_sentence, RecallSentence.run),
-            Mode.Single("test", R.string.mode_test, Test.run),
-            Mode.Single("test_sentence", R.string.mode_test_sentence, TestSentence.run),
-            Mode.Single("matching", R.string.mode_matching, Matching.run),
-            Mode.Single("scramble", R.string.mode_scramble, Scramble.run),
+            // needsDict = false: 단어장 없이도 (화면·페이지 데이터만으로) 돌아가는 모드.
+            // 단어장이 있으면 그대로 넘겨 주고, 없으면 없는 채로 실행한다.
+            Mode.Single(  // 정답이 필요 없다 (SPACE 로 넘기기만 한다)
+                "memorize", R.string.mode_memorize, Memorize.run, needsDict = false,
+            ),
+            Mode.Single(  // 정답이 필요 없다 (화면의 '정답 보기'를 누른다)
+                "recall", R.string.mode_recall, Recall.run, needsDict = false,
+            ),
+            Mode.Single("spell", R.string.mode_spell, Spell.run),   // 단어장 필수
+            Mode.Single(  // 화면에서 정답 문장을 직접 읽는다 (단어장은 폴백)
+                "memorize_sentence", R.string.mode_memorize_sentence, MemorizeSentence.run,
+                needsDict = false,
+            ),
+            Mode.Single(  // 페이지가 로그하는 정답을 캡처한다
+                "recall_sentence", R.string.mode_recall_sentence, RecallSentence.run,
+                needsDict = false,
+            ),
+            Mode.Single("test", R.string.mode_test, Test.run),      // 단어장 필수
+            Mode.Single(  // 페이지 카드 목록·로그된 정답으로 푼다
+                "test_sentence", R.string.mode_test_sentence, TestSentence.run, needsDict = false,
+            ),
+            Mode.Single(  // card_list 폴백이 있다
+                "matching", R.string.mode_matching, Matching.run, needsDict = false,
+            ),
+            Mode.Single(  // 페이지 데이터 폴백이 있다
+                "scramble", R.string.mode_scramble, Scramble.run, needsDict = false,
+            ),
             Mode.Single(
                 "grammar", R.string.mode_grammar, Grammar.run,
                 R.string.modes_help_grammar, needsDict = false,

@@ -3,6 +3,7 @@ package com.classcard.automation.core
 import android.annotation.SuppressLint
 import android.os.SystemClock
 import android.view.KeyEvent
+import android.view.InputDevice
 import android.view.MotionEvent
 import android.webkit.WebView
 import kotlinx.coroutines.Dispatchers
@@ -249,6 +250,9 @@ class Driver(
             val down = SystemClock.uptimeMillis()
             val downEvent = MotionEvent.obtain(down, down, MotionEvent.ACTION_DOWN, x, y, 0)
             val upEvent = MotionEvent.obtain(down, down + 60, MotionEvent.ACTION_UP, x, y, 0)
+            // 크로미움은 이벤트의 입력원을 보고 진짜 터치인지 판단한다. 손가락 터치로 표시한다.
+            downEvent.source = InputDevice.SOURCE_TOUCHSCREEN
+            upEvent.source = InputDevice.SOURCE_TOUCHSCREEN
             try {
                 webView.dispatchTouchEvent(downEvent)
                 webView.dispatchTouchEvent(upEvent)
