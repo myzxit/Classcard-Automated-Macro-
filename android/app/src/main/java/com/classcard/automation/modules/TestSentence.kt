@@ -380,7 +380,7 @@ object TestSentence {
 
         run {
             // 정답은 페이지가 들고 있는 카드 목록에서 먼저 찾는다(단어장이 없어도 풀 수 있다).
-            val maps = buildMaps(d, answerDict ?: emptyMap())
+            val maps = buildMaps(d, answerDict ?: AnswerDict())
             val cards = pageCards(d)
             if (cards.isNotEmpty()) {
                 addCardsToMaps(maps, cards)
