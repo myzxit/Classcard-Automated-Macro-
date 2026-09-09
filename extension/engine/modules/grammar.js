@@ -38,6 +38,9 @@ export const STAGE_ORDER = [
 ];
 
 const NEXT_SELECTORS = [
+  // 문법 문제 화면의 '채점하기' (실제 마크업: .btn.btn-gclass.btn-next-card)
+  '.flip-card.showing .btn-next-card', '.btn-next-card',
+  '.flip-card.showing .default-btn-body .btn-gclass',
   '.study-bottom .btn-next-box .btn-gclass', '.study-bottom .btn-next-box a',
   '.btn-next-box .btn-gclass', '.btnNextCard',
   '.btn-condition-next', '.btn-next', '.btn-continue',
@@ -55,6 +58,14 @@ function vis(el) {
     return r.width > 0 && r.height > 0;
 }
 function txt(el) { return ((el && el.textContent) || '').replace(/\\s+/g, ' ').trim(); }
+// 보기 텍스트: .option-answer 는 화면에 안 보이는 사본이라 빼고 읽는다
+function optTxt(el) {
+    if (!el) return '';
+    var c = el.cloneNode(true);
+    var dup = c.querySelectorAll('.option-answer');
+    for (var i = 0; i < dup.length; i++) dup[i].parentNode.removeChild(dup[i]);
+    return (c.textContent || '').replace(/\\s+/g, ' ').trim();
+}
 function any(sel) {
     var els = document.querySelectorAll(sel);
     for (var i = 0; i < els.length; i++) if (vis(els[i])) return els[i];
@@ -107,7 +118,10 @@ if (any(END_SEL)) {
 }
 
 // ================================================ 3) 문법 문제 화면
-var items = document.querySelectorAll('.gclass-q-item');
+// 문제는 .flip-card 로 겹겹이 쌓여 있고 현재 카드에만 .showing 이 붙는다.
+// (.next / .hidden 카드도 화면에 걸쳐 보일 수 있어 반드시 .showing 으로 좁힌다)
+var items = document.querySelectorAll('.flip-card.showing .gclass-q-item');
+if (!items.length) items = document.querySelectorAll('.gclass-q-item');
 for (var i = 0; i < items.length; i++) {
     var it = items[i];
     if (!vis(it)) continue;
@@ -130,19 +144,28 @@ for (var i = 0; i < items.length; i++) {
         answer = parts.join(' ') || txt(abox);
     }
 
+    // 인라인 선택형은 ' ? ' 를 눌러야 보기(.option-box)가 열린다.
+    var opening = false;
+    var hints = it.querySelectorAll('.inline-input-body .hint-box');
+    for (var j = 0; j < hints.length; j++) {
+        var obox = hints[j].parentElement
+            ? hints[j].parentElement.querySelector('.option-box') : null;
+        if (obox && !vis(obox) && vis(hints[j])) { hints[j].click(); opening = true; break; }
+    }
+
     // 보기 종류별로 찾는다 (실제 마크업 이름)
     var type = '', found = [];
     var groups = [
         ['object', '.gclass-q-input .object-body .object'],
-        ['option', '.gclass-q-input .inline-box .option-box .option-item:not(.hidden)'],
+        ['option', '.inline-box .option-box:not(.hidden) .option-item'],
         ['scramble', '.scramble-body .scramble-word'],
-        ['match', '.match-content .match-body .match-item'],
-        ['group', '.grouping-body .grouping-item .radio-button label']
+        ['group', '.grouping-body .grouping-item'],
+        ['match', '.match-content .match-body .match-item']
     ];
     for (var g = 0; g < groups.length; g++) {
         var els = it.querySelectorAll(groups[g][1]);
         var keep = [];
-        for (var j = 0; j < els.length; j++) if (vis(els[j]) && txt(els[j])) keep.push(els[j]);
+        for (var j = 0; j < els.length; j++) if (vis(els[j]) && optTxt(els[j])) keep.push(els[j]);
         if (keep.length >= 2) { type = groups[g][0]; found = keep; break; }
     }
 
@@ -155,21 +178,100 @@ for (var i = 0; i < items.length; i++) {
         if (input) { type = 'input'; input.setAttribute('data-cc-input', '1'); }
     }
 
-    var choices = [];
-    for (var j = 0; j < found.length; j++) {
-        found[j].setAttribute('data-cc-opt', String(j));
-        choices.push({ i: j, text: txt(found[j]) });
+    // ---- 분류형: 줄마다 라디오 보기가 따로 있다
+    var rows = [];
+    if (type === 'group') {
+        for (var j = 0; j < found.length; j++) {
+            var row = found[j];
+            row.setAttribute('data-cc-row', String(j));
+            var rcls = ' ' + row.className + ' ';
+            var labels = row.querySelectorAll('.radio-button label');
+            var opts = [];
+            for (var k = 0; k < labels.length; k++) {
+                if (!vis(labels[k])) continue;
+                labels[k].setAttribute('data-cc-rowopt', j + '_' + k);
+                opts.push({ i: k, key: j + '_' + k, text: txt(labels[k]) });
+            }
+            // 줄 이름: 라디오 라벨 텍스트를 뺀 나머지
+            var name = txt(row);
+            for (var k = 0; k < opts.length; k++) name = name.replace(opts[k].text, ' ');
+            rows.push({
+                i: j,
+                text: name.replace(/\s+/g, ' ').trim(),
+                options: opts,
+                done: rcls.indexOf(' correct ') >= 0 || rcls.indexOf(' wrong ') >= 0
+            });
+        }
     }
 
-    if (done && !choices.length && !input) continue;   // 이미 푼 문항은 건너뛴다
+    // ---- 짝맞추기: 왼쪽/오른쪽을 따로 읽는다 (.end 는 이미 맞춘 칸)
+    var left = [], right = [];
+    if (type === 'match') {
+        var sides = [['left', left], ['right', right]];
+        for (var sIdx = 0; sIdx < sides.length; sIdx++) {
+            var side = sides[sIdx][0], bucket = sides[sIdx][1];
+            var cells = it.querySelectorAll('.match-content .match-body.' + side + ' .match-item');
+            for (var j = 0; j < cells.length; j++) {
+                if (!vis(cells[j])) continue;
+                cells[j].setAttribute('data-cc-' + side, String(j));
+                bucket.push({
+                    i: j,
+                    text: txt(cells[j]),
+                    done: (' ' + cells[j].className + ' ').indexOf(' end ') >= 0
+                });
+            }
+        }
+    }
 
-    var sig = question;
+    // ---- 어순 배열: 이미 고른 타일과 남은 타일
+    var tiles = [];
+    if (type === 'scramble') {
+        for (var j = 0; j < found.length; j++) {
+            var tcls = ' ' + found[j].className + ' ';
+            found[j].setAttribute('data-cc-opt', String(j));
+            tiles.push({
+                i: j,
+                text: txt(found[j]),
+                used: tcls.indexOf(' clicked ') >= 0 || tcls.indexOf(' correct ') >= 0
+                      || tcls.indexOf(' wrong ') >= 0 || tcls.indexOf(' end ') >= 0
+            });
+        }
+    }
+
+    var choices = [], selectedIdx = -1;
+    if (type === 'object' || type === 'option' || type === 'fallback' || type === '') {
+        for (var j = 0; j < found.length; j++) {
+            found[j].setAttribute('data-cc-opt', String(j));
+            choices.push({ i: j, text: optTxt(found[j]) });
+            var scls = ' ' + found[j].className + ' ';
+            if (scls.indexOf(' selected ') >= 0 || scls.indexOf(' active ') >= 0
+                || scls.indexOf(' checked ') >= 0) {
+                selectedIdx = j;
+            }
+        }
+    }
+
+    // 입력형에 이미 답을 써 넣었는지
+    var filled = !!(input && (input.value || '').trim());
+
+    if (done && !choices.length && !input && !rows.length && !left.length && !tiles.length) continue;
+
+    var sig = question + '#' + selectedIdx + (filled ? '+' : '');
     for (var j = 0; j < choices.length; j++) sig += '|' + choices[j].text;
+    for (var j = 0; j < rows.length; j++) sig += '|r' + rows[j].text;
+    for (var j = 0; j < left.length; j++) sig += '|l' + left[j].text + (left[j].done ? '*' : '');
+    for (var j = 0; j < right.length; j++) sig += '|R' + right[j].text + (right[j].done ? '*' : '');
+    for (var j = 0; j < tiles.length; j++) sig += '|t' + tiles[j].text + (tiles[j].used ? '*' : '');
+
+    var qid = question;
+    for (var j = 0; j < choices.length; j++) qid += '|' + choices[j].text;
 
     return {
-        kind: 'quiz', type: type, qid: sig, sig: sig,
+        kind: 'quiz', type: type, qid: qid, sig: sig,
         question: question, answer: answer,
-        choices: choices, hasInput: !!input,
+        choices: choices, selectedIdx: selectedIdx, filled: filled,
+        hasInput: !!input, opening: opening,
+        rows: rows, left: left, right: right, tiles: tiles,
         feedback: cls.indexOf(' correct ') >= 0 ? 'correct'
                 : (cls.indexOf(' wrong ') >= 0 ? 'wrong' : 'none'),
         next: !!any(NEXT_SEL)
@@ -273,11 +375,27 @@ async function readState(d) {
     question: (data.question || '').trim(),
     answer: (data.answer || '').trim(),
     hasInput: !!data.hasInput,
+    selectedIdx: typeof data.selectedIdx === 'number' ? data.selectedIdx : -1,
+    filled: !!data.filled,
+    opening: !!data.opening,
     feedback: data.feedback || 'none',
     next: !!data.next,
     choices: (data.choices || [])
       .filter((c) => c && (c.text || '').trim())
       .map((c) => ({ index: c.i, raw: c.text.trim(), norm: N.mnorm(c.text.trim()) })),
+    rows: (data.rows || []).map((r) => ({
+      index: r.i,
+      text: (r.text || '').trim(),
+      done: !!r.done,
+      options: (r.options || []).map((o) => ({
+        index: o.i, key: o.key, raw: (o.text || '').trim(), norm: N.mnorm(o.text || ''),
+      })),
+    })),
+    left: (data.left || []).map((c) => ({ index: c.i, raw: (c.text || '').trim(), done: !!c.done })),
+    right: (data.right || []).map((c) => ({ index: c.i, raw: (c.text || '').trim(), done: !!c.done })),
+    tiles: (data.tiles || []).map((t) => ({
+      index: t.i, raw: (t.text || '').trim(), norm: N.mnorm(t.text || ''), used: !!t.used,
+    })),
   };
 }
 
@@ -310,6 +428,94 @@ export function pickChoice(choices, answer, wrong) {
     }
   }
   return pool[0].index;
+}
+
+/**
+ * 어순 배열: 다음에 누를 타일 번호.
+ * 정답 문장을 토큰으로 끊어, 지금까지 고른 개수만큼 건너뛴 다음 단어와 같은 타일을 찾는다.
+ * 정답을 모르면 아직 안 쓴 첫 타일(왼쪽부터)을 고른다.
+ *
+ * @param {string|null} answer 정답 문장
+ * @param {{index:number, raw:string, norm:string, used:boolean}[]} tiles
+ * @param {number[]} clicked 지금까지 누른 타일 번호(순서대로)
+ */
+export function nextScrambleIndex(answer, tiles, clicked) {
+  const open = (tiles || []).filter((t) => !t.used && !clicked.includes(t.index));
+  if (!open.length) return null;
+
+  const words = answer ? N.splitTargetWords(answer) : [];
+  if (words.length) {
+    const need = words[clicked.length];
+    if (need === undefined) return null;         // 문장 완성
+    const nn = N.wnorm(need);
+    const exact = open.find((t) => N.wnorm(t.raw) === nn);
+    if (exact) return exact.index;
+    // 타일이 여러 토큰을 담는 경우("without." 처럼) 앞부분만 맞아도 받아준다
+    const part = open.find((t) => {
+      const tn = N.wnorm(t.raw);
+      return tn && nn && (tn.startsWith(nn) || nn.startsWith(tn));
+    });
+    if (part) return part.index;
+  }
+  return open[0].index;
+}
+
+/**
+ * 짝맞추기: 다음에 시도할 (왼쪽, 오른쪽) 짝.
+ * 이미 맞춘 칸(done)과 이미 틀린 조합(failed)은 건너뛴다.
+ *
+ * @param {{index:number, raw:string, done:boolean}[]} left
+ * @param {{index:number, raw:string, done:boolean}[]} right
+ * @param {Set<string>} failed "l_r" 형태로 저장한 실패 조합
+ */
+export function nextPairAttempt(left, right, failed) {
+  for (const l of left || []) {
+    if (l.done) continue;
+    for (const r of right || []) {
+      if (r.done) continue;
+      if (failed && failed.has(`${l.index}_${r.index}`)) continue;
+      return { left: l.index, right: r.index };
+    }
+  }
+  return null;
+}
+
+/**
+ * 분류형: 아직 답하지 않은 줄과, 그 줄에서 고를 보기.
+ * 정답 문장에 "줄이름 - 보기" 가 들어 있으면 그것을 쓰고, 없으면 안 틀린 보기를 고른다.
+ */
+export function nextGroupPick(rows, answer, wrongByRow) {
+  for (const row of rows || []) {
+    if (row.done || !row.options.length) continue;
+    const wrong = (wrongByRow && wrongByRow.get(row.index)) || new Set();
+    let hint = null;
+    if (answer && row.text) {
+      // 정답 문장에서 줄 이름 뒤에 나오는 보기를 찾는다
+      const am = N.mnorm(answer);
+      const rm = N.mnorm(row.text);
+      const at = rm ? am.indexOf(rm) : -1;
+      if (at >= 0) {
+        // 줄 이름 바로 뒤에 '가장 먼저' 나오는 보기가 그 줄의 답이다.
+        // (뒤쪽에 다른 줄의 답이 이어져 있어도 앞선 것을 고른다)
+        const rest = am.slice(at + rm.length, at + rm.length + 40);
+        let best = -1;
+        for (const o of row.options) {
+          if (!o.norm) continue;
+          const at2 = rest.indexOf(o.norm);
+          if (at2 >= 0 && (best < 0 || at2 < rest.indexOf(row.options[best].norm))) {
+            best = row.options.indexOf(o);
+          }
+        }
+        if (best >= 0) hint = row.options[best].raw;
+      }
+    }
+    const pick = pickChoice(
+      row.options.map((o) => ({ index: o.index, raw: o.raw, norm: o.norm })),
+      hint, wrong,
+    );
+    if (pick !== null) return { row: row.index, option: pick };
+  }
+  return null;
 }
 
 /** 단어장에서 지문에 대한 정답을 찾는다. 없으면 null. */
@@ -408,6 +614,10 @@ export async function grammar(d, answerDict, stop) {
   const triesByQid = new Map();
   const lastPick = new Map();
   const triedStages = new Set();
+  const scrambleClicks = new Map();   // 문제별로 지금까지 누른 타일 순서
+  const failedPairs = new Map();      // 문제별로 틀린 짝 조합
+  const wrongByRow = new Map();       // 문제별 · 줄별로 틀린 보기
+  let lastGroupPick = null;
   let lastQid = '';
   let idleStreak = 0;
   let ignoredClicks = 0;
@@ -452,7 +662,15 @@ export async function grammar(d, answerDict, stop) {
       }
 
       // ---------------------------------------------- 문제 화면이 아닌 경우
-      if (state.kind === 'idle' || (!state.choices.length && !state.hasInput)) {
+      if (state.opening) {
+        // 인라인 보기 상자를 막 열었다 — 다음 바퀴에서 보기를 읽는다
+        if (await stop.await(400)) break;
+        continue;
+      }
+
+      const hasWork = state.choices.length || state.hasInput ||
+        (state.rows || []).length || (state.left || []).length || (state.tiles || []).length;
+      if (state.kind === 'idle' || !hasWork) {
         if ((state.next || state.kind === 'idle') && (await d.evalBool(CLICK_NEXT_JS))) {
           idleStreak = 0;
         } else {
@@ -471,6 +689,19 @@ export async function grammar(d, answerDict, stop) {
       }
       idleStreak = 0;
 
+      // 분류형: 방금 고른 줄이 오답으로 표시되면 그 보기를 기억한다.
+      if (lastGroupPick && state.type === 'group') {
+        const row = (state.rows || []).find((r) => r.index === lastGroupPick.row);
+        if (row && row.done) {
+          const map = wrongByRow.get(lastGroupPick.qid);
+          if (map) {
+            if (!map.has(row.index)) map.set(row.index, new Set());
+            map.get(row.index).add(lastGroupPick.option);
+          }
+        }
+        lastGroupPick = null;
+      }
+
       // 채점 결과 반영: 직전에 고른 보기가 틀렸으면 기억해 둔다.
       if (state.feedback === 'wrong' && lastQid && lastPick.has(lastQid)) {
         const picked = lastPick.get(lastQid);
@@ -479,7 +710,8 @@ export async function grammar(d, answerDict, stop) {
         if (CONFIG.debug) d.log(`[문법] 오답 기억: 보기 ${picked + 1}`);
       }
       // 채점이 끝난 문항이면 다음으로 넘긴다.
-      if (state.feedback !== 'none') {
+      // (분류·짝맞추기는 줄/칸 단위로 채점되므로 문항 단위 채점만 본다)
+      if (state.feedback !== 'none' && state.type !== 'group' && state.type !== 'match') {
         await d.evalBool(CLICK_NEXT_JS);
         if (await stop.await(600)) break;
         continue;
@@ -501,6 +733,11 @@ export async function grammar(d, answerDict, stop) {
 
       // ---------------------------------------------- 입력형
       if (!state.choices.length && state.hasInput) {
+        if (state.filled) {
+          await d.evalBool(CLICK_NEXT_JS);          // 이미 써 넣었다 -> 채점하기
+          if (await stop.await(700)) break;
+          continue;
+        }
         if (!answer) {
           d.log('[문법] 정답을 알 수 없는 입력형 문제 — 건너뜁니다.');
           await d.evalBool(CLICK_NEXT_JS);
@@ -514,11 +751,78 @@ export async function grammar(d, answerDict, stop) {
         continue;
       }
 
+      // ---------------------------------------------- 어순 배열
+      if (state.type === 'scramble') {
+        const clicked = scrambleClicks.get(qid) || [];
+        const tile = nextScrambleIndex(answer || null, state.tiles, clicked);
+        if (tile === null) {
+          // 문장 완성 -> 채점/다음
+          scrambleClicks.delete(qid);
+          await d.evalBool(CLICK_NEXT_JS);
+          if (await stop.await(700)) break;
+          continue;
+        }
+        if (CONFIG.debug) {
+          const t = state.tiles.find((x) => x.index === tile);
+          d.log(`[문법] (어순) ${clicked.length + 1}번째 -> '${(t && t.raw) || ''}'`);
+        }
+        scrambleClicks.set(qid, clicked.concat([tile]));
+        await clickTagged(d, 'data-cc-opt', tile, ignoredClicks >= TRUSTED_AFTER);
+        if (await stop.await(400)) break;
+        continue;
+      }
+
+      // ---------------------------------------------- 분류형 (줄마다 라디오)
+      if (state.type === 'group') {
+        if (!wrongByRow.has(qid)) wrongByRow.set(qid, new Map());
+        const pick = nextGroupPick(state.rows, answer, wrongByRow.get(qid));
+        if (!pick) {
+          await d.evalBool(CLICK_NEXT_JS);
+          if (await stop.await(700)) break;
+          continue;
+        }
+        if (CONFIG.debug) d.log(`[문법] (분류) ${pick.row + 1}번째 줄 -> 보기 ${pick.option + 1}`);
+        lastGroupPick = { qid, row: pick.row, option: pick.option };
+        await clickTagged(d, 'data-cc-rowopt', `${pick.row}_${pick.option}`,
+          ignoredClicks >= TRUSTED_AFTER);
+        if (await stop.await(400)) break;
+        continue;
+      }
+
+      // ---------------------------------------------- 짝맞추기
+      if (state.type === 'match') {
+        if (!failedPairs.has(qid)) failedPairs.set(qid, new Set());
+        const pair = nextPairAttempt(state.left, state.right, failedPairs.get(qid));
+        if (!pair) {
+          failedPairs.delete(qid);
+          await d.evalBool(CLICK_NEXT_JS);
+          if (await stop.await(700)) break;
+          continue;
+        }
+        await clickTagged(d, 'data-cc-left', pair.left, ignoredClicks >= TRUSTED_AFTER);
+        if (await stop.await(250)) break;
+        await clickTagged(d, 'data-cc-right', pair.right, ignoredClicks >= TRUSTED_AFTER);
+        if (await stop.await(600)) break;
+
+        // 짝이 맞으면 두 칸 모두 .end 가 된다. 아니면 실패로 기억한다.
+        const afterPair = await readState(d);
+        const ok = afterPair && afterPair.kind === 'quiz' &&
+          (afterPair.left || []).some((c) => c.index === pair.left && c.done);
+        if (!ok) {
+          failedPairs.get(qid).add(`${pair.left}_${pair.right}`);
+          if (CONFIG.debug) d.log(`[문법] (짝맞추기) ${pair.left}-${pair.right} 실패로 기억`);
+        } else {
+          if (CONFIG.debug) d.log(`[문법] (짝맞추기) ${pair.left}-${pair.right} 성공`);
+        }
+        continue;
+      }
+
       // ---------------------------------------------- 보기 선택형
-      if (state.type === 'match' || state.type === 'group') {
-        d.log(`[문법] 아직 지원하지 않는 문제 유형(${state.type}) — 건너뜁니다.`);
+
+      // 이미 하나를 골라 둔 상태면 채점하기를 눌러 결과를 받는다.
+      if (state.selectedIdx >= 0) {
         await d.evalBool(CLICK_NEXT_JS);
-        if (await stop.await(700)) break;
+        if (await stop.await(800)) break;
         continue;
       }
 

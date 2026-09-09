@@ -169,4 +169,91 @@ class GrammarLogicTest {
         val act = Grammar.nextClassAction(units, emptySet()) as Grammar.ClassAction.Start
         assertEquals("서술형 문제", act.stage.title)
     }
+
+    // ================================================ 어순 배열
+
+    private fun tile(i: Int, text: String, used: Boolean = false) = Grammar.Tile(i, text, used)
+
+    @JUnitTest
+    fun scramblePicksWordsInAnswerOrder() {
+        val tiles = listOf(tile(0, "nice"), tile(1, "You"), tile(2, "look"))
+        assertEquals(1, Grammar.nextScrambleIndex("You look nice", tiles, emptyList()))
+        assertEquals(2, Grammar.nextScrambleIndex("You look nice", tiles, listOf(1)))
+        assertEquals(0, Grammar.nextScrambleIndex("You look nice", tiles, listOf(1, 2)))
+    }
+
+    @JUnitTest
+    fun scrambleReturnsNullWhenSentenceComplete() {
+        val tiles = listOf(tile(0, "You"), tile(1, "win"))
+        assertNull(Grammar.nextScrambleIndex("You win", tiles, listOf(0, 1)))
+    }
+
+    @JUnitTest
+    fun scrambleMatchesTileWithPunctuation() {
+        val tiles = listOf(tile(0, "today."), tile(1, "It"))
+        assertEquals(1, Grammar.nextScrambleIndex("It is today.", tiles, emptyList()))
+    }
+
+    @JUnitTest
+    fun scrambleFallsBackWhenAnswerUnknown() {
+        val tiles = listOf(tile(0, "a", used = true), tile(1, "b"), tile(2, "c"))
+        assertEquals(1, Grammar.nextScrambleIndex(null, tiles, emptyList()))
+        assertEquals(2, Grammar.nextScrambleIndex(null, tiles, listOf(1)))
+        assertNull(Grammar.nextScrambleIndex(null, listOf(tile(0, "a", used = true)), emptyList()))
+    }
+
+    // ================================================ 짝맞추기
+
+    private fun cell(i: Int, text: String, done: Boolean = false) = Grammar.MatchCell(i, text, done)
+
+    @JUnitTest
+    fun matchTriesOpenCells() {
+        val l = listOf(cell(0, "A"), cell(1, "B"))
+        val r = listOf(cell(0, "가"), cell(1, "나"))
+        assertEquals(0 to 0, Grammar.nextPairAttempt(l, r, emptySet()))
+        assertEquals(0 to 1, Grammar.nextPairAttempt(l, r, setOf("0_0")))
+    }
+
+    @JUnitTest
+    fun matchSkipsFinishedCells() {
+        val l = listOf(cell(0, "A", done = true), cell(1, "B"))
+        val r = listOf(cell(0, "가", done = true), cell(1, "나"))
+        assertEquals(1 to 1, Grammar.nextPairAttempt(l, r, emptySet()))
+        assertNull(Grammar.nextPairAttempt(l, r, setOf("1_1")))
+    }
+
+    // ================================================ 분류형
+
+    private fun row(i: Int, text: String, opts: List<String>, done: Boolean = false) =
+        Grammar.Row(i, text, done, opts.mapIndexed { j, t -> Grammar.RowOption(j, t) })
+
+    @JUnitTest
+    fun groupPicksFirstUnansweredRow() {
+        val rows = listOf(
+            row(0, "apple", listOf("셀 수 있음", "셀 수 없음"), done = true),
+            row(1, "water", listOf("셀 수 있음", "셀 수 없음")),
+        )
+        assertEquals(1 to 0, Grammar.nextGroupPick(rows, null, emptyMap()))
+    }
+
+    @JUnitTest
+    fun groupSkipsWrongOptionInThatRow() {
+        val rows = listOf(row(0, "water", listOf("셀 수 있음", "셀 수 없음")))
+        assertEquals(0 to 1, Grammar.nextGroupPick(rows, null, mapOf(0 to setOf(0))))
+    }
+
+    @JUnitTest
+    fun groupUsesAnswerHint() {
+        val rows = listOf(row(0, "water", listOf("셀 수 있음", "셀 수 없음")))
+        assertEquals(
+            0 to 1,
+            Grammar.nextGroupPick(rows, "water 셀 수 없음, apple 셀 수 있음", emptyMap()),
+        )
+    }
+
+    @JUnitTest
+    fun groupReturnsNullWhenAllRowsDone() {
+        val rows = listOf(row(0, "a", listOf("x", "y"), done = true))
+        assertNull(Grammar.nextGroupPick(rows, null, emptyMap()))
+    }
 }

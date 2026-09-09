@@ -13,7 +13,10 @@ import assert from 'node:assert/strict';
 
 import * as N from '../engine/norm.js';
 import { buildLookups } from '../engine/modules/games.js';
-import { pickChoice, lookupAnswer, nextClassAction } from '../engine/modules/grammar.js';
+import {
+  pickChoice, lookupAnswer, nextClassAction,
+  nextScrambleIndex, nextPairAttempt, nextGroupPick,
+} from '../engine/modules/grammar.js';
 
 const choices = (...texts) =>
   texts.map((t, i) => ({ index: i, raw: t, norm: N.mnorm(t) }));
@@ -131,4 +134,81 @@ test('할 일이 없으면 none', () => {
 test('STAGE_ORDER 에 없는 이름은 뒤로 밀린다', () => {
   const units = [unit(0, 'u', [stage('0_0', '알 수 없는 단계'), stage('0_1', '서술형 문제')])];
   assert.equal(nextClassAction(units, new Set()).stage.title, '서술형 문제');
+});
+
+// ---------------------------------------------------------------- 어순 배열
+
+const tile = (i, text, used = false) => ({ index: i, raw: text, norm: N.mnorm(text), used });
+
+test('정답 순서대로 타일을 고른다', () => {
+  const tiles = [tile(0, 'nice'), tile(1, 'You'), tile(2, 'look')];
+  assert.equal(nextScrambleIndex('You look nice', tiles, []), 1);
+  assert.equal(nextScrambleIndex('You look nice', tiles, [1]), 2);
+  assert.equal(nextScrambleIndex('You look nice', tiles, [1, 2]), 0);
+});
+
+test('문장을 다 만들면 null', () => {
+  const tiles = [tile(0, 'You'), tile(1, 'win')];
+  assert.equal(nextScrambleIndex('You win', tiles, [0, 1]), null);
+});
+
+test('타일에 구두점이 붙어 있어도 찾는다', () => {
+  const tiles = [tile(0, 'today.'), tile(1, 'It')];
+  assert.equal(nextScrambleIndex('It is today.', tiles, []), 1);
+});
+
+test('이미 쓴 타일과 정답을 모를 때', () => {
+  const tiles = [tile(0, 'a', true), tile(1, 'b'), tile(2, 'c')];
+  assert.equal(nextScrambleIndex(null, tiles, []), 1);       // 안 쓴 첫 타일
+  assert.equal(nextScrambleIndex(null, tiles, [1]), 2);
+  assert.equal(nextScrambleIndex(null, [tile(0, 'a', true)], []), null);
+});
+
+// ---------------------------------------------------------------- 짝맞추기
+
+const cell = (i, text, done = false) => ({ index: i, raw: text, done });
+
+test('아직 안 맞춘 칸끼리 짝을 시도한다', () => {
+  const L = [cell(0, 'A'), cell(1, 'B')];
+  const R = [cell(0, '가'), cell(1, '나')];
+  assert.deepEqual(nextPairAttempt(L, R, new Set()), { left: 0, right: 0 });
+  assert.deepEqual(nextPairAttempt(L, R, new Set(['0_0'])), { left: 0, right: 1 });
+});
+
+test('맞춘 칸(done)은 건너뛴다', () => {
+  const L = [cell(0, 'A', true), cell(1, 'B')];
+  const R = [cell(0, '가', true), cell(1, '나')];
+  assert.deepEqual(nextPairAttempt(L, R, new Set()), { left: 1, right: 1 });
+  assert.equal(nextPairAttempt(L, R, new Set(['1_1'])), null);
+});
+
+// ---------------------------------------------------------------- 분류형
+
+const row = (i, text, opts, done = false) => ({
+  index: i, text, done,
+  options: opts.map((t, j) => ({ index: j, key: `${i}_${j}`, raw: t, norm: N.mnorm(t) })),
+});
+
+test('아직 안 푼 줄부터 보기를 고른다', () => {
+  const rows = [row(0, 'apple', ['셀 수 있음', '셀 수 없음'], true),
+                row(1, 'water', ['셀 수 있음', '셀 수 없음'])];
+  assert.deepEqual(nextGroupPick(rows, null, new Map()), { row: 1, option: 0 });
+});
+
+test('그 줄에서 틀린 보기는 다시 고르지 않는다', () => {
+  const rows = [row(0, 'water', ['셀 수 있음', '셀 수 없음'])];
+  const wrong = new Map([[0, new Set([0])]]);
+  assert.deepEqual(nextGroupPick(rows, null, wrong), { row: 0, option: 1 });
+});
+
+test('정답 문장에 줄 이름과 보기가 있으면 그것을 고른다', () => {
+  const rows = [row(0, 'water', ['셀 수 있음', '셀 수 없음'])];
+  assert.deepEqual(
+    nextGroupPick(rows, 'water 셀 수 없음, apple 셀 수 있음', new Map()),
+    { row: 0, option: 1 },
+  );
+});
+
+test('풀 줄이 없으면 null', () => {
+  assert.equal(nextGroupPick([row(0, 'a', ['x', 'y'], true)], null, new Map()), null);
 });
