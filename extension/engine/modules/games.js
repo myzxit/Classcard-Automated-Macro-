@@ -378,25 +378,84 @@ export function matchEnglish(promptRaw, maps) {
   return null;
 }
 
+/**
+ * 문장 테스트 화면 읽기.
+ *
+ * 낱말 버튼과 놓인 자리의 이름이 화면마다 다르다 (사이트 스크립트 확인 결과):
+ *   단어 세트 문장 테스트 : .test-sentence-words a.btn        / .test-sentence-input span
+ *   문법 어순 배열         : .test-sentence-words .btn-sentence-word / .scramble-body .scramble-word
+ * 그래서 둘 다 훑고, 카드가 뒤집혔는지도 클래스(.flip)만 믿지 않고
+ * **낱말 버튼이 실제로 보이는지**로 판단한다. (클래스 이름이 달라 영영 안 푸는 일을 막는다)
+ */
+const WORD_SELECTORS = [
+  '.test-sentence-words a.btn',
+  '.test-sentence-words .btn-sentence-word',
+  '.sentence-tab-box .btn-sentence-word',
+  '.test-sentence-words .btn',
+];
+const PLACED_SELECTORS = [
+  '.test-sentence-input span',
+  '.scramble-body span',
+  '.scramble-body .scramble-word',
+];
+
 const READ_CARD_JS = `
-var card = document.querySelector('.flip-card.showing');
+var WORD_SEL = ${JSON.stringify(WORD_SELECTORS)};
+var PLACED_SEL = ${JSON.stringify(PLACED_SELECTORS)};
+
+var card = document.querySelector('.flip-card.showing') ||
+           document.querySelector('.flip-card.current') ||
+           document.querySelector('.CardItem.current');
 if (!card) return { found: false };
 
 var qid = '';
-var qi = card.querySelector('input[name="test_question[]"]');
+var qi = card.querySelector('input[name="test_question[]"], [name="card_idx[]"]');
 if (qi) qid = qi.value;
 
-var flipped = card.classList.contains('flip');
+function count(sels) {
+    for (var i = 0; i < sels.length; i++) {
+        var n = card.querySelectorAll(sels[i]).length;
+        if (n) return n;
+    }
+    return 0;
+}
+
+var words = count(WORD_SEL);
+var placed = count(PLACED_SEL);
+
+// 낱말 버튼이 보이면 이미 뒤집힌 것으로 본다 (클래스 이름이 달라도 풀 수 있게)
+var flipped = card.classList.contains('flip') || words > 0;
 
 var prompt = '';
-var fh = card.querySelector('.flip-card-front .front-hidden');
-if (fh) prompt = (fh.textContent || '').trim();
-
-var words = card.querySelectorAll('.test-sentence-words a.btn').length;
-var placed = card.querySelectorAll('.test-sentence-input span').length;
+var pSel = ['.flip-card-front .front-hidden', '.flip-card-front .cc-table',
+            '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body'];
+for (var i = 0; i < pSel.length && !prompt; i++) {
+    var el = card.querySelector(pSel[i]);
+    if (el) prompt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+}
 
 return { found: true, qid: qid, flipped: flipped, prompt: prompt,
-         words: words, placed: placed };`;
+         words: words, placed: placed, cls: card.className };`;
+
+/** 낱말 버튼을 못 찾았을 때, 화면이 어떻게 생겼는지 로그로 남긴다. */
+const DUMP_CARD_JS = `
+var card = document.querySelector('.flip-card.showing') ||
+           document.querySelector('.flip-card.current') ||
+           document.querySelector('.CardItem.current');
+if (!card) return { card: '(없음)' };
+var out = { card: card.className, counts: {} };
+var sels = ['.test-sentence-words', '.test-sentence-words a', '.btn-sentence-word',
+            '.sentence-tab-box', '.scramble-body', '.test-sentence-input',
+            'a.btn', 'button'];
+for (var i = 0; i < sels.length; i++) out.counts[sels[i]] = card.querySelectorAll(sels[i]).length;
+var kids = [];
+var all = card.querySelectorAll('*');
+for (var i = 0; i < all.length && kids.length < 12; i++) {
+    var c = all[i].className;
+    if (typeof c === 'string' && c && kids.indexOf(c) < 0) kids.push(c);
+}
+out.classes = kids;
+return out;`;
 
 async function readCard(d) {
   const data = await d.eval(READ_CARD_JS);
@@ -415,12 +474,22 @@ async function readCard(d) {
  * 이 버튼들은 합성 click 을 무시하고 신뢰된 마우스 이벤트에만 반응한다(원본이 CDP 를 쓴 이유).
  */
 async function clickWord(d, token) {
+  const findBtns = `
+    var SEL = ${JSON.stringify(WORD_SELECTORS)};
+    var card = document.querySelector('.flip-card.showing') ||
+               document.querySelector('.flip-card.current') ||
+               document.querySelector('.CardItem.current') || document;
+    var btns = [];
+    for (var s = 0; s < SEL.length && !btns.length; s++) {
+        var found = card.querySelectorAll(SEL[s]);
+        if (found.length) btns = found;
+    }`;
+
   const locator = `
     var token = ${JSON.stringify(token)};
     var tokLow = token.toLowerCase();
     var tokNorm = token.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-    var btns = document.querySelectorAll('.flip-card.showing .test-sentence-words a.btn');
+    ${findBtns}
     var cands = [];
     for (var i = 0; i < btns.length; i++) {
         if (btns[i].classList.contains('clicked')) continue;
@@ -456,7 +525,7 @@ async function clickWord(d, token) {
     var token = ${JSON.stringify(token)};
     var tokLow = token.toLowerCase();
     var tokNorm = token.toLowerCase().replace(/[^a-z0-9]/g, '');
-    var btns = document.querySelectorAll('.flip-card.showing .test-sentence-words a.btn');
+    ${findBtns}
     var cands = [];
     for (var i = 0; i < btns.length; i++) {
         if (btns[i].classList.contains('clicked')) continue;
@@ -480,10 +549,17 @@ async function clickWord(d, token) {
 
 async function listButtons(d) {
   return d.evalList(`
-    var card = document.querySelector('.flip-card.showing');
+    var SEL = ${JSON.stringify(WORD_SELECTORS)};
+    var card = document.querySelector('.flip-card.showing') ||
+               document.querySelector('.flip-card.current') ||
+               document.querySelector('.CardItem.current');
     if (!card) return [];
     var out = [];
-    var btns = card.querySelectorAll('.test-sentence-words a.btn');
+    var btns = [];
+    for (var s = 0; s < SEL.length && !btns.length; s++) {
+        var found = card.querySelectorAll(SEL[s]);
+        if (found.length) btns = found;
+    }
     for (var i = 0; i < btns.length; i++) {
       out.push((btns[i].textContent || '').trim() +
                (btns[i].classList.contains('clicked') ? '*' : ''));
@@ -663,6 +739,15 @@ export async function testSentence(d, answerDict, stop) {
         if (n < 8) {
           await d.pressSpace();
           flipAttempts.set(q.qid, n + 1);
+        } else if (n === 8) {
+          flipAttempts.set(q.qid, n + 1);
+          // 여덟 번 눌러도 낱말 버튼이 안 보인다 -> 화면 구조를 로그에 남긴다
+          const dump = await d.eval(DUMP_CARD_JS);
+          d.log(
+            '[문장 테스트] 낱말 버튼을 찾지 못했습니다. 화면 구조: ' +
+              JSON.stringify(dump).slice(0, 400),
+            'warn',
+          );
         }
         if (await stop.await(500)) break;
         continue;

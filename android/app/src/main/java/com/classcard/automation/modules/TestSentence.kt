@@ -111,25 +111,85 @@ object TestSentence {
         return maps.mnp[pnp]
     }
 
-    private const val READ_CARD_JS = """
-        var card = document.querySelector('.flip-card.showing');
+    /**
+     * 낱말 버튼과 놓인 자리의 이름이 화면마다 다르다 (사이트 스크립트 확인 결과):
+     *   단어 세트 문장 테스트 : .test-sentence-words a.btn        / .test-sentence-input span
+     *   문법 어순 배열         : .test-sentence-words .btn-sentence-word / .scramble-body .scramble-word
+     * 그래서 둘 다 훑고, 카드가 뒤집혔는지도 클래스(.flip)만 믿지 않고
+     * 낱말 버튼이 실제로 보이는지로 판단한다.
+     */
+    private val WORD_SELECTORS = listOf(
+        ".test-sentence-words a.btn",
+        ".test-sentence-words .btn-sentence-word",
+        ".sentence-tab-box .btn-sentence-word",
+        ".test-sentence-words .btn",
+    )
+    private val PLACED_SELECTORS = listOf(
+        ".test-sentence-input span",
+        ".scramble-body span",
+        ".scramble-body .scramble-word",
+    )
+
+    private fun jsList(items: List<String>) = items.joinToString(", ") { it.jsStr() }
+
+    private val READ_CARD_JS = """
+        var WORD_SEL = [${jsList(WORD_SELECTORS)}];
+        var PLACED_SEL = [${jsList(PLACED_SELECTORS)}];
+
+        var card = document.querySelector('.flip-card.showing') ||
+                   document.querySelector('.flip-card.current') ||
+                   document.querySelector('.CardItem.current');
         if (!card) return { found: false };
 
         var qid = '';
-        var qi = card.querySelector('input[name="test_question[]"]');
+        var qi = card.querySelector('input[name="test_question[]"], [name="card_idx[]"]');
         if (qi) qid = qi.value;
 
-        var flipped = card.classList.contains('flip');
+        function count(sels) {
+            for (var i = 0; i < sels.length; i++) {
+                var n = card.querySelectorAll(sels[i]).length;
+                if (n) return n;
+            }
+            return 0;
+        }
+
+        var words = count(WORD_SEL);
+        var placed = count(PLACED_SEL);
+
+        // 낱말 버튼이 보이면 이미 뒤집힌 것으로 본다 (클래스 이름이 달라도 풀 수 있게)
+        var flipped = card.classList.contains('flip') || words > 0;
 
         var prompt = '';
-        var fh = card.querySelector('.flip-card-front .front-hidden');
-        if (fh) prompt = (fh.textContent || '').trim();
-
-        var words = card.querySelectorAll('.test-sentence-words a.btn').length;
-        var placed = card.querySelectorAll('.test-sentence-input span').length;
+        var pSel = ['.flip-card-front .front-hidden', '.flip-card-front .cc-table',
+                    '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body'];
+        for (var i = 0; i < pSel.length && !prompt; i++) {
+            var el = card.querySelector(pSel[i]);
+            if (el) prompt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+        }
 
         return { found: true, qid: qid, flipped: flipped, prompt: prompt,
-                 words: words, placed: placed };
+                 words: words, placed: placed, cls: card.className };
+    """
+
+    /** 낱말 버튼을 못 찾았을 때, 화면이 어떻게 생겼는지 로그로 남긴다. */
+    private val DUMP_CARD_JS = """
+        var card = document.querySelector('.flip-card.showing') ||
+                   document.querySelector('.flip-card.current') ||
+                   document.querySelector('.CardItem.current');
+        if (!card) return { card: '(없음)' };
+        var out = { card: card.className, counts: {} };
+        var sels = ['.test-sentence-words', '.test-sentence-words a', '.btn-sentence-word',
+                    '.sentence-tab-box', '.scramble-body', '.test-sentence-input',
+                    'a.btn', 'button'];
+        for (var i = 0; i < sels.length; i++) out.counts[sels[i]] = card.querySelectorAll(sels[i]).length;
+        var kids = [];
+        var all = card.querySelectorAll('*');
+        for (var i = 0; i < all.length && kids.length < 12; i++) {
+            var c = all[i].className;
+            if (typeof c === 'string' && c && kids.indexOf(c) < 0) kids.push(c);
+        }
+        out.classes = kids;
+        return out;
     """
 
     private suspend fun readCard(d: Driver): Card? {
@@ -159,7 +219,15 @@ object TestSentence {
             var tokLow = token.toLowerCase();
             var tokNorm = token.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-            var btns = document.querySelectorAll('.flip-card.showing .test-sentence-words a.btn');
+            var SEL = [${jsList(WORD_SELECTORS)}];
+            var card = document.querySelector('.flip-card.showing') ||
+                       document.querySelector('.flip-card.current') ||
+                       document.querySelector('.CardItem.current') || document;
+            var btns = [];
+            for (var s = 0; s < SEL.length && !btns.length; s++) {
+                var found = card.querySelectorAll(SEL[s]);
+                if (found.length) btns = found;
+            }
             var cands = [];
             for (var i = 0; i < btns.length; i++) {
                 if (btns[i].classList.contains('clicked')) continue;
@@ -197,7 +265,15 @@ object TestSentence {
             var token = ${token.jsStr()};
             var tokLow = token.toLowerCase();
             var tokNorm = token.toLowerCase().replace(/[^a-z0-9]/g, '');
-            var btns = document.querySelectorAll('.flip-card.showing .test-sentence-words a.btn');
+            var SEL = [${jsList(WORD_SELECTORS)}];
+            var card = document.querySelector('.flip-card.showing') ||
+                       document.querySelector('.flip-card.current') ||
+                       document.querySelector('.CardItem.current') || document;
+            var btns = [];
+            for (var s = 0; s < SEL.length && !btns.length; s++) {
+                var found = card.querySelectorAll(SEL[s]);
+                if (found.length) btns = found;
+            }
             var cands = [];
             for (var i = 0; i < btns.length; i++) {
                 if (btns[i].classList.contains('clicked')) continue;
@@ -224,10 +300,17 @@ object TestSentence {
     /** 진단용: 현재 showing 카드의 스크램블 버튼 텍스트 + clicked 여부 목록. */
     private suspend fun listButtons(d: Driver): List<String> = d.evalStringList(
         """
-        var card = document.querySelector('.flip-card.showing');
+        var SEL = [${jsList(WORD_SELECTORS)}];
+        var card = document.querySelector('.flip-card.showing') ||
+                   document.querySelector('.flip-card.current') ||
+                   document.querySelector('.CardItem.current');
         if (!card) return [];
         var out = [];
-        var btns = card.querySelectorAll('.test-sentence-words a.btn');
+        var btns = [];
+        for (var s = 0; s < SEL.length && !btns.length; s++) {
+            var found = card.querySelectorAll(SEL[s]);
+            if (found.length) btns = found;
+        }
         for (var i = 0; i < btns.length; i++) {
           out.push((btns[i].textContent || '').trim() +
                    (btns[i].classList.contains('clicked') ? '*' : ''));
@@ -439,6 +522,14 @@ object TestSentence {
                         if (n < 8) {
                             d.pressSpace()
                             flipAttempts[q.qid] = n + 1
+                        } else if (n == 8) {
+                            flipAttempts[q.qid] = n + 1
+                            // 여덟 번 눌러도 낱말 버튼이 안 보인다 -> 화면 구조를 로그에 남긴다
+                            val dump = d.evalObjectOrNull(DUMP_CARD_JS)
+                            d.log(
+                                "[문장 테스트] 낱말 버튼을 찾지 못했습니다. 화면 구조: " +
+                                    (dump?.toString() ?: "(읽지 못함)").take(400)
+                            )
                         }
                         if (stop.await(500)) break
                         continue
