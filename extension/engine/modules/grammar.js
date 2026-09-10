@@ -37,6 +37,15 @@ export const CONFIG = {
   loadSettleMs: 600,     // 화면의 항목이 다 로드됐는지 확인할 때 두 번 재는 간격
 };
 
+/** 같은 안내 창이 이만큼 연달아 다시 뜨면 그만 누르고 멈춘다. */
+const MODAL_REPEAT_LIMIT = 5;
+
+/** 개념 톡 해설 음성을 이만큼(0.7초 단위) 기다려도 안 끝나면 알린다. */
+const TALK_WAIT_LIMIT = 60;
+
+/** 해설 음성을 이만큼(0.7초 단위) 기다린 뒤에는 사이트 방식대로 끝내고 진행한다. */
+const TALK_AUDIO_SKIP_AFTER = 3;
+
 /** 합성 클릭이 이만큼 무시되면 신뢰된 클릭(CDP)으로 올린다. */
 const TRUSTED_AFTER = 2;
 
@@ -247,7 +256,10 @@ if (talkCards.length) {
             cards: talkCards.length,
             done: ccls.indexOf(' end ') >= 0,
             correct: ccls.indexOf(' correct ') >= 0,
-            wrong: ccls.indexOf(' wrong ') >= 0
+            wrong: ccls.indexOf(' wrong ') >= 0,
+            // 사이트는 소리(해설 음성)가 끝날 때까지 카드에 'wait' 를 달아 두고,
+            // 그 동안에는 Enter 도 '계속하기'도 받지 않는다 (grammar_talk.js keyup/setPassStatus).
+            waiting: ccls.indexOf(' wait ') >= 0
         };
     }
 }
@@ -1193,9 +1205,19 @@ async function handleModal(d) {
         var s = window.getComputedStyle(el);
         return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
     }
-    var modals = document.querySelectorAll('#alertModal, #confirmModal, .modal.in, .modal.show');
+    // 사이트는 #alertModal / #confirmModal 을 항상 DOM 에 두고 display:block 으로 둔다.
+    // **열려 있는 창은 부트스트랩이 붙이는 in(또는 show) 클래스로만 구분된다.**
+    // (이걸 안 보면 닫혀 있는 창의 '확인'을 계속 눌러 학습이 끝나 버린다)
+    var modals = document.querySelectorAll('.modal.in, .modal.show');
     var modal = null;
-    for (var i = 0; i < modals.length; i++) if (vis(modals[i])) { modal = modals[i]; break; }
+    for (var i = 0; i < modals.length; i++) {
+        var m = modals[i];
+        if (!vis(m)) continue;
+        var body = m.querySelector('.modal-content, .modal-dialog');
+        if (!body || body.getBoundingClientRect().height < 40) continue;
+        modal = m;
+        break;
+    }
     if (!modal) return null;
 
     var btns = modal.querySelectorAll('button, a, .btn');
@@ -1224,6 +1246,37 @@ async function handleModal(d) {
   return label;
 }
 
+/**
+ * 개념 톡의 해설 음성을 사이트 방식대로 끝낸다.
+ *
+ * 사이트 스크립트(grammar_talk.js)를 보면:
+ *   - 카드는 소리가 끝날 때까지 'wait' 클래스를 달고 있고, 그 동안 Enter·'계속하기'를 받지 않는다.
+ *   - 다음 단계로 넘기는 코드는 오디오의 **pause** 이벤트에 걸려 있다
+ *     (재생 위치를 확인하던 부분은 사이트에서 주석 처리되어 있어, 멈추기만 하면 넘어간다).
+ *   - 카드나 스피커 아이콘(.talk-audio)을 누르면 사이트가 그 오디오를 잡고 재생/정지를 토글한다.
+ * 그래서 스피커를 눌러 사이트가 오디오를 잡게 한 뒤 pause 를 알려 준다.
+ * 휴대폰처럼 자동 재생이 막힌 화면에서도 학습이 멈추지 않게 하기 위한 것이다.
+ */
+async function skipTalkAudio(d) {
+  return d.evalBool(`
+    var cards = document.querySelectorAll('.talk-card');
+    var i = (typeof card_idx !== 'undefined' && card_idx >= 0) ? card_idx : 0;
+    var card = cards[i];
+    if (!card) return false;
+    var done = false;
+    var btn = card.querySelector('.talk-audio');
+    if (btn) { btn.click(); done = true; }
+    try {
+      if (window.audio && typeof window.audio.pause === 'function') {
+        window.audio.pause();
+        window.audio.dispatchEvent(new Event('pause'));
+        done = true;
+      }
+    } catch (e) {}
+    return done;
+  `);
+}
+
 export async function grammar(d, answerDict, stop) {
   d.log('[문법] 시작');
 
@@ -1237,6 +1290,10 @@ export async function grammar(d, answerDict, stop) {
   const lastPick = new Map();
   const triedStages = new Set();
   const modalRetry = new Map();   // 확인 창을 거친 단계를 다시 눌러 본 횟수
+  let talkWait = 0;               // 개념 톡 해설 음성을 기다린 횟수
+  let talkAudioSkipped = null;    // 소리를 넘긴 카드(같은 카드에서 두 번 넘기지 않는다)
+  let lastModal = null;           // 직전에 누른 안내 창의 글자
+  let sameModal = 0;              // 같은 안내 창이 연달아 뜬 횟수
   const scrambleClicks = new Map();   // 문제별로 지금까지 누른 타일 순서
   const failedPairs = new Map();      // 문제별로 틀린 짝 조합
   const wrongByRow = new Map();       // 문제별 · 줄별로 틀린 보기
@@ -1326,10 +1383,20 @@ export async function grammar(d, answerDict, stop) {
       if (state.kind !== 'class') {
         const picked = await handleModal(d);
         if (picked) {
+          // 같은 안내 창이 계속 다시 뜨면(눌러도 화면이 안 넘어가면) 무한히 누르지 않는다
+          sameModal = picked === lastModal ? sameModal + 1 : 0;
+          lastModal = picked;
+          if (sameModal >= MODAL_REPEAT_LIMIT) {
+            d.log(`[문법] 안내 창('${picked}')이 계속 다시 떠서 멈춥니다 — 화면에서 직접 확인해 주세요.`);
+            stop.set();
+            break;
+          }
           d.log(`[문법] 안내 창의 '${picked}' 를 눌렀습니다.`);
           if (await stop.await(700)) break;
           continue;
         }
+        lastModal = null;
+        sameModal = 0;
       }
 
       // ---------------------------------------------- 문법 클래스 페이지
@@ -1593,6 +1660,27 @@ export async function grammar(d, answerDict, stop) {
           }
           d.log('[문법] 개념 톡 빈칸의 정답을 찾지 못했습니다 — 그대로 넘깁니다.');
         }
+
+        // 3-b) 소리(해설 음성)가 아직 재생 중이면 사이트가 아무 입력도 받지 않는다.
+        //      이때 누르면 헛손질이므로 끝날 때까지 조용히 기다린다.
+        if (state.waiting && !(state.options || []).length &&
+            !(state.orders || []).length && !(state.blanks || []).length) {
+          talkWait++;
+          if (talkWait === 1) d.log('[문법] 개념 톡 해설 음성이 끝나기를 기다리는 중…');
+          // 잠깐 기다려도 안 끝나면(자동 재생이 막힌 화면 등) 사이트 방식대로 소리를 끝낸다
+          if (talkWait >= TALK_AUDIO_SKIP_AFTER && talkAudioSkipped !== state.sig) {
+            talkAudioSkipped = state.sig;
+            if (await skipTalkAudio(d)) d.log('[문법] 해설 음성을 넘기고 다음으로 진행합니다.');
+          }
+          if (talkWait > TALK_WAIT_LIMIT) {
+            d.log('[문법] 해설 음성이 끝나지 않습니다 — 소리가 나오는지 확인해 주세요.');
+            talkWait = 0;
+            talkStuck++;
+          }
+          if (await stop.await(700)) break;
+          continue;
+        }
+        talkWait = 0;
 
         // 4) 고를 것이 없으면 '계속하기'(next-btn) 또는 Enter 로 다음 카드
         if (state.hasNext) {
