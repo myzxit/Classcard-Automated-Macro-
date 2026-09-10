@@ -126,7 +126,7 @@ object Grammar {
     }
 
     private data class State(
-        val kind: String,                 // "class" | "end" | "quiz" | "idle"
+        val kind: String,                 // "class" | "end" | "quiz" | "idle" | "login"
         val type: String = "",
         val qid: String = "",
         val sig: String = "",
@@ -187,8 +187,15 @@ object Grammar {
             return null;
         }
 
-        var NEXT_SEL = [".flip-card.showing .btn-next-card",".btn-next-card",".flip-card.showing .default-btn-body .btn-gclass",".study-bottom .btn-next-box .btn-gclass",".study-bottom .btn-next-box a",".btn-next-box .btn-gclass",".btnNextCard",".btn-condition-next",".btn-next",".btn-continue",".modal-content .btn-ok",".btn-quiz-start",".btn-opt-start"].join(',');
+        var NEXT_SEL = [".flip-card.showing .btn-next-card",".btn-next-card",".flip-card.showing .default-btn-body .btn-gclass",".study-bottom .btn-next-box .btn-gclass",".study-bottom .btn-next-box a",".btn-next-box .btn-gclass",".btnNextCard",".btn-condition-next",".btn-next",".btn-continue",".btn-quiz-start",".btn-opt-start"].join(',');
         var END_SEL = [".start-opt-body",".end-opt-body",".result-body",".quiz-result","a.btn-go-result"].join(',');
+
+        // ================================================ 0) 로그인 화면
+        // 세션이 끊기면 사이트가 어떤 주소든 로그인 화면으로 돌려보낸다.
+        // 이걸 문제 화면으로 착각하면 '아이디/비밀번호 찾기' 같은 링크를 눌러 버린다.
+        if (vis(any('input[name="login_id"], input[name="login_pwd"], #login_id, #login_pwd'))) {
+            return { kind: 'login' };
+        }
 
         // ================================================ 1) 문법 클래스 페이지
         // 화면에 보이는 유닛만 센다. 문제 화면으로 넘어가도 클래스 페이지가 DOM 에
@@ -606,7 +613,7 @@ object Grammar {
             var r = el.getBoundingClientRect();
             return r.width > 0 && r.height > 0;
         }
-        var sel = [".flip-card.showing .btn-next-card",".btn-next-card",".flip-card.showing .default-btn-body .btn-gclass",".study-bottom .btn-next-box .btn-gclass",".study-bottom .btn-next-box a",".btn-next-box .btn-gclass",".btnNextCard",".btn-condition-next",".btn-next",".btn-continue",".modal-content .btn-ok",".btn-quiz-start",".btn-opt-start"];
+        var sel = [".flip-card.showing .btn-next-card",".btn-next-card",".flip-card.showing .default-btn-body .btn-gclass",".study-bottom .btn-next-box .btn-gclass",".study-bottom .btn-next-box a",".btn-next-box .btn-gclass",".btnNextCard",".btn-condition-next",".btn-next",".btn-continue",".btn-quiz-start",".btn-opt-start"];
         for (var i = 0; i < sel.length; i++) {
             var els = document.querySelectorAll(sel[i]);
             for (var j = 0; j < els.length; j++) {
@@ -656,6 +663,7 @@ object Grammar {
         when (data.optString("kind", "")) {
             "class" -> return State(kind = "class", units = parseUnits(data.optJSONArray("units")))
             "end" -> return State(kind = "end")
+            "login" -> return State(kind = "login")
         }
 
         // --- 개념 톡 (grammar_talk.js 기준)
@@ -1335,6 +1343,60 @@ return out;
         return if (dict.isEmpty()) null else dict
     }
 
+    /**
+     * 사이트 모달(#alertModal / #confirmModal)이 떠 있으면 알맞은 버튼을 눌러 준다.
+     *
+     * 사이트 스크립트(homer.js 의 showAlert/showConfirm)를 확인한 결과:
+     *   - 두 모달 모두 `.btn-ok`(확인) 와 `.btn-cancel` 을 쓰고, **버튼 글자는 호출할 때 바뀐다**.
+     *   - 특히 '누적오답복습'(scripts/v3/gclass_main_std.js)은
+     *       showConfirm('… 복습을 시작할까요?', …, btn_ok_text='학습 생략', btn_cancel_text='학습 시작')
+     *     이라서, `.btn-ok` 를 그냥 누르면 **복습을 건너뛴다**.
+     * 그래서 클래스 이름이 아니라 **버튼에 적힌 글자**로 고른다.
+     *
+     * @return 누른 버튼의 글자 (모달이 없으면 null)
+     */
+    private suspend fun handleModal(d: Driver): String? {
+        val label = d.evalStringOrNull(
+            """
+            // 모달은 position:fixed 라 offsetParent 가 null 이다. 크기와 스타일로만 판단한다.
+            function vis(el) {
+                if (!el) return false;
+                var r = el.getBoundingClientRect();
+                if (!(r.width > 0 && r.height > 0)) return false;
+                var s = window.getComputedStyle(el);
+                return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+            }
+            var modals = document.querySelectorAll('#alertModal, #confirmModal, .modal.in, .modal.show');
+            var modal = null;
+            for (var i = 0; i < modals.length; i++) if (vis(modals[i])) { modal = modals[i]; break; }
+            if (!modal) return null;
+
+            var btns = modal.querySelectorAll('button, a, .btn');
+            var best = null, bestScore = -1, bestText = '';
+            for (var i = 0; i < btns.length; i++) {
+                var b = btns[i];
+                if (!vis(b)) continue;
+                var t = ((b.textContent || '') + '').replace(/\s+/g, ' ').trim();
+                // 학습을 건너뛰거나 닫는 버튼은 절대 고르지 않는다
+                if (/생략|취소|나중|닫기|아니/.test(t)) continue;
+                var score = 0;
+                if (/학습 ?시작/.test(t)) score = 6;
+                else if (/시작/.test(t)) score = 5;
+                else if (/계속/.test(t)) score = 4;
+                else if (/확인|예|네/.test(t)) score = 3;
+                else if (b.className.indexOf('btn-ok') >= 0) score = 2;
+                else continue;
+                if (score > bestScore) { bestScore = score; best = b; bestText = t; }
+            }
+            if (!best) return null;
+            best.setAttribute('data-cc-modal-btn', '1');
+            return bestText;
+            """
+        )?.trim()?.ifEmpty { null } ?: return null
+        d.clickFirstVisible("[data-cc-modal-btn=\"1\"]")
+        return label
+    }
+
     private suspend fun clickTagged(
         d: Driver, attr: String, value: String, trusted: Boolean,
     ): Boolean {
@@ -1389,6 +1451,7 @@ return out;
         val triesByQid = HashMap<String, Int>()
         val lastPick = HashMap<String, Int>()
         val triedStages = HashSet<String>()
+        val modalRetry = HashMap<String, Int>()   // 확인 창을 거친 단계를 다시 눌러 본 횟수
         val scrambleClicks = HashMap<String, MutableList<Int>>()           // 문제별로 누른 타일 순서
         val failedPairs = HashMap<String, MutableSet<String>>()            // 문제별로 틀린 짝
         val wrongByRow = HashMap<String, HashMap<Int, MutableSet<Int>>>()  // 문제별·줄별 오답
@@ -1470,6 +1533,23 @@ return out;
                     continue
                 }
 
+                // ------------------------------------------ 로그인 화면(세션 끊김)
+                if (state.kind == "login") {
+                    d.log("[문법] 클래스카드에서 로그아웃된 상태입니다 — 로그인한 뒤 다시 실행하세요.")
+                    stop.set()
+                    break
+                }
+
+                // ------------------------------------------ 안내 창이 떠 있으면 먼저 닫는다
+                if (state.kind != "class") {
+                    val picked = handleModal(d)
+                    if (picked != null) {
+                        d.log("[문법] 안내 창의 '$picked' 를 눌렀습니다.")
+                        if (stop.await(700)) break
+                        continue
+                    }
+                }
+
                 // ------------------------------------------ 문법 클래스 페이지
                 if (state.kind == "class") {
                     d.currentUrl().let { if (it.isNotEmpty()) classUrl = it }
@@ -1500,6 +1580,16 @@ return out;
                             }
                             d.log("[문법] ① '${act.unit.name}' — ${act.stage.title} 열기")
                             clickTagged(d, "data-cc-stage", act.stage.key, false)
+                            stop.await(700)
+                            // '누적오답복습'처럼 확인 창이 먼저 뜨는 단계가 있다.
+                            // (사이트가 '학습 생략'을 확인 버튼에 달아 두므로 글자를 보고 고른다)
+                            val picked = handleModal(d)
+                            if (picked != null) {
+                                d.log("[문법] 확인 창의 '$picked' 를 눌렀습니다.")
+                                val again = (modalRetry[act.stage.key] ?: 0) + 1
+                                modalRetry[act.stage.key] = again
+                                if (again <= 2) triedStages.remove(act.stage.key)
+                            }
                         }
                     }
                     if (stop.isSet) break

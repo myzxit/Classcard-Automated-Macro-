@@ -53,7 +53,8 @@ const NEXT_SELECTORS = [
   '.study-bottom .btn-next-box .btn-gclass', '.study-bottom .btn-next-box a',
   '.btn-next-box .btn-gclass', '.btnNextCard',
   '.btn-condition-next', '.btn-next', '.btn-continue',
-  '.modal-content .btn-ok', '.btn-quiz-start', '.btn-opt-start',
+  // 모달 버튼은 글자를 보고 고른다(handleModal). 여기서 눌렀다간 '학습 생략'을 누를 수 있다.
+  '.btn-quiz-start', '.btn-opt-start',
 ];
 
 const END_SELECTORS = [
@@ -83,6 +84,13 @@ function any(sel) {
 
 var NEXT_SEL = ${JSON.stringify(NEXT_SELECTORS)}.join(',');
 var END_SEL = ${JSON.stringify(END_SELECTORS)}.join(',');
+
+// ================================================ 0) 로그인 화면
+// 세션이 끊기면 사이트가 어떤 주소든 로그인 화면으로 돌려보낸다.
+// 이걸 문제 화면으로 착각하면 '아이디/비밀번호 찾기' 같은 링크를 눌러 버린다.
+if (vis(any('input[name="login_id"], input[name="login_pwd"], #login_id, #login_pwd'))) {
+    return { kind: 'login' };
+}
 
 // ================================================ 1) 문법 클래스 페이지
 // 화면에 보이는 유닛만 센다. 문제 화면으로 넘어가도 클래스 페이지가 DOM 에
@@ -1163,6 +1171,59 @@ async function fillInput(d, index, value, attr) {
   `);
 }
 
+/**
+ * 사이트 모달(#alertModal / #confirmModal)이 떠 있으면 알맞은 버튼을 눌러 준다.
+ *
+ * 사이트 스크립트(homer.js 의 showAlert/showConfirm)를 확인한 결과:
+ *   - 두 모달 모두 `.btn-ok`(확인) 와 `.btn-cancel` 을 쓰고, **버튼 글자는 호출할 때 바뀐다**.
+ *   - 특히 '누적오답복습'(gclass_main_std.js)은
+ *       showConfirm('… 복습을 시작할까요?', …, btn_ok_text='학습 생략', btn_cancel_text='학습 시작')
+ *     이라서, `.btn-ok` 를 그냥 누르면 **복습을 건너뛴다**.
+ * 그래서 클래스 이름이 아니라 **버튼에 적힌 글자**로 고른다.
+ *
+ * @returns {Promise<string|null>} 누른 버튼의 글자 (모달이 없으면 null)
+ */
+async function handleModal(d) {
+  const label = await d.eval(`
+    // 모달은 position:fixed 라 offsetParent 가 null 이다. 크기와 스타일로만 판단한다.
+    function vis(el) {
+        if (!el) return false;
+        var r = el.getBoundingClientRect();
+        if (!(r.width > 0 && r.height > 0)) return false;
+        var s = window.getComputedStyle(el);
+        return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
+    }
+    var modals = document.querySelectorAll('#alertModal, #confirmModal, .modal.in, .modal.show');
+    var modal = null;
+    for (var i = 0; i < modals.length; i++) if (vis(modals[i])) { modal = modals[i]; break; }
+    if (!modal) return null;
+
+    var btns = modal.querySelectorAll('button, a, .btn');
+    var best = null, bestScore = -1, bestText = '';
+    for (var i = 0; i < btns.length; i++) {
+        var b = btns[i];
+        if (!vis(b)) continue;
+        var t = ((b.textContent || '') + '').replace(/\\s+/g, ' ').trim();
+        // 학습을 건너뛰거나 닫는 버튼은 절대 고르지 않는다
+        if (/생략|취소|나중|닫기|아니/.test(t)) continue;
+        var score = 0;
+        if (/학습 ?시작/.test(t)) score = 6;
+        else if (/시작/.test(t)) score = 5;
+        else if (/계속/.test(t)) score = 4;
+        else if (/확인|예|네/.test(t)) score = 3;
+        else if (b.className.indexOf('btn-ok') >= 0) score = 2;
+        else continue;
+        if (score > bestScore) { bestScore = score; best = b; bestText = t; }
+    }
+    if (!best) return null;
+    best.setAttribute('data-cc-modal-btn', '1');
+    return bestText;
+  `);
+  if (!label) return null;
+  await d.clickFirstVisible('[data-cc-modal-btn="1"]');
+  return label;
+}
+
 export async function grammar(d, answerDict, stop) {
   d.log('[문법] 시작');
 
@@ -1175,6 +1236,7 @@ export async function grammar(d, answerDict, stop) {
   const triesByQid = new Map();
   const lastPick = new Map();
   const triedStages = new Set();
+  const modalRetry = new Map();   // 확인 창을 거친 단계를 다시 눌러 본 횟수
   const scrambleClicks = new Map();   // 문제별로 지금까지 누른 타일 순서
   const failedPairs = new Map();      // 문제별로 틀린 짝 조합
   const wrongByRow = new Map();       // 문제별 · 줄별로 틀린 보기
@@ -1253,6 +1315,23 @@ export async function grammar(d, answerDict, stop) {
         continue;
       }
 
+      // ---------------------------------------------- 로그인 화면(세션 끊김)
+      if (state.kind === 'login') {
+        d.log('[문법] 클래스카드에서 로그아웃된 상태입니다 — 로그인한 뒤 다시 실행하세요.');
+        stop.set();
+        break;
+      }
+
+      // ---------------------------------------------- 안내 창이 떠 있으면 먼저 닫는다
+      if (state.kind !== 'class') {
+        const picked = await handleModal(d);
+        if (picked) {
+          d.log(`[문법] 안내 창의 '${picked}' 를 눌렀습니다.`);
+          if (await stop.await(700)) break;
+          continue;
+        }
+      }
+
       // ---------------------------------------------- 문법 클래스 페이지
       if (state.kind === 'class') {
         classUrl = (await d.currentUrl()) || classUrl;
@@ -1283,6 +1362,17 @@ export async function grammar(d, answerDict, stop) {
           }
           d.log(`[문법] ① '${act.unit.name}' — ${act.stage.title} 열기`);
           await clickTagged(d, 'data-cc-stage', act.stage.key, false);
+          if (await stop.await(700)) break;
+          // '누적오답복습'처럼 확인 창이 먼저 뜨는 단계가 있다.
+          // (사이트가 '학습 생략'을 확인 버튼에 달아 두므로 글자를 보고 고른다)
+          const picked = await handleModal(d);
+          if (picked) {
+            d.log(`[문법] 확인 창의 '${picked}' 를 눌렀습니다.`);
+            // 확인 창을 거친 단계는 화면이 바뀐 뒤 다시 눌러야 열리는 경우가 있다
+            const again = (modalRetry.get(act.stage.key) || 0) + 1;
+            modalRetry.set(act.stage.key, again);
+            if (again <= 2) triedStages.delete(act.stage.key);
+          }
         }
         if (await stop.await(CONFIG.stepDelayMs)) break;
         continue;
