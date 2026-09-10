@@ -54,6 +54,12 @@ object Grammar {
     /** 클래스 페이지에서 유닛/단계를 스스로 눌러 진행할지. */
     var DRIVE_CLASS_PAGE = true
 
+    /** 오답이 있으면 '누적오답복습'(틀린 문제만 다시 학습)을 먼저 할지. */
+    var REVIEW_WRONG = true
+
+    /** 화면의 항목이 다 로드됐는지 확인할 때 두 번 재는 간격(ms). */
+    var LOAD_SETTLE_MS = 600L
+
     /** 합성 클릭이 이만큼 무시되면 네이티브(신뢰된) 클릭으로 올린다. */
     private const val TRUSTED_AFTER = 2
 
@@ -1170,7 +1176,7 @@ return out;
      * 클래스 페이지에서 다음에 눌러야 할 단계를 고른다.
      * 잠기지 않고, 아직 시도하지 않은 것 중 STAGE_ORDER 순서가 가장 앞선 것.
      */
-    fun nextClassAction(units: List<UnitRow>, tried: Set<String>): ClassAction {
+    fun nextClassAction(units: List<UnitRow>, tried: Set<String>, prefer: String? = null): ClassAction {
         for (u in units) {
             if (u.locked) continue
             val open = u.stages.filter { !it.locked && it.key !in tried }
@@ -1181,9 +1187,11 @@ return out;
                 }
                 continue
             }
+            // prefer 로 지정된 단계(예: 오답이 있었을 때의 '누적오답복습')를 맨 앞으로
             val best = open.minByOrNull {
                 val idx = STAGE_ORDER.indexOf(it.title)
-                if (idx < 0) 99 else idx
+                val base = if (idx < 0) 99 else idx
+                if (prefer != null && it.title == prefer) -1 else base
             }!!
             return ClassAction.Start(u, best)
         }
@@ -1294,6 +1302,46 @@ return out;
         var ignoredClicks = 0
         var talkStuck = 0      // 개념 톡에서 Enter 가 먹히지 않은 연속 횟수
         var checkedScreen = ""  // 정답 데이터를 확인한 화면 (단계가 바뀌면 다시 확인한다)
+
+        // 지금 진행 중인 단계의 학습 기록 (①열기 ②읽기 ③로드 ④확인완료 ⑤풀이 ⑨오답노트 ⑫결과 ⑬재학습)
+        var stgUnit = ""
+        var stgTitle = ""
+        var stgTotal = 0
+        var stgCards = 0
+        var stgWithAnswer = 0
+        var stgSolved = 0
+        var stgNo = 0
+        var stgDone = true
+        val stgWrong = ArrayList<Array<String>>()     // [qid, 문제, 고른 답, 정답]
+        var wrongLastStage = false
+        val answeredQ = HashSet<String>()             // 이미 번호를 매겨 로그한 문항
+        val lastNote = HashMap<String, Array<String>>()  // qid -> [문제, 고른 답, 정답]
+
+        fun startStage(unitName: String, title: String) {
+            stgUnit = unitName; stgTitle = title
+            stgTotal = 0; stgCards = 0; stgWithAnswer = 0; stgSolved = 0; stgNo = 0
+            stgWrong.clear(); stgDone = false
+        }
+
+        /** ⑫ 단계 결과(점수 + 오답 목록)를 로그에 남긴다. */
+        fun reportStage() {
+            if (stgDone) return
+            stgDone = true
+            val right = maxOf(0, stgSolved - stgWrong.size)
+            val totalTxt = if (stgTotal > 0) "/$stgTotal" else ""
+            d.log(
+                "[문법] ⑪ '$stgUnit' — $stgTitle 완료. " +
+                    "⑫ 푼 문제 $stgSolved${totalTxt}개, 정답 ${right}개, 오답 ${stgWrong.size}개"
+            )
+            if (stgWrong.isNotEmpty()) {
+                d.log("[문법] ⑨ 오답노트 (${stgWrong.size}개)")
+                stgWrong.forEachIndexed { i, w ->
+                    val ans = if (w[3].isNotEmpty()) " / 정답 '${w[3]}'" else ""
+                    d.log("[문법]   ${i + 1}) '${w[1].take(40)}' — 고른 답 '${w[2]}'$ans")
+                }
+            }
+            wrongLastStage = stgWrong.isNotEmpty()
+        }
         var fastScreen = false  // 이 화면의 정답을 전부 읽어 뒀는가 (읽어 뒀으면 빠르게 진행)
 
         /** 한 동작 뒤에 기다릴 시간. 정답을 다 아는 화면은 짧게. */
@@ -1307,6 +1355,7 @@ return out;
          */
         suspend fun backToClass(why: String): Boolean {
             if (classUrl.isEmpty()) return false
+            reportStage()
             d.log("[문법] $why -> 클래스 페이지로 돌아가 다음 단계를 진행합니다.")
             d.loadUrl(classUrl)
             d.waitForLoad(15000)
@@ -1333,7 +1382,9 @@ return out;
                         stop.set()
                         break
                     }
-                    when (val act = nextClassAction(state.units, triedStages)) {
+                    // ⑬ 직전 단계에 오답이 있으면 '누적오답복습'(틀린 문제만 다시 학습)을 먼저 한다.
+                    val prefer = if (REVIEW_WRONG && wrongLastStage) "누적오답복습" else null
+                    when (val act = nextClassAction(state.units, triedStages, prefer)) {
                         is ClassAction.None -> {
                             d.log("[문법] 남은 단계가 없습니다 -> 종료")
                             stop.set()
@@ -1346,7 +1397,12 @@ return out;
                             triedStages.add(act.stage.key)
                             checkedScreen = ""        // 새 단계 -> 정답 데이터를 다시 확인한다
                             fastScreen = false
-                            d.log("[문법] '${act.unit.name}' — ${act.stage.title} 시작")
+                            reportStage()
+                            startStage(act.unit.name, act.stage.title)
+                            if (prefer != null && act.stage.title == prefer) {
+                                d.log("[문법] ⑬ 직전 단계에 오답이 있어 틀린 문제부터 다시 학습합니다.")
+                            }
+                            d.log("[문법] ① '${act.unit.name}' — ${act.stage.title} 열기")
                             clickTagged(d, "data-cc-stage", act.stage.key, false)
                         }
                     }
@@ -1361,8 +1417,46 @@ return out;
                     val screen = state.kind + "|" + d.currentUrl()
                     if (screen != checkedScreen) {
                         checkedScreen = screen
-                        fastScreen = checkAnswerSource(d, if (state.kind == "talk") "개념 톡" else "문제 화면")
-                        if (fastScreen) d.log("[문법] 정답을 다 읽었습니다 — 기다리지 않고 한 번에 풉니다.")
+                        val label = if (state.kind == "talk") "개념 톡" else "문제 화면"
+                        if (stgDone) startStage(stgUnit, label)
+
+                        // ② 페이지의 문제·설명을 처음부터 끝까지 읽는다
+                        d.log("[문법] ② ${label}의 내용을 처음부터 끝까지 읽는 중…")
+
+                        // ③ 모든 항목이 로드될 때까지 대기 (두 번 재서 개수가 같아지면 로드 완료)
+                        var prev: String? = null
+                        var quiz = 0; var talk = 0; var withAnswer = 0
+                        for (i in 0 until 12) {
+                            val v = d.evalObjectOrNull(CHECK_ANSWER_SOURCE_JS)
+                            quiz = v?.optInt("quiz", 0) ?: 0
+                            talk = v?.optInt("talk", 0) ?: 0
+                            withAnswer = maxOf(v?.optInt("quizWith", 0) ?: 0, v?.optInt("talkWith", 0) ?: 0)
+                            val sig = "$quiz/$talk"
+                            if (prev != null && sig == prev && (quiz > 0 || talk > 0)) break
+                            prev = sig
+                            if (stop.await(LOAD_SETTLE_MS)) break
+                        }
+                        if (stop.isSet) break
+
+                        stgTotal = quiz
+                        stgCards = talk
+                        stgWithAnswer = withAnswer
+                        stgNo = 0
+                        d.log(
+                            "[문법] ③ 로드 완료 — " +
+                                if (stgTotal > 0) "문항 ${stgTotal}개" else "카드 ${stgCards}장"
+                        )
+
+                        // ④ 학습 내용 확인 완료 (정답 데이터를 미리 다 읽어 둔다)
+                        fastScreen = stgWithAnswer > 0
+                        if (fastScreen) {
+                            d.log(
+                                "[문법] ④ 학습 내용 확인 완료 — 정답 ${stgWithAnswer}개를 미리 읽었습니다. " +
+                                    "⑤ 1번 문제부터 순서대로 풉니다."
+                            )
+                        } else {
+                            d.log("[문법] ④ 학습 내용 확인 완료 — 정답 데이터가 없어 화면 정보로 풉니다.")
+                        }
                     }
                 }
 
@@ -1582,10 +1676,22 @@ return out;
                 }
 
                 // 채점 결과 반영: 직전에 고른 보기가 틀렸으면 기억해 둔다.
+                // ⑧ 채점 결과 확인 -> ⑨ 틀린 문제는 오답노트에 저장
                 if (state.feedback == "wrong" && lastQid.isNotEmpty()) {
                     lastPick[lastQid]?.let { picked ->
                         wrongByQid.getOrPut(lastQid) { mutableSetOf() }.add(picked)
-                        if (DEBUG) d.log("[문법] 오답 기억: 보기 ${picked + 1}")
+                        if (stgWrong.none { it[0] == lastQid }) {
+                            val note = lastNote[lastQid]
+                            stgWrong.add(
+                                arrayOf(
+                                    lastQid,
+                                    note?.get(0) ?: state.question,
+                                    note?.get(1) ?: "보기 ${picked + 1}",
+                                    note?.get(2) ?: state.answer,
+                                )
+                            )
+                            d.log("[문법] ⑨ 오답 -> 오답노트에 저장 (${stgWrong.size}번째)")
+                        }
                     }
                 }
                 // 채점이 끝난 문항이면 다음으로 넘긴다.
@@ -1633,6 +1739,27 @@ return out;
                         answerList = listOf(it)
                         answerFrom = "페이지 정답 데이터"
                     }
+                }
+
+                // ⑤ 보기형이 아닌 문제도 번호를 매겨 진행 상황을 남긴다
+                if (state.choices.isEmpty() && qid !in answeredQ &&
+                    (state.hasInput || state.tiles.isNotEmpty() || state.rows.isNotEmpty() ||
+                        state.left.isNotEmpty())
+                ) {
+                    answeredQ.add(qid)
+                    stgNo++
+                    stgSolved++
+                    val kind = when {
+                        state.hasInput -> "입력형"
+                        state.tiles.isNotEmpty() -> "어순 배열"
+                        state.rows.isNotEmpty() -> "분류형"
+                        else -> "짝맞추기"
+                    }
+                    val totalTxt = if (stgTotal > 0) "/$stgTotal" else ""
+                    d.log(
+                        "[문법] ⑤ $stgNo${totalTxt}번 문제 ($kind) '${state.question.take(30)}'" +
+                            (if (answerFrom.isNotEmpty()) " ($answerFrom)" else " (추정)")
+                    )
                 }
 
                 // ------------------------------------------ 입력형
@@ -1748,14 +1875,19 @@ return out;
                     continue
                 }
 
-                if (DEBUG) {
-                    val label = state.choices.firstOrNull { it.index == pick }?.raw ?: ""
+                val label = state.choices.firstOrNull { it.index == pick }?.raw ?: ""
+                if (qid !in answeredQ) {
+                    answeredQ.add(qid)
+                    stgNo++
+                    stgSolved++
+                    val totalTxt = if (stgTotal > 0) "/$stgTotal" else ""
                     d.log(
-                        "[문법] (${state.type}) '${state.question.take(40)}' " +
-                            "보기 ${state.choices.size}개 -> ${pick + 1}번 '${label.take(20)}'" +
-                            if (answer.isNotEmpty()) " (정답 확인)" else " (추정)"
+                        "[문법] ⑤ $stgNo${totalTxt}번 문제 '${state.question.take(30)}' -> " +
+                            "${pick + 1}번 '${label.take(20)}'" +
+                            (if (answerFrom.isNotEmpty()) " ($answerFrom)" else " (추정)")
                     )
                 }
+                lastNote[qid] = arrayOf(state.question, "${pick + 1}번 '$label'", answer)
 
                 lastPick[qid] = pick
                 lastQid = qid
@@ -1784,6 +1916,7 @@ return out;
         } catch (e: Throwable) {
             if (!stop.isSet) d.log("[문법] 오류: ${e.message}")
         } finally {
+            reportStage()
             d.log("[문법] 종료")
         }
     }

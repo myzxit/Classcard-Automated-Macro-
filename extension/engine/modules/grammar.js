@@ -33,6 +33,8 @@ export const CONFIG = {
   maxTryPerQuestion: 6,  // 한 문제에서 이만큼 시도하면 다음으로 넘어간다
   idleGiveUp: 30,        // 문제도 버튼도 못 찾은 채 이만큼 반복하면(≈12초) 종료
   driveClassPage: true,  // 클래스 페이지에서 유닛/단계를 스스로 눌러 진행할지
+  reviewWrong: true,     // 오답이 있으면 '누적오답복습'을 먼저 다시 학습할지
+  loadSettleMs: 600,     // 화면의 항목이 다 로드됐는지 확인할 때 두 번 재는 간격
 };
 
 /** 합성 클릭이 이만큼 무시되면 신뢰된 클릭(CDP)으로 올린다. */
@@ -1021,7 +1023,7 @@ export function lookupAnswer(question, lookups) {
  * @param {Set<string>} tried  이미 눌러 본 단계 key
  * @returns {{action:'open'|'stage'|'none', unit?:object, stage?:object}}
  */
-export function nextClassAction(units, tried) {
+export function nextClassAction(units, tried, prefer) {
   for (const u of units || []) {
     if (u.locked) continue;
     const open = (u.stages || []).filter((s) => !s.locked && !tried.has(s.key));
@@ -1033,6 +1035,12 @@ export function nextClassAction(units, tried) {
       continue;
     }
     open.sort((a, b) => {
+      // prefer 로 지정된 단계(예: 오답이 있었을 때의 '누적오답복습')를 맨 앞으로
+      if (prefer) {
+        const pa = a.title === prefer ? 0 : 1;
+        const pb = b.title === prefer ? 0 : 1;
+        if (pa !== pb) return pa - pb;
+      }
       const ia = STAGE_ORDER.indexOf(a.title);
       const ib = STAGE_ORDER.indexOf(b.title);
       return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
@@ -1137,6 +1145,43 @@ export async function grammar(d, answerDict, stop) {
   let ignoredClicks = 0;
   let talkStuck = 0;      // 개념 톡에서 Enter 가 먹히지 않은 연속 횟수
   let checkedScreen = '';  // 정답 데이터를 확인한 화면 (단계가 바뀌면 다시 확인한다)
+
+  /**
+   * 지금 진행 중인 단계의 학습 기록.
+   * 사용자가 요청한 순서대로 남긴다:
+   *   ① 단계 열기 -> ② 내용 읽기 -> ③ 로드 대기 -> ④ 확인 완료 ->
+   *   ⑤ 1번부터 순서대로 풀기 -> ⑨ 오답노트 -> ⑫ 점수·오답 목록 -> ⑬ 오답 재학습
+   */
+  let stage = null;
+  let wrongLastStage = false;   // 직전 단계에서 오답이 있었나 (누적오답복습 우선용)
+  const answeredQ = new Set();  // 이미 번호를 매겨 로그한 문항
+  const lastNote = new Map();   // 문항별로 마지막에 고른 답 (오답노트용)
+
+  const newStage = (unitName, title) => ({
+    unit: unitName, title, total: 0, cards: 0, withAnswer: 0,
+    solved: 0, wrong: [], no: 0, done: false,
+  });
+
+  /** ⑫ 단계 결과(점수 + 오답 목록)를 로그에 남긴다. */
+  const reportStage = () => {
+    if (!stage || stage.done) return;
+    stage.done = true;
+    const total = stage.total || stage.solved;
+    const wrongCount = stage.wrong.length;
+    const right = Math.max(0, stage.solved - wrongCount);
+    d.log(
+      `[문법] ⑪ '${stage.unit}' — ${stage.title} 완료. ` +
+        `⑫ 푼 문제 ${stage.solved}${total ? `/${total}` : ''}개, 정답 ${right}개, 오답 ${wrongCount}개`,
+    );
+    if (wrongCount) {
+      d.log(`[문법] ⑨ 오답노트 (${wrongCount}개)`);
+      stage.wrong.forEach((w, i) => {
+        d.log(`[문법]   ${i + 1}) '${w.q.slice(0, 40)}' — 고른 답 '${w.picked}'` +
+          (w.answer ? ` / 정답 '${w.answer}'` : ''));
+      });
+    }
+    wrongLastStage = wrongCount > 0;
+  };
   let fastScreen = false;  // 이 화면의 정답을 전부 읽어 뒀는가 (읽어 뒀으면 빠르게 진행)
 
   /** 한 동작 뒤에 기다릴 시간. 정답을 다 아는 화면은 짧게. */
@@ -1150,6 +1195,7 @@ export async function grammar(d, answerDict, stop) {
    */
   const backToClass = async (why) => {
     if (!classUrl) return false;
+    reportStage();
     d.log(`[문법] ${why} -> 클래스 페이지로 돌아가 다음 단계를 진행합니다.`);
     await d.loadUrl(classUrl);
     await d.waitForLoad(15000);
@@ -1176,7 +1222,9 @@ export async function grammar(d, answerDict, stop) {
           stop.set();
           break;
         }
-        const act = nextClassAction(state.units, triedStages);
+        // ⑬ 직전 단계에서 틀린 게 있으면 '누적오답복습'(틀린 문제만 다시 학습)을 먼저 한다.
+        const prefer = (CONFIG.reviewWrong && wrongLastStage) ? '누적오답복습' : null;
+        const act = nextClassAction(state.units, triedStages, prefer);
         if (act.action === 'none') {
           d.log('[문법] 남은 단계가 없습니다 -> 종료');
           stop.set();
@@ -1189,7 +1237,12 @@ export async function grammar(d, answerDict, stop) {
           triedStages.add(act.stage.key);
           checkedScreen = '';        // 새 단계 -> 정답 데이터를 다시 확인한다
           fastScreen = false;
-          d.log(`[문법] '${act.unit.name}' — ${act.stage.title} 시작`);
+          reportStage();
+          stage = newStage(act.unit.name, act.stage.title);
+          if (prefer && act.stage.title === prefer) {
+            d.log('[문법] ⑬ 직전 단계에 오답이 있어 틀린 문제부터 다시 학습합니다.');
+          }
+          d.log(`[문법] ① '${act.unit.name}' — ${act.stage.title} 열기`);
           await clickTagged(d, 'data-cc-stage', act.stage.key, false);
         }
         if (await stop.await(CONFIG.stepDelayMs)) break;
@@ -1202,8 +1255,43 @@ export async function grammar(d, answerDict, stop) {
         const screen = state.kind + '|' + (await d.currentUrl());
         if (screen !== checkedScreen) {
           checkedScreen = screen;
-          fastScreen = await checkAnswerSource(d, state.kind === 'talk' ? '개념 톡' : '문제 화면');
-          if (fastScreen) d.log('[문법] 정답을 다 읽었습니다 — 기다리지 않고 한 번에 풉니다.');
+          const label = state.kind === 'talk' ? '개념 톡' : '문제 화면';
+          if (!stage) stage = newStage('', label);
+
+          // ② 페이지의 문제·설명을 처음부터 끝까지 읽는다
+          d.log(`[문법] ② ${label}의 내용을 처음부터 끝까지 읽는 중…`);
+
+          // ③ 모든 항목이 로드될 때까지 대기 (두 번 재서 개수가 같아지면 로드 완료)
+          let prev = null;
+          let counts = null;
+          for (let i = 0; i < 12; i++) {
+            counts = await d.eval(CHECK_ANSWER_SOURCE_JS);
+            const sig = counts ? `${counts.quiz}/${counts.talk}` : 'x';
+            if (prev !== null && sig === prev && counts && (counts.quiz || counts.talk)) break;
+            prev = sig;
+            if (await stop.await(CONFIG.loadSettleMs)) break;
+          }
+          if (stop.isSet) break;
+
+          stage.total = (counts && counts.quiz) || 0;
+          stage.cards = (counts && counts.talk) || 0;
+          stage.withAnswer = (counts && (counts.quizWith || counts.talkWith)) || 0;
+          stage.no = 0;
+          d.log(
+            `[문법] ③ 로드 완료 — ` +
+              (stage.total ? `문항 ${stage.total}개` : `카드 ${stage.cards}장`),
+          );
+
+          // ④ 학습 내용 확인 완료 (정답 데이터를 미리 다 읽어 둔다)
+          fastScreen = stage.withAnswer > 0;
+          if (fastScreen) {
+            d.log(
+              `[문법] ④ 학습 내용 확인 완료 — 정답 ${stage.withAnswer}개를 미리 읽었습니다. ` +
+                '⑤ 1번 문제부터 순서대로 풉니다.',
+            );
+          } else {
+            d.log('[문법] ④ 학습 내용 확인 완료 — 정답 데이터가 없어 화면 정보로 풉니다.');
+          }
         }
       }
 
@@ -1416,12 +1504,21 @@ export async function grammar(d, answerDict, stop) {
         lastGroupPick = null;
       }
 
-      // 채점 결과 반영: 직전에 고른 보기가 틀렸으면 기억해 둔다.
+      // ⑧ 채점 결과 확인 -> ⑨ 틀린 문제는 오답노트에 저장
       if (state.feedback === 'wrong' && lastQid && lastPick.has(lastQid)) {
         const picked = lastPick.get(lastQid);
         if (!wrongByQid.has(lastQid)) wrongByQid.set(lastQid, new Set());
         wrongByQid.get(lastQid).add(picked);
-        if (CONFIG.debug) d.log(`[문법] 오답 기억: 보기 ${picked + 1}`);
+        if (stage && !stage.wrong.some((w) => w.qid === lastQid)) {
+          const note = lastNote.get(lastQid) || {};
+          stage.wrong.push({
+            qid: lastQid,
+            q: note.q || state.question || '',
+            picked: note.picked || `보기 ${picked + 1}`,
+            answer: note.answer || state.answer || '',
+          });
+          d.log(`[문법] ⑨ 오답 -> 오답노트에 저장 (${stage.wrong.length}번째)`);
+        }
       }
       // 채점이 끝난 문항이면 다음으로 넘긴다.
       // (분류·짝맞추기는 줄/칸 단위로 채점되므로 문항 단위 채점만 본다)
@@ -1461,6 +1558,22 @@ export async function grammar(d, answerDict, stop) {
       if (!answer && state.choices.length) {
         const scanned = await findAnswerInPage(d, state.choices.map((c) => c.raw), -1);
         if (scanned) { answer = scanned; answerList = [scanned]; answerFrom = '페이지 정답 데이터'; }
+      }
+
+      // ⑤ 보기형이 아닌 문제도 번호를 매겨 진행 상황을 남긴다
+      if (stage && !state.choices.length && !answeredQ.has(qid) &&
+          (state.hasInput || (state.tiles || []).length || (state.rows || []).length ||
+           (state.left || []).length)) {
+        answeredQ.add(qid);
+        stage.no++;
+        stage.solved++;
+        const kind = state.hasInput ? '입력형'
+          : (state.tiles || []).length ? '어순 배열'
+          : (state.rows || []).length ? '분류형' : '짝맞추기';
+        d.log(
+          `[문법] ⑤ ${stage.no}${stage.total ? `/${stage.total}` : ''}번 문제 (${kind}) ` +
+            `'${state.question.slice(0, 30)}'${answer ? ` (${answerFrom})` : ' (추정)'}`,
+        );
       }
 
       // ---------------------------------------------- 입력형
@@ -1575,13 +1688,18 @@ export async function grammar(d, answerDict, stop) {
         continue;
       }
 
-      if (CONFIG.debug) {
-        const label = (state.choices.find((c) => c.index === pick) || {}).raw || '';
+      const label = (state.choices.find((c) => c.index === pick) || {}).raw || '';
+      if (stage && !answeredQ.has(qid)) {
+        answeredQ.add(qid);
+        stage.no++;
+        stage.solved++;
         d.log(
-          `[문법] (${state.type}) '${state.question.slice(0, 40)}' 보기 ${state.choices.length}개 ` +
-            `-> ${pick + 1}번 '${label.slice(0, 20)}'${answer ? ` (${answerFrom})` : ' (추정)'}`,
+          `[문법] ⑤ ${stage.no}${stage.total ? `/${stage.total}` : ''}번 문제 ` +
+            `'${state.question.slice(0, 30)}' -> ${pick + 1}번 '${label.slice(0, 20)}'` +
+            `${answer ? ` (${answerFrom})` : ' (추정)'}`,
         );
       }
+      lastNote.set(qid, { q: state.question, picked: `${pick + 1}번 '${label}'`, answer });
 
       lastPick.set(qid, pick);
       lastQid = qid;
@@ -1608,6 +1726,7 @@ export async function grammar(d, answerDict, stop) {
   } catch (e) {
     if (!stop.isSet) d.log(`[문법] 오류: ${e.message}`);
   } finally {
+    reportStage();
     d.log('[문법] 종료');
   }
 }
