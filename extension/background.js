@@ -295,7 +295,8 @@ const MODES = {
   // 단어장이 있으면 그대로 넘겨 주고, 없으면 없는 채로 실행한다.
   memorize: { label: '암기', fn: Basic.memorize, noDict: true },          // 정답이 필요 없다
   recall: { label: '리콜', fn: Basic.recall, noDict: true },              // 정답이 필요 없다
-  spell: { label: '스펠', fn: Basic.spell },                              // 단어장 필수
+  // 스펠은 화면에 실린 정답(사이트가 채점에 쓰는 값)으로 풀 수 있어 단어장이 없어도 된다.
+  spell: { label: '스펠', fn: Basic.spell, noDict: true },
   // 문장 암기는 화면에서 정답 문장을 직접 읽는다 (단어장은 폴백).
   memorize_sentence: { label: '문장 암기', fn: Sentence.memorizeSentence, noDict: true },
   // 문장 리콜은 페이지가 로그하는 정답을 캡처한다.
@@ -343,10 +344,20 @@ async function runModeOnSession(session, modeId) {
       if (!dict && mode.noDict) {
         await mode.fn(session.driver, null, stop);
       } else if (!dict) {
-        session.driver.log(
-          '[!] 단어장이 없습니다. 학습 페이지로 이동 후 [단어장 가져오기]를 누르세요.',
-          'error',
-        );
+        // 카드 데이터(study_data)는 **학습이 시작된 뒤** 페이지에 채워진다.
+        // 시작 화면이면 시작 버튼을 누르고 한 번 더 읽어 본다.
+        if (await Basic.startStudyIfNeeded(session.driver, stop)) {
+          await stop.await(1200);
+          dict = await fetchAnswerDict(session);
+        }
+        if (dict) {
+          await mode.fn(session.driver, dict, stop);
+        } else {
+          session.driver.log(
+            '[!] 단어장이 없습니다. 학습 페이지로 이동 후 [단어장 가져오기]를 누르세요.',
+            'error',
+          );
+        }
       } else {
         await mode.fn(session.driver, dict, stop);
       }

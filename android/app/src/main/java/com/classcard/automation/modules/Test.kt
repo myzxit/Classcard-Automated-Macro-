@@ -275,6 +275,7 @@ object Test {
             try {
                 while (!stop.isSet) {
                     if (checkEndAndStop(d, stop)) break
+                    if (Memorize.startStudyIfNeeded(d, stop)) continue
 
                     val q = readQuestion(d)
                     if (q == null || q.options.isEmpty()) {

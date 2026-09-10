@@ -490,6 +490,7 @@ object TestSentence {
             try {
                 while (!stop.isSet) {
                     if (checkEndAndStop(d, stop)) break
+                    if (Memorize.startStudyIfNeeded(d, stop)) continue
 
                     val q = readCard(d)
                     if (q == null) {

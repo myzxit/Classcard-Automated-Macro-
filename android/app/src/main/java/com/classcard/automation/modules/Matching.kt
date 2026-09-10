@@ -272,6 +272,7 @@ object Matching {
             try {
                 while (!stop.isSet) {
                     if (checkEndAndStop(d, stop)) break
+                if (Memorize.startStudyIfNeeded(d, stop)) continue
 
                     // 목표 점수 도달 시 게임 도중 '매칭종료'로 빠져나감 (점수는 저장됨)
                     val score = readScore(d)

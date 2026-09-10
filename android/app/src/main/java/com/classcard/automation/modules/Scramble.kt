@@ -207,6 +207,7 @@ object Scramble {
             try {
                 while (!stop.isSet) {
                     if (checkEndAndStop(d, stop)) break
+                if (Memorize.startStudyIfNeeded(d, stop)) continue
 
                     // 목표 점수 도달 시 셋홈으로 빠져나감 (점수는 저장됨)
                     val score = readScore(d)

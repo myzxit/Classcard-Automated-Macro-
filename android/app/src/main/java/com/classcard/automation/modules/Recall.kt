@@ -89,6 +89,7 @@ object Recall {
         try {
             while (!stop.isSet) {
                 if (checkStep2SuccessAndStop(d, stop)) break
+                if (Memorize.startStudyIfNeeded(d, stop)) continue
 
                 val st = readState(d)
                 if (st == null) {

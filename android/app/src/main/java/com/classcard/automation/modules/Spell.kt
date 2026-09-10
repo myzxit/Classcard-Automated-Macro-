@@ -170,15 +170,47 @@ object Spell {
         return WaitResult.STUCK
     }
 
+    /**
+     * 지금 카드의 **정답을 화면에서 그대로 읽는다**.
+     *
+     * 사이트 스크립트(scripts/v2/spell.js)가 채점할 때 쓰는 값과 같다:
+     *   `${'$'}('.CardItem.current.showing .card-bottom .spell-answer .spell-content').data('answer')`
+     * jQuery data 저장소에 있어 DOM 속성으로는 안 보이므로 jQuery 로 읽는다.
+     * (실제 페이지에서 확인: 프롬프트 'n.돌봄, 조심, 걱정' -> 정답 'care')
+     */
+    private suspend fun readSpellAnswer(d: Driver): String? {
+        val v = d.evalStringOrNull(
+            """
+            if (!window.jQuery) return null;
+            var sels = ['.CardItem.current.showing .card-bottom .spell-answer .spell-content',
+                        '.CardItem.current .card-bottom .spell-answer .spell-content',
+                        '.CardItem.current.showing .card-top .spell-answer .spell-content'];
+            for (var i = 0; i < sels.length; i++) {
+                var el = jQuery(sels[i]);
+                if (!el.length) continue;
+                var a = el.data('answer');
+                if (a == null) continue;
+                var t = jQuery('<div>').html(String(a)).text().trim();
+                if (t) return t;
+            }
+            return null;
+            """
+        )
+        return v?.trim()?.ifEmpty { null }
+    }
+
     val run: ModeFn = { d, answerDict, stop ->
         d.log("[스펠] 시작")
 
-        if (answerDict.isNullOrEmpty()) {
-            d.log("[스펠] answer_dict가 없습니다. [단어장 가져오기]로 먼저 가져오세요.")
-        } else {
+        run {
+            if (answerDict.isNullOrEmpty()) {
+                d.log("[스펠] 단어장이 없습니다 — 화면에 실린 정답으로 풉니다.")
+            }
+            var loggedSource = false
             try {
                 loop@ while (!stop.isSet) {
                     if (checkStep2SuccessAndStop(d, stop)) break
+                    if (Memorize.startStudyIfNeeded(d, stop)) continue
 
                     val (idx, prompt) = getActiveCard(d)
                     if (prompt.isEmpty()) {
@@ -192,7 +224,16 @@ object Spell {
                         continue
                     }
 
-                    val answer = findAnswer(answerDict, prompt)
+                    // 1순위: 화면에 실린 정답(사이트가 채점에 쓰는 값), 2순위: 단어장
+                    var answer = readSpellAnswer(d)
+                    if (answer != null) {
+                        if (!loggedSource) {
+                            loggedSource = true
+                            d.log("[스펠] 화면에서 정답을 읽어 풉니다 (단어장 불필요)")
+                        }
+                    } else {
+                        answer = findAnswer(answerDict ?: AnswerDict(), prompt)
+                    }
                     if (answer != null) {
                         if (!typeActiveInput(d, answer)) {
                             if (stop.await(300)) break

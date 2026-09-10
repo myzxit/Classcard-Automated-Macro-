@@ -62,6 +62,32 @@ export function dictFromCards(cards) {
   return dict;
 }
 
+// ============================================================ 학습 시작 화면
+
+/**
+ * 학습 페이지는 **시작 화면**으로 열린다 (실제 페이지에서 확인:
+ * `<a class="btn btn-primary btn-block btn-opt-start">리콜 학습 시작 (1구간)</a>`).
+ * 이 버튼을 누르기 전에는 `.CardItem.current` 가 없어서 어떤 모드도 아무것도 할 수 없다.
+ * 시작 화면이면 눌러 주고 true, 이미 학습 중이면 false.
+ */
+export async function startStudyIfNeeded(d, stop) {
+  const need = await d.evalBool(`
+    function vis(el) { return el && el.offsetParent !== null; }
+    if (vis(document.querySelector('.CardItem.current'))) return false;
+    var btns = document.querySelectorAll('.btn-opt-start, .start-opt-body a.btn, .btn-quiz-start');
+    for (var i = 0; i < btns.length; i++) if (vis(btns[i])) return true;
+    return false;`);
+  if (!need) return false;
+
+  d.log('학습 시작 화면입니다 — 시작 버튼을 누릅니다.');
+  await d.clickSmart(`
+    function vis(el) { return el && el.offsetParent !== null; }
+    var btns = document.querySelectorAll('.btn-opt-start, .start-opt-body a.btn, .btn-quiz-start');
+    for (var i = 0; i < btns.length; i++) if (vis(btns[i])) { el = btns[i]; break; }`);
+  await stop.await(1500);
+  return true;
+}
+
 // ============================================================ Memorize.py
 
 /**
@@ -129,6 +155,7 @@ export async function memorize(d, answerDict, stop) {
   try {
     while (!stop.isSet) {
       if (await checkStep2SuccessAndStop(d, stop)) break;
+      if (await startStudyIfNeeded(d, stop)) continue;
 
       const prev = await getCardKey(d);
 
@@ -223,6 +250,7 @@ export async function recall(d, answerDict, stop) {
   try {
     while (!stop.isSet) {
       if (await checkStep2SuccessAndStop(d, stop)) break;
+      if (await startStudyIfNeeded(d, stop)) continue;
 
       const st = await recallState(d);
       if (!st) {
@@ -308,6 +336,33 @@ export function findAnswer(answerDict, prompt) {
     if (p === N.squeeze(front)) return back;
   }
   return null;
+}
+
+/**
+ * 지금 카드의 **정답을 화면에서 그대로 읽는다**.
+ *
+ * 사이트 스크립트(scripts/v2/spell.js)가 채점할 때 쓰는 값과 같은 값이다:
+ *   `$('.CardItem.current.showing .card-bottom .spell-answer .spell-content').data('answer')`
+ * jQuery 의 data 저장소에 들어 있어 DOM 속성으로는 안 보이므로 jQuery 로 읽는다.
+ * (실제 페이지에서 확인: 프롬프트 'n.돌봄, 조심, 걱정' -> 정답 'care')
+ */
+async function readSpellAnswer(d) {
+  const v = await d.evalStringOrNull(`
+    if (!window.jQuery) return null;
+    var sels = ['.CardItem.current.showing .card-bottom .spell-answer .spell-content',
+                '.CardItem.current .card-bottom .spell-answer .spell-content',
+                '.CardItem.current.showing .card-top .spell-answer .spell-content'];
+    for (var i = 0; i < sels.length; i++) {
+        var el = jQuery(sels[i]);
+        if (!el.length) continue;
+        var a = el.data('answer');
+        if (a == null) continue;
+        // 사이트도 HTML 을 걷어 내고 비교한다
+        var t = jQuery('<div>').html(String(a)).text().trim();
+        if (t) return t;
+    }
+    return null;`);
+  return v && v.trim() ? v.trim() : null;
 }
 
 async function getActiveCard(d) {
@@ -436,14 +491,39 @@ async function waitNextCard(d, stop, prevIdx, timeout = 2500) {
 export async function spell(d, answerDict, stop) {
   d.log('[스펠] 시작');
 
-  if (!answerDict || answerDict.size === 0) {
-    d.log('[스펠] 단어장이 없습니다. [단어장 가져오기]로 먼저 가져오세요.', 'error');
-    return;
+  let dict = answerDict;
+  if (!dict || dict.size === 0) {
+    // 카드 데이터(study_data)는 **학습이 시작된 뒤** 페이지에 채워진다.
+    // 그래서 시작 화면이면 먼저 시작 버튼을 누르고, 그 다음에 단어장을 읽는다.
+    await startStudyIfNeeded(d, stop);
+    for (let i = 0; i < 10 && !stop.isSet; i++) {
+      const cards = await d.eval(
+        "return (typeof study_data !== 'undefined' && study_data) ? study_data : null;",
+      );
+      if (Array.isArray(cards) && cards.length) {
+        dict = dictFromCards(cards.map((c) => ({
+          front: String((c && c.front) || '').trim(),
+          back: String((c && c.back) || '').trim(),
+        })));
+        if (dict && dict.size) {
+          d.log(`[스펠] 페이지에서 단어장을 읽었습니다 (${dict.size}개)`);
+          break;
+        }
+      }
+      if (await stop.await(500)) return;
+    }
   }
+  if (!dict || dict.size === 0) {
+    d.log('[스펠] 단어장이 없습니다 — 화면에 실린 정답으로 풉니다.');
+    dict = new Map();
+  }
+  answerDict = dict;
 
+  let loggedSource = false;
   try {
     while (!stop.isSet) {
       if (await spellCheckEnd(d, stop)) break;
+      if (await startStudyIfNeeded(d, stop)) continue;
 
       const { idx, prompt } = await getActiveCard(d);
       if (!prompt) {
@@ -457,7 +537,16 @@ export async function spell(d, answerDict, stop) {
         continue;
       }
 
-      const answer = findAnswer(answerDict, prompt);
+      // 1순위: 화면에 실린 정답(사이트가 채점에 쓰는 값), 2순위: 단어장
+      let answer = await readSpellAnswer(d);
+      if (answer) {
+        if (!loggedSource) {
+          loggedSource = true;
+          d.log('[스펠] 화면에서 정답을 읽어 풉니다 (단어장 불필요)');
+        }
+      } else {
+        answer = findAnswer(answerDict, prompt);
+      }
       if (answer !== null) {
         if (!(await typeActiveInput(d, answer))) {
           if (await stop.await(300)) break;

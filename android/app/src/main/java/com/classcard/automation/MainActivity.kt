@@ -85,7 +85,9 @@ class MainActivity : AppCompatActivity() {
             Mode.Single(  // 정답이 필요 없다 (화면의 '정답 보기'를 누른다)
                 "recall", R.string.mode_recall, Recall.run, needsDict = false,
             ),
-            Mode.Single("spell", R.string.mode_spell, Spell.run),   // 단어장 필수
+            Mode.Single(  // 화면에 실린 정답(사이트가 채점에 쓰는 값)으로 푼다
+                "spell", R.string.mode_spell, Spell.run, needsDict = false,
+            ),
             Mode.Single(  // 화면에서 정답 문장을 직접 읽는다 (단어장은 폴백)
                 "memorize_sentence", R.string.mode_memorize_sentence, MemorizeSentence.run,
                 needsDict = false,

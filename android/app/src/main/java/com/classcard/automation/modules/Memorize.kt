@@ -36,6 +36,36 @@ object Memorize {
         return true
     }
 
+    /**
+     * 학습 페이지는 **시작 화면**으로 열린다 (실제 페이지에서 확인:
+     * `<a class="btn btn-primary btn-block btn-opt-start">리콜 학습 시작 (1구간)</a>`).
+     * 이 버튼을 누르기 전에는 `.CardItem.current` 가 없어 어떤 모드도 아무것도 할 수 없다.
+     * 시작 화면이면 눌러 주고 true, 이미 학습 중이면 false.
+     */
+    suspend fun startStudyIfNeeded(d: Driver, stop: StopFlag): Boolean {
+        val need = d.evalBool(
+            """
+            function vis(el) { return el && el.offsetParent !== null; }
+            if (vis(document.querySelector('.CardItem.current'))) return false;
+            var btns = document.querySelectorAll('.btn-opt-start, .start-opt-body a.btn, .btn-quiz-start');
+            for (var i = 0; i < btns.length; i++) if (vis(btns[i])) return true;
+            return false;
+            """
+        )
+        if (!need) return false
+
+        d.log("학습 시작 화면입니다 — 시작 버튼을 누릅니다.")
+        d.clickSmart(
+            """
+            function vis(el) { return el && el.offsetParent !== null; }
+            var btns = document.querySelectorAll('.btn-opt-start, .start-opt-body a.btn, .btn-quiz-start');
+            for (var i = 0; i < btns.length; i++) if (vis(btns[i])) { el = btns[i]; break; }
+            """
+        )
+        stop.await(1500)
+        return true
+    }
+
     /** total 밀리초 동안 interval 간격으로 종료 체크하며 대기. 종료 발견 시 true. */
     suspend fun waitWithCheck(d: Driver, stop: StopFlag, total: Long, interval: Long = 200): Boolean {
         var elapsed = 0L
@@ -111,6 +141,7 @@ object Memorize {
         try {
             while (!stop.isSet) {
                 if (checkStep2SuccessAndStop(d, stop)) break
+                if (startStudyIfNeeded(d, stop)) continue
 
                 val prev = getCardKey(d)
 

@@ -6,6 +6,7 @@ import com.classcard.automation.AccountInfo
 import com.classcard.automation.LogBus
 import com.classcard.automation.SettingsStore
 import com.classcard.automation.modules.AutoAll
+import com.classcard.automation.modules.Memorize
 import com.classcard.automation.modules.FlowFn
 import com.classcard.automation.modules.HtmlParser
 import com.classcard.automation.modules.ModeFn
@@ -221,7 +222,15 @@ class Controller(
         launchStaggered(targets) { session ->
             session.start(scope, label, onFinished = { finishSession(session) }) { stop ->
                 val dict = if (needsDict) {
-                    val d = session.ensureAnswerDict()
+                    var d = session.ensureAnswerDict()
+                    if (d == null) {
+                        // 카드 데이터(study_data)는 **학습이 시작된 뒤** 페이지에 채워진다.
+                        // 시작 화면이면 시작 버튼을 누르고 한 번 더 읽어 본다.
+                        if (Memorize.startStudyIfNeeded(session.driver, stop)) {
+                            stop.await(1200)
+                            d = session.ensureAnswerDict()
+                        }
+                    }
                     if (d == null) {
                         session.log("[!] 단어장이 없습니다. 학습 페이지로 이동 후 [단어장 가져오기]를 누르세요.")
                         return@start

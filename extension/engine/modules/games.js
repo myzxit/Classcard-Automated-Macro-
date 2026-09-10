@@ -4,6 +4,7 @@
  */
 
 import * as N from '../norm.js';
+import { startStudyIfNeeded } from './basic.js';
 import { ratio } from '../similarity.js';
 
 /** 모듈별 목표 점수/기준값 — 원본 상수를 그대로 옮겼고 설정에서 바꿀 수 있다. */
@@ -235,6 +236,7 @@ export async function test(d, answerDict, stop) {
   try {
     while (!stop.isSet) {
       if (await testCheckEndAndStop(d, stop)) break;
+      if (await startStudyIfNeeded(d, stop)) continue;
 
       const q = await readQuestion(d);
       if (!q || !q.options.length) {
@@ -710,6 +712,7 @@ export async function testSentence(d, answerDict, stop) {
   try {
     while (!stop.isSet) {
       if (await testSentenceCheckEndAndStop(d, stop)) break;
+      if (await startStudyIfNeeded(d, stop)) continue;
 
       const q = await readCard(d);
       if (!q) {
@@ -1006,6 +1009,7 @@ export async function matching(d, answerDict, stop) {
   try {
     while (!stop.isSet) {
       if (await gameCheckEndAndStop(d, stop)) break;
+      if (await startStudyIfNeeded(d, stop)) continue;
 
       const score = await readMatchScore(d);
       if (score !== null && score >= targetScore) {
@@ -1193,6 +1197,7 @@ export async function scramble(d, answerDict, stop) {
   try {
     while (!stop.isSet) {
       if (await gameCheckEndAndStop(d, stop)) break;
+      if (await startStudyIfNeeded(d, stop)) continue;
 
       const score = await readScrambleScore(d);
       if (score !== null && score >= targetScore) {
