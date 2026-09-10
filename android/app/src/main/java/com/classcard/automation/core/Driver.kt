@@ -2,6 +2,7 @@ package com.classcard.automation.core
 
 import android.annotation.SuppressLint
 import android.os.SystemClock
+import android.view.KeyCharacterMap
 import android.view.KeyEvent
 import android.view.InputDevice
 import android.view.MotionEvent
@@ -319,6 +320,25 @@ class Driver(
         }
         if (delivered) return true
         return dispatchSyntheticKey(keyCode, shift)
+    }
+
+    /**
+     * 글자를 **진짜 키 입력으로** 한 자씩 쳐 넣는다.
+     *
+     * 스펠은 입력창의 마지막 keydown 이벤트를 저장해 두고 채점할 때 isTrusted 를 확인한다
+     * (사이트 스크립트 scripts/v2/spell.js). 그래서 값만 넣는 방식은 거부될 수 있다.
+     * 키를 못 보내면 false 를 돌려주고, 호출한 쪽이 값 넣기로 폴백한다.
+     */
+    suspend fun typeText(text: String): Boolean {
+        if (text.isEmpty()) return true
+        return withContext(Dispatchers.Main) {
+            if (!webView.hasFocus()) webView.requestFocus()
+            if (!webView.hasFocus()) return@withContext false
+            val map = KeyCharacterMap.load(KeyCharacterMap.VIRTUAL_KEYBOARD)
+            val events = map.getEvents(text.toCharArray()) ?: return@withContext false
+            for (e in events) webView.dispatchKeyEvent(e)
+            true
+        }
     }
 
     /** 포커스를 못 잡았을 때의 폴백: 페이지에 KeyboardEvent 를 합성해 보낸다. */

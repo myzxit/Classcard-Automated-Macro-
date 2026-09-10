@@ -77,10 +77,23 @@ async function tryClickToken(d, rawToken) {
   const cleaned = isDash ? '' : rawToken.replace(/[^a-zA-Z0-9]/g, '');
   if (!isDash && !cleaned) return false;
 
+  // 낱말 타일의 이름은 화면마다 다르다 (사이트 스크립트 확인 결과):
+  //   .scramble-item (예전 문장 암기) / .btn-scramble (문장 리콜) / .sentence-word (문장 카드)
+  // 어느 화면이든 되도록 모두 훑는다.
   const find = `
     var DASH = ${isDash};
     var target = ${JSON.stringify(cleaned)};
-    var items = document.querySelectorAll('.active .scramble-item:not(.clicked)');
+    var SELS = ['.active .scramble-item:not(.clicked)',
+                '.CardItem.current .scramble-item:not(.clicked)',
+                '.active .btn-scramble.clickable:not(.clicked)',
+                '.CardItem.current .btn-scramble:not(.clicked)',
+                '.CardItem.current .card-bottom .sentence-word:not(.clicked)',
+                '.active .sentence-word:not(.clicked)'];
+    var items = [];
+    for (var s = 0; s < SELS.length && !items.length; s++) {
+        var found = document.querySelectorAll(SELS[s]);
+        if (found.length) items = found;
+    }
     var hit = null;
     for (var i = 0; i < items.length; i++) {
         var raw = (items[i].textContent || '').trim();

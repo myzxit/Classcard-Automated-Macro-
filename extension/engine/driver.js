@@ -371,6 +371,40 @@ export class Driver {
     return this.pressKey('space', { shift: true });
   }
 
+  /**
+   * 글자를 **진짜 키 입력으로** 한 자씩 쳐 넣는다.
+   *
+   * 스펠은 입력창의 마지막 keydown 이벤트를 저장해 두고 채점할 때
+   * `isTrusted` 를 확인한다(사이트 스크립트 scripts/v2/spell.js). 그래서 값을 직접
+   * 넣는 방식(value 설정 + input 이벤트)은 "event is not trusted" 로 거부된다.
+   * CDP 가 없으면 마지막 수단으로 값만 넣는다(그 경우 제출은 실패할 수 있다).
+   */
+  async typeText(text) {
+    const str = String(text == null ? '' : text);
+    if (!str) return true;
+
+    if (this.debuggerAttached) {
+      for (const ch of str) {
+        const code = ch.charCodeAt(0);
+        const base = {
+          modifiers: 0,
+          key: ch,
+          text: ch,
+          unmodifiedText: ch,
+          windowsVirtualKeyCode: code,
+          nativeVirtualKeyCode: code,
+        };
+        // keyDown 에 text 가 있으면 그 자체로 글자가 입력된다.
+        // ('char' 를 따로 보내면 같은 글자가 두 번 들어간다)
+        const ok = await this.sendCdp('Input.dispatchKeyEvent', { ...base, type: 'keyDown' });
+        await this.sendCdp('Input.dispatchKeyEvent', { ...base, type: 'keyUp' });
+        if (!ok) return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
   async pressEnter() {
     return this.pressKey('enter');
   }

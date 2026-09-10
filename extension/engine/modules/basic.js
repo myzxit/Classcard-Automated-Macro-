@@ -159,54 +159,130 @@ export async function memorize(d, answerDict, stop) {
 
 // ============================================================ Recall.py
 
-/** `.card-cover.down` 이 사라지길 기다린 뒤 보이는 `.showing` 안의 `.answer` 클릭. */
-async function clickAnswer(d, stop) {
-  const deadline = Date.now() + 10000;
-  while (Date.now() < deadline) {
-    const covered = await d.evalBool(`
-      var els = document.querySelectorAll('.card-cover.down');
-      for (var i = 0; i < els.length; i++) {
-          if (els[i].offsetParent !== null) return true;
-      }
-      return false;`);
-    if (!covered) break;
-    if (await stop.await(200)) return;
-  }
+/**
+ * 리콜 화면의 실제 동작 (사이트 스크립트 scripts/v2/recall.js 확인 결과):
+ *
+ *  - 카드가 바뀌고 0.8초 뒤 `.CardItem.current .card-cover` 에 `down` 이 붙는다.
+ *    이때부터 보기(정답 후보)를 고를 수 있다. 그 전에 누르면 덮개에 막힌다.
+ *  - 보기 중 **정답에는 `.answer` 클래스**가 붙어 있다(사이트가 data-answer=1 을 함께 넣는다).
+ *  - 보기 클릭 처리(setCardQuestItem)는 `e.originalEvent.isTrusted` 가 false 면 **그냥 무시**한다.
+ *    -> 합성 클릭은 절대 통하지 않는다. 신뢰된 클릭만 받는다.
+ *  - 정답을 고르면 사이트가 1초 뒤 `.btnNextCard` 를 스스로 눌러 다음 카드로 넘어간다.
+ *    (오답이면 넘어가지 않으므로 우리가 눌러 준다)
+ */
+const RECALL_STATE_JS = `
+var card = document.querySelector('.CardItem.current') ||
+           document.querySelector('.CardItem.showing');
+if (!card) return { found: false };
 
-  // 원본(Selenium)은 진짜 마우스 클릭을 보냈다. 이 카드도 합성 click 은 무시하므로
-  // 신뢰된 클릭을 먼저 쓰고, 불가능할 때만 합성 클릭으로 폴백한다.
-  const locator = `
-    var cards = document.querySelectorAll('.showing');
-    for (var i = 0; i < cards.length; i++) {
-        if (cards[i].offsetParent === null) continue;
-        var t = cards[i].querySelector('.answer');
-        if (!t) continue;
-        t.scrollIntoView({ block: 'center', inline: 'center' });
-        var r = t.getBoundingClientRect();
-        if (!r.width || !r.height) continue;
-        return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: window.innerWidth };
-    }
-    return null;`;
-  if (await d.trustedClick(locator)) return;
+var cover = card.querySelector('.card-cover');
+var down = !!(cover && cover.className.indexOf('down') >= 0);
 
-  await d.evalBool(`
-    var cards = document.querySelectorAll('.showing');
-    for (var i = 0; i < cards.length; i++) {
-        if (cards[i].offsetParent === null) continue;
-        var t = cards[i].querySelector('.answer');
-        if (t) { t.click(); return true; }
-    }
-    return false;`);
+// 이미 채점된 카드인지 (정답/오답 표시가 붙었거나 카드가 active/deactive 가 된다)
+var cls = ' ' + card.className + ' ';
+var answered = cls.indexOf(' active ') >= 0 || cls.indexOf(' deactive ') >= 0 ||
+    !!card.querySelector('.card-quest-o, .card-quest-x, .show-answer');
+
+var target = card.querySelector('.answer');
+var options = card.querySelectorAll('.cc-table').length;
+
+return {
+    found: true,
+    idx: card.getAttribute('data-idx') || '',
+    down: down,
+    answered: answered,
+    hasAnswer: !!target,
+    options: options
+};`;
+
+const RECALL_ANSWER_LOCATOR_JS = `
+var card = document.querySelector('.CardItem.current') ||
+           document.querySelector('.CardItem.showing');
+if (!card) return null;
+var t = card.querySelector('.answer');
+if (!t) return null;
+t.scrollIntoView({ block: 'center', inline: 'center' });
+var r = t.getBoundingClientRect();
+if (!r.width || !r.height) return null;
+return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: window.innerWidth };`;
+
+async function recallState(d) {
+  const v = await d.eval(RECALL_STATE_JS);
+  return v && v.found ? v : null;
 }
 
 /** Recall.py — 단어 리콜 자동화 */
 export async function recall(d, answerDict, stop) {
   d.log('[리콜] 시작');
+
+  let lastIdx = null;
+  let sameIdx = 0;
+  let noCard = 0;
+  let warnedTrusted = false;
+
   try {
     while (!stop.isSet) {
       if (await checkStep2SuccessAndStop(d, stop)) break;
-      await clickAnswer(d, stop);
-      if (await waitWithCheck(d, stop, 1500)) break;
+
+      const st = await recallState(d);
+      if (!st) {
+        noCard++;
+        if (noCard === 10) d.log('[리콜] 카드를 찾지 못했습니다. 리콜 학습 화면이 맞는지 확인하세요.', 'warn');
+        if (noCard > 60) { d.log('[리콜] 카드가 없어 종료합니다.', 'warn'); break; }
+        if (await stop.await(400)) break;
+        continue;
+      }
+      noCard = 0;
+
+      // 같은 카드에 계속 머물면(정답 클릭이 안 먹는 경우) 다음 카드로 밀어 본다
+      if (st.idx && st.idx === lastIdx) sameIdx++;
+      else { sameIdx = 0; lastIdx = st.idx; }
+
+      // 이미 채점된 카드 -> 다음 카드로
+      if (st.answered) {
+        await d.clickFirstVisible('.btnNextCard');
+        if (await waitWithCheck(d, stop, 800)) break;
+        continue;
+      }
+
+      // 덮개가 아직 내려오지 않았다 (카드 전환 후 0.8초). 내려올 때까지 기다린다.
+      if (!st.down) {
+        if (await waitWithCheck(d, stop, 400)) break;
+        continue;
+      }
+
+      if (!st.hasAnswer) {
+        d.log('[리콜] 이 카드에서 정답 보기를 찾지 못했습니다 — 다음 카드로 넘어갑니다.', 'warn');
+        await d.clickFirstVisible('.btnNextCard');
+        if (await waitWithCheck(d, stop, 800)) break;
+        continue;
+      }
+
+      // 정답 보기를 신뢰된 클릭으로 누른다. (합성 클릭은 사이트가 무시한다)
+      const clicked = await d.trustedClick(RECALL_ANSWER_LOCATOR_JS);
+      if (!clicked && !warnedTrusted) {
+        warnedTrusted = true;
+        d.log(
+          '[리콜] 신뢰된 클릭을 보내지 못했습니다. 리콜은 합성 클릭을 받지 않으므로 ' +
+            '브라우저 상단의 디버깅 안내를 취소하지 마세요.',
+          'error',
+        );
+      }
+
+      // 정답이면 사이트가 1초 뒤 스스로 다음 카드로 넘어간다.
+      if (await waitWithCheck(d, stop, 1800)) break;
+
+      const after = await recallState(d);
+      if (after && after.idx === st.idx && !after.answered && sameIdx >= 3) {
+        // 세 번 눌러도 그대로면 다음 카드로 밀어 진행을 계속한다
+        await d.clickFirstVisible('.btnNextCard');
+        if (await waitWithCheck(d, stop, 800)) break;
+      } else if (after && after.answered) {
+        // 채점됐는데 자동으로 안 넘어가면(오답) 다음 카드를 눌러 준다
+        if (await waitWithCheck(d, stop, 700)) break;
+        const still = await recallState(d);
+        if (still && still.idx === st.idx) await d.clickFirstVisible('.btnNextCard');
+      }
     }
   } catch (e) {
     if (!stop.isSet) d.log(`[리콜] 오류: ${e.message}`, 'error');
@@ -264,6 +340,52 @@ async function spellCheckEnd(d, stop) {
   await d.exec('var a = document.querySelectorAll(".close_o"); if (a.length) a[0].click();');
   stop.set();
   return true;
+}
+
+/**
+ * 스펠 입력창에 답을 써 넣는다.
+ *
+ * 사이트는 입력창의 마지막 keydown 이벤트를 저장해 두고 채점 때 isTrusted 를 본다.
+ * 그래서 **진짜 키 입력**으로 쳐 넣어야 하고, 값만 넣으면 제출이 거부된다.
+ * (빈 문자열은 '모름'으로 그냥 제출하는 경우라 값만 비우면 된다)
+ */
+async function typeActiveInput(d, text) {
+  if (!(await focusActiveInput(d))) return false;
+  await clearActiveInput(d);
+  if (!text) return true;
+  if (await d.typeText(text)) return true;
+  // 신뢰된 입력을 못 보내는 환경 -> 값만 넣어 본다 (사이트가 거부할 수 있다)
+  return fillActiveInput(d, text);
+}
+
+/** 입력창에 포커스를 준다 (없으면 false). */
+async function focusActiveInput(d) {
+  return d.evalBool(`
+    function visibleInput(root) {
+        var els = root.querySelectorAll(${JSON.stringify(INPUT_SELECTOR)});
+        for (var i = 0; i < els.length; i++) {
+            if (els[i].offsetParent !== null) return els[i];
+        }
+        return null;
+    }
+    var cur = document.querySelector('.CardItem.current');
+    var el = cur ? visibleInput(cur) : null;
+    if (!el) el = visibleInput(document);
+    if (!el) return false;
+    el.focus();
+    return true;`);
+}
+
+/** 입력창을 비운다 (값만 지우면 되므로 신뢰된 입력이 필요 없다). */
+async function clearActiveInput(d) {
+  return d.evalBool(`
+    var el = document.activeElement;
+    if (!el || !('value' in el)) return false;
+    var setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, '');
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    return true;`);
 }
 
 async function fillActiveInput(d, text) {
@@ -337,16 +459,16 @@ export async function spell(d, answerDict, stop) {
 
       const answer = findAnswer(answerDict, prompt);
       if (answer !== null) {
-        if (!(await fillActiveInput(d, answer))) {
+        if (!(await typeActiveInput(d, answer))) {
           if (await stop.await(300)) break;
           continue;
         }
-        if (await stop.await(100)) break;
+        if (await stop.await(150)) break;
         await d.pressEnter();
       } else {
         // 정답을 모르면 빈 입력으로 제출 -> 정답 표시 후 다음으로 (무한루프 방지)
         d.log(`[스펠] 매칭 실패(스킵): '${prompt}'`, 'warn');
-        await fillActiveInput(d, '');
+        await typeActiveInput(d, '');
         await d.pressEnter();
       }
 

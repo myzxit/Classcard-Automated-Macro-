@@ -75,6 +75,52 @@ object Spell {
      * (card-top 의 input 은 hidden 이라 제외해야 한다 — 원본 get_active_input 과 동일 규칙)
      * @return 입력창을 찾았으면 true
      */
+    /**
+     * 스펠 입력창에 답을 써 넣는다.
+     *
+     * 사이트는 입력창의 마지막 keydown 이벤트를 저장해 두고 채점 때 isTrusted 를 본다.
+     * 그래서 **진짜 키 입력**으로 쳐 넣고, 못 보내면 값 넣기로 폴백한다.
+     */
+    private suspend fun typeActiveInput(d: Driver, text: String): Boolean {
+        if (!focusActiveInput(d)) return false
+        clearActiveInput(d)
+        if (text.isEmpty()) return true
+        if (d.typeText(text)) return true
+        return fillActiveInput(d, text)
+    }
+
+    /** 보이는 입력창에 포커스를 준다. */
+    private suspend fun focusActiveInput(d: Driver): Boolean = d.evalBool(
+        """
+        function visibleInput(root) {
+            var els = root.querySelectorAll(${INPUT_SELECTOR.jsStr()});
+            for (var i = 0; i < els.length; i++) {
+                if (els[i].offsetParent !== null) return els[i];
+            }
+            return null;
+        }
+        var cur = document.querySelector('.CardItem.current');
+        var el = cur ? visibleInput(cur) : null;
+        if (!el) el = visibleInput(document);
+        if (!el) return false;
+        el.focus();
+        return true;
+        """
+    )
+
+    /** 입력창을 비운다 (값만 지우면 되므로 신뢰된 입력이 필요 없다). */
+    private suspend fun clearActiveInput(d: Driver): Boolean = d.evalBool(
+        """
+        var el = document.activeElement;
+        if (!el || !('value' in el)) return false;
+        var setter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value').set;
+        setter.call(el, '');
+        el.dispatchEvent(new Event('input', {bubbles: true}));
+        return true;
+        """
+    )
+
     private suspend fun fillActiveInput(d: Driver, text: String): Boolean = d.evalBool(
         """
         function visibleInput(root) {
@@ -148,7 +194,7 @@ object Spell {
 
                     val answer = findAnswer(answerDict, prompt)
                     if (answer != null) {
-                        if (!fillActiveInput(d, answer)) {
+                        if (!typeActiveInput(d, answer)) {
                             if (stop.await(300)) break
                             continue
                         }
@@ -157,7 +203,7 @@ object Spell {
                     } else {
                         // 정답을 모르면 빈 입력으로 제출 -> 정답 표시 후 다음으로 진행 (무한루프 방지)
                         d.log("[스펠] 매칭 실패(스킵): '$prompt'")
-                        fillActiveInput(d, "")
+                        typeActiveInput(d, "")
                         d.pressEnter()
                     }
 
