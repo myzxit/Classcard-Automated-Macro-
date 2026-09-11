@@ -22,7 +22,7 @@ import * as N from '../norm.js';
 import { buildLookups } from './games.js';
 
 export const CONFIG = {
-  debug: false,          // 진단 로그
+  debug: false,         // 진단 로그
   // 한 동작(보기 클릭·채점하기·Enter·화면 이동) 뒤에 기다리는 시간.
   // 문법훈련은 소리를 읽어 주고 카드가 애니메이션으로 나타나므로, 빨리 누르면
   // 페이지가 아직 못 받는다. 넉넉히 3초를 기다린다.
@@ -71,6 +71,19 @@ const END_SELECTORS = [
 ];
 
 const READ_STATE_JS = `
+// 지난 화면에서 붙여 둔 표시를 먼저 지운다.
+// 문제 화면은 카드가 카드 여러 장이 겹쳐 보이므로, 남아 있는 표시를 그대로 두면
+// **이전 카드의 빈칸·보기**를 채우거나 눌러 버린다(그 문제는 빈칸으로 제출되어 틀린다).
+(function () {
+    var marks = ['data-cc-input', 'data-cc-tinput', 'data-cc-opt', 'data-cc-order',
+                 'data-cc-sel', 'data-cc-next', 'data-cc-rowopt', 'data-cc-row',
+                 'data-cc-left', 'data-cc-right'];
+    for (var m = 0; m < marks.length; m++) {
+        var old = document.querySelectorAll('[' + marks[m] + ']');
+        for (var i = 0; i < old.length; i++) old[i].removeAttribute(marks[m]);
+    }
+})();
+
 function vis(el) {
     if (!el || el.offsetParent === null) return false;
     var r = el.getBoundingClientRect();
@@ -621,26 +634,40 @@ export function pickChoice(choices, answer, wrong) {
  * @param {{index:number, raw:string, norm:string, used:boolean}[]} tiles
  * @param {number[]} clicked 지금까지 누른 타일 번호(순서대로)
  */
-export function nextScrambleIndex(answer, tiles, clicked) {
-  const open = (tiles || []).filter((t) => !t.used && !clicked.includes(t.index));
+export function nextScrambleIndex(answer, tiles, placed) {
+  const open = (tiles || []).filter((t) => !t.used);
   if (!open.length) return null;
 
-  const words = answer ? N.splitTargetWords(answer) : [];
-  if (words.length) {
-    const need = words[clicked.length];
-    if (need === undefined) return null;         // 문장 완성
-    const nn = N.wnorm(need);
-    const exact = open.find((t) => N.wnorm(t.raw) === nn);
+  const words = answer
+    ? N.splitTargetWords(answer).map((w) => N.wnorm(w)).filter(Boolean)
+    : [];
+  if (!words.length) {
+    // 정답을 모르면 아직 안 쓴 첫 타일
+    const left = open.filter((t) => !(placed || []).includes(t.index));
+    return left.length ? left[0].index : null;
+  }
+
+  // 사이트는 낱말을 놓을 때마다 남은 타일을 다시 늘어놓아 번호가 바뀐다.
+  // 그래서 번호가 아니라 **이미 놓은 낱말 목록**으로 진행 상황을 센다.
+  // (같은 낱말이 두 번 나오는 문장도 한 번씩 차례로 지워 가며 맞춘다)
+  const rest = (placed || []).map((w) => String(w));
+  for (let i = 0; i < words.length; i++) {
+    const need = words[i];
+    const already = rest.indexOf(need);
+    if (already >= 0) { rest.splice(already, 1); continue; }
+    const exact = open.find((t) => N.wnorm(t.raw) === need);
     if (exact) return exact.index;
     // 타일이 여러 토큰을 담는 경우("without." 처럼) 앞부분만 맞아도 받아준다
     const part = open.find((t) => {
       const tn = N.wnorm(t.raw);
-      return tn && nn && (tn.startsWith(nn) || nn.startsWith(tn));
+      return tn && (tn.startsWith(need) || need.startsWith(tn));
     });
     if (part) return part.index;
+    return null;                 // 다음 낱말이 화면에 없다 -> 더 놓을 수 없다
   }
-  return open[0].index;
+  return null;                   // 정답 낱말을 다 놓았다
 }
+
 
 /**
  * 짝맞추기: 다음에 시도할 (왼쪽, 오른쪽) 짝.
@@ -1110,6 +1137,26 @@ export function nextClassAction(units, tried, prefer) {
 }
 
 /**
+ * 사이트 정답 문자열을 **빈칸 단위**로 나눈다.
+ *
+ * 규칙(gclass_test.js 의 arr_answer 를 보고 확인):
+ *   - ';' 는 빈칸 구분    'do;love'                  -> ['do', 'love']
+ *   - '|' 는 같은 칸의 다른 답  'that|which'         -> ['that']  (첫 번째만 쓴다)
+ *   - 'It;was;a;puppy;that|which' -> 5칸
+ *
+ * (여러 답을 다 알아야 하는 보기 고르기에는 splitAnswers 를 그대로 쓴다)
+ *
+ * @param {string} raw 사이트 정답 문자열
+ * @returns {string[]} 빈칸별로 써 넣을 값
+ */
+export function splitBlanks(raw) {
+  return String(raw == null ? '' : raw)
+    .split(';')
+    .map((part) => part.split('|')[0].replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+/**
  * 빈칸(여러 개일 수 있음)에 넣을 값 목록.
  *
  * 정답을 알면 정답 문장을 빈칸 수에 맞춰 나눠 넣고,
@@ -1123,8 +1170,13 @@ export function nextClassAction(units, tried, prefer) {
 export function fillValues(count, answer, hint) {
   if (count <= 0) return [];
   if (answer) {
+    // 사이트 정답은 빈칸을 ';' 로 나누고, 한 칸에 여러 답이 되면 '|' 로 잇는다.
+    //   'It;was;a;puppy;that|which'  -> 5칸: It / was / a / puppy / that
+    // 이걸 안 풀면 빈칸 수와 안 맞아 한 칸도 못 채운다.
+    const blanks = splitBlanks(answer);
+    if (blanks.length === count) return blanks;
     const words = N.splitTargetWords(answer).filter((w) => w.trim());
-    if (count === 1) return [answer];
+    if (count === 1) return [blanks[0] || answer];
     if (words.length === count) return words;
     if (words.length > count) {
       // 빈칸보다 단어가 많으면 마지막 칸에 남은 단어를 몰아 넣는다
@@ -1193,6 +1245,10 @@ async function fillInput(d, index, value, attr) {
  *     이라서, `.btn-ok` 를 그냥 누르면 **복습을 건너뛴다**.
  * 그래서 클래스 이름이 아니라 **버튼에 적힌 글자**로 고른다.
  *
+ * 또 하나: 문제 화면(gclass_test.js)은 '답을 입력하지 않은 문항이 있습니다. 이대로 제출할까요?'
+ * 처럼 **그대로 넘기면 그 문제를 틀리는 확인 창**을 띄운다(제출/취소, 제출/수정).
+ * 이때는 '취소·수정'을 눌러 돌아가 답을 채워야 하므로 창의 문구를 보고 반대로 고른다.
+ *
  * @returns {Promise<string|null>} 누른 버튼의 글자 (모달이 없으면 null)
  */
 async function handleModal(d) {
@@ -1220,30 +1276,44 @@ async function handleModal(d) {
     }
     if (!modal) return null;
 
+    var msg = ((modal.querySelector('.msg') || modal).textContent || '')
+        .replace(/\\s+/g, ' ').trim();
+    // 답을 비운 채 제출하거나, 오타·대소문자를 그대로 밀어 넣으면 그 문제는 틀린다.
+    // (gclass_test.js: '답을 입력하지 않은 문항이 있습니다. 이대로 제출할까요?' [제출/취소] 등)
+    // 이런 창은 '취소·수정'을 눌러 돌아가서 답을 채워야 한다.
+    var goBack = /입력하지 않은|개만 선택|오타|대소문자|바꾸어 입력/.test(msg);
+
     var btns = modal.querySelectorAll('button, a, .btn');
     var best = null, bestScore = -1, bestText = '';
     for (var i = 0; i < btns.length; i++) {
         var b = btns[i];
         if (!vis(b)) continue;
         var t = ((b.textContent || '') + '').replace(/\\s+/g, ' ').trim();
-        // 학습을 건너뛰거나 닫는 버튼은 절대 고르지 않는다
-        if (/생략|취소|나중|닫기|아니/.test(t)) continue;
         var score = 0;
-        if (/학습 ?시작/.test(t)) score = 6;
-        else if (/시작/.test(t)) score = 5;
-        else if (/계속/.test(t)) score = 4;
-        else if (/확인|예|네/.test(t)) score = 3;
-        else if (b.className.indexOf('btn-ok') >= 0) score = 2;
-        else continue;
+        if (goBack) {
+            // 돌아가서 고쳐야 하는 창: 수정 > 취소. 제출·확인은 절대 누르지 않는다.
+            if (/수정/.test(t)) score = 6;
+            else if (/취소/.test(t)) score = 5;
+            else continue;
+        } else {
+            // 학습을 건너뛰거나 닫는 버튼은 절대 고르지 않는다
+            if (/생략|취소|나중|닫기|아니/.test(t)) continue;
+            if (/학습 ?시작/.test(t)) score = 6;
+            else if (/시작/.test(t)) score = 5;
+            else if (/계속/.test(t)) score = 4;
+            else if (/확인|예|네/.test(t)) score = 3;
+            else if (b.className.indexOf('btn-ok') >= 0) score = 2;
+            else continue;
+        }
         if (score > bestScore) { bestScore = score; best = b; bestText = t; }
     }
     if (!best) return null;
     best.setAttribute('data-cc-modal-btn', '1');
-    return bestText;
+    return bestText + '\u0001' + msg.slice(0, 40);
   `);
   if (!label) return null;
   await d.clickFirstVisible('[data-cc-modal-btn="1"]');
-  return label;
+  return label;   // '누른 버튼\u0001창 문구'
 }
 
 /**
@@ -1277,6 +1347,56 @@ async function skipTalkAudio(d) {
   `);
 }
 
+/**
+ * 어순 배열(문장 만들기)을 **사이트 방식 그대로** 다룬다.
+ *
+ * 사이트 스크립트(gclass_test.js)를 확인한 결과:
+ *   - 지금 푸는 카드는 전역 card_index 가 가리키는 .flip-card 다.
+ *     (카드가 여러 장 겹쳐 있고, 지나간 카드의 낱말 버튼은 눌러도 아무 일이 없다)
+ *   - 낱말 버튼(.btn-sentence-word)을 누르면 .scramble-body 에
+ *     <span class="scramble-word">낱말</span> 이 순서대로 쌓이고, 누른 버튼에는 'clicked' 가 붙는다.
+ *   - 그래서 **지금까지 놓은 낱말은 .scramble-body 의 span 들**이다(우리가 따로 셀 필요가 없다).
+ *
+ * @returns {Promise<{placed:string[], words:string[], clicked:boolean}|null>}
+ */
+async function scrambleStep(d, targetWords) {
+  return d.eval(`
+    function norm(s) {
+      return String(s || '').toLowerCase().replace(/[^a-z0-9가-힣]+/g, '');
+    }
+    var want = ${JSON.stringify(targetWords)};
+    var cards = document.querySelectorAll('.flip-card');
+    var card = null;
+    if (typeof card_index !== 'undefined' && card_index >= 0 && cards[card_index]) {
+      card = cards[card_index];
+    } else {
+      card = document.querySelector('.flip-card.showing');
+    }
+    if (!card) return null;
+
+    // 사이트가 기록해 둔 '지금까지 놓은 낱말'
+    var spans = card.querySelectorAll('.scramble-body .scramble-word, .scramble-body span');
+    var placed = [];
+    for (var i = 0; i < spans.length; i++) placed.push((spans[i].textContent || '').trim());
+
+    if (placed.length >= want.length) return { placed: placed, words: want, clicked: false };
+
+    var need = norm(want[placed.length]);
+    var tiles = card.querySelectorAll('.test-sentence-words .btn-sentence-word, .btn-sentence-word');
+    for (var i = 0; i < tiles.length; i++) {
+      var t = tiles[i];
+      if ((' ' + t.className + ' ').indexOf(' clicked ') >= 0) continue;
+      if (t.offsetParent === null) continue;
+      var tn = norm(t.textContent);
+      if (tn === need || (tn && need && (tn.indexOf(need) === 0 || need.indexOf(tn) === 0))) {
+        t.click();
+        return { placed: placed, words: want, clicked: true };
+      }
+    }
+    return { placed: placed, words: want, clicked: false };
+  `);
+}
+
 export async function grammar(d, answerDict, stop) {
   d.log('[문법] 시작');
 
@@ -1294,7 +1414,7 @@ export async function grammar(d, answerDict, stop) {
   let talkAudioSkipped = null;    // 소리를 넘긴 카드(같은 카드에서 두 번 넘기지 않는다)
   let lastModal = null;           // 직전에 누른 안내 창의 글자
   let sameModal = 0;              // 같은 안내 창이 연달아 뜬 횟수
-  const scrambleClicks = new Map();   // 문제별로 지금까지 누른 타일 순서
+  const scrambleStuck = new Map();    // 어순 배열에서 낱말을 못 찾고 기다린 횟수
   const failedPairs = new Map();      // 문제별로 틀린 짝 조합
   const wrongByRow = new Map();       // 문제별 · 줄별로 틀린 보기
   let lastGroupPick = null;
@@ -1391,7 +1511,8 @@ export async function grammar(d, answerDict, stop) {
             stop.set();
             break;
           }
-          d.log(`[문법] 안내 창의 '${picked}' 를 눌렀습니다.`);
+          d.log(`[문법] 안내 창("${(picked.split('\u0001')[1] || '').slice(0, 34)}")의 ` +
+            `'${picked.split('\u0001')[0]}' 를 눌렀습니다.`);
           if (await stop.await(700)) break;
           continue;
         }
@@ -1434,7 +1555,8 @@ export async function grammar(d, answerDict, stop) {
           // (사이트가 '학습 생략'을 확인 버튼에 달아 두므로 글자를 보고 고른다)
           const picked = await handleModal(d);
           if (picked) {
-            d.log(`[문법] 확인 창의 '${picked}' 를 눌렀습니다.`);
+            d.log(`[문법] 확인 창("${(picked.split('\u0001')[1] || '').slice(0, 34)}")의 ` +
+              `'${picked.split('\u0001')[0]}' 를 눌렀습니다.`);
             // 확인 창을 거친 단계는 화면이 바뀐 뒤 다시 눌러야 열리는 경우가 있다
             const again = (modalRetry.get(act.stage.key) || 0) + 1;
             modalRetry.set(act.stage.key, again);
@@ -1790,7 +1912,12 @@ export async function grammar(d, answerDict, stop) {
 
       const qid = state.qid;
       const tries = triesByQid.get(qid) || 0;
-      if (tries >= CONFIG.maxTryPerQuestion) {
+      // 어순 배열·분류·짝맞추기는 한 문제에서 낱말/칸 수만큼 눌러야 끝난다.
+      // 이때도 '시도 횟수'로 세면 문장을 다 못 만들고 넘어가 버린다 -> 칸 수만큼 여유를 준다.
+      const steps = (state.tiles || []).length + (state.rows || []).length +
+        (state.left || []).length + (state.inputs || []).length;
+      const tryLimit = CONFIG.maxTryPerQuestion + steps;
+      if (tries >= tryLimit) {
         await d.evalBool(CLICK_NEXT_JS);
         triesByQid.set(qid, 0);
         wrongByQid.delete(qid);
@@ -1805,9 +1932,11 @@ export async function grammar(d, answerDict, stop) {
       let answerList = [];
 
       const page = await readPageAnswer(d);
+      let rawAnswer = '';           // 사이트 정답 원문 ('It;was;a;puppy;that|which')
       if (page) {
         answerList = page.answers;
         answer = page.answers[0];
+        rawAnswer = page.raw;
         answerFrom = `사이트 정답(${page.src})`;
       }
       if (!answer) {
@@ -1843,9 +1972,12 @@ export async function grammar(d, answerDict, stop) {
           if (await stop.await(pace())) break;
           continue;
         }
-        const values = (answerList.length === state.inputs.length)
-          ? answerList                                   // 빈칸 수와 정답 조각 수가 같으면 그대로
-          : fillValues(state.inputs.length, answer, state.hint);
+        // 빈칸 수에 맞추는 순서: 빈칸 단위로 쪼갠 사이트 정답 > 정답 조각 > 추정
+        // (사이트 정답 원문을 써야 한다. answer 는 첫 조각뿐이라 빈칸 수를 못 맞춘다)
+        const blanks = splitBlanks(rawAnswer || answer);
+        const values = (blanks.length === state.inputs.length) ? blanks
+          : (answerList.length === state.inputs.length) ? answerList
+            : fillValues(state.inputs.length, rawAnswer || answer, state.hint);
         if (!values.length) {
           d.log(`[문법] 답을 알 수 없는 입력형 문제(빈칸 ${state.inputs.length}칸) — 비운 채 넘어갑니다.`);
           await d.evalBool(CLICK_NEXT_JS);
@@ -1860,6 +1992,23 @@ export async function grammar(d, answerDict, stop) {
           if (await stop.await(120)) break;
         }
         if (stop.isSet) break;
+        // 사이트는 빈칸이 하나라도 비면 '이대로 제출할까요?' 를 띄우고 그 문제를 틀린다.
+        // 값이 정말 들어갔는지 읽어 보고, 안 들어간 칸이 있으면 구조를 알려 준다.
+        const written = await d.eval(`
+          var card = document.querySelector('.flip-card.showing') || document;
+          var els = card.querySelectorAll('[data-cc-input]');
+          var empty = 0, total = 0, cls = '';
+          for (var i = 0; i < els.length; i++) {
+            if (els[i].offsetParent === null) continue;
+            total++;
+            if (!String(els[i].value || '').trim()) { empty++; cls = els[i].className; }
+          }
+          return { total: total, empty: empty, cls: cls };
+        `);
+        if (written && written.empty) {
+          d.log(`[문법] 빈칸 ${written.empty}/${written.total}칸이 비어 있습니다 ` +
+            `(입력창 구조: ${written.cls || '?'}) — 그대로 채점합니다.`);
+        }
         await d.evalBool(CLICK_NEXT_JS);
         if (await stop.await(pace())) break;
         continue;
@@ -1867,22 +2016,34 @@ export async function grammar(d, answerDict, stop) {
 
       // ---------------------------------------------- 어순 배열
       if (state.type === 'scramble') {
-        const clicked = scrambleClicks.get(qid) || [];
-        const tile = nextScrambleIndex(answer || null, state.tiles, clicked);
-        if (tile === null) {
-          // 문장 완성 -> 채점/다음
-          scrambleClicks.delete(qid);
-          await d.evalBool(CLICK_NEXT_JS);
-          if (await stop.await(pace())) break;
+        // 사이트 정답은 낱말을 ';' 로 이어 준다 ('The;children;do;like;…').
+        const words = splitBlanks(rawAnswer).length > 1
+          ? splitBlanks(rawAnswer)
+          : N.splitTargetWords(rawAnswer || answer || '').filter((w) => w.trim());
+        const step = words.length ? await scrambleStep(d, words) : null;
+        if (!step) {
+          if (await stop.await(400)) break;
           continue;
         }
-        if (CONFIG.debug) {
-          const t = state.tiles.find((x) => x.index === tile);
-          d.log(`[문법] (어순) ${clicked.length + 1}번째 -> '${(t && t.raw) || ''}'`);
+        if (step.clicked) {
+          if (CONFIG.debug) {
+            d.log(`[문법] (어순) ${step.placed.length + 1}번째 -> '${words[step.placed.length]}'`);
+          }
+          if (await stop.await(400)) break;
+          continue;
         }
-        scrambleClicks.set(qid, clicked.concat([tile]));
-        await clickTagged(d, 'data-cc-opt', tile, ignoredClicks >= TRUSTED_AFTER);
-        if (await stop.await(400)) break;
+        if (step.placed.length < words.length) {
+          // 아직 덜 놓였는데 누를 낱말을 못 찾았다 (카드가 막 바뀌는 중일 수 있다)
+          scrambleStuck.set(qid, (scrambleStuck.get(qid) || 0) + 1);
+          if ((scrambleStuck.get(qid) || 0) < 8) {
+            if (await stop.await(500)) break;
+            continue;
+          }
+          d.log(`[문법] 어순 배열에서 '${words[step.placed.length]}' 를 찾지 못했습니다 — 그대로 채점합니다.`);
+        }
+        scrambleStuck.delete(qid);
+        await d.evalBool(CLICK_NEXT_JS);       // 문장 완성 -> 채점하기
+        if (await stop.await(pace())) break;
         continue;
       }
 

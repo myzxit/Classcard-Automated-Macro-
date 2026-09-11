@@ -15,7 +15,7 @@ import * as N from '../engine/norm.js';
 import { buildLookups } from '../engine/modules/games.js';
 import {
   pickChoice, lookupAnswer, nextClassAction,
-  nextScrambleIndex, nextPairAttempt, nextGroupPick, fillValues, pickTalkAnswer,
+  nextScrambleIndex, nextPairAttempt, nextGroupPick, fillValues, splitBlanks, pickTalkAnswer,
   FIND_ANSWER_JS, splitAnswers, pickByAnswers,
 } from '../engine/modules/grammar.js';
 
@@ -141,16 +141,30 @@ test('STAGE_ORDER 에 없는 이름은 뒤로 밀린다', () => {
 
 const tile = (i, text, used = false) => ({ index: i, raw: text, norm: N.mnorm(text), used });
 
-test('정답 순서대로 타일을 고른다', () => {
+test('정답 순서대로 타일을 고른다 (놓은 낱말로 진행을 센다)', () => {
   const tiles = [tile(0, 'nice'), tile(1, 'You'), tile(2, 'look')];
   assert.equal(nextScrambleIndex('You look nice', tiles, []), 1);
-  assert.equal(nextScrambleIndex('You look nice', tiles, [1]), 2);
-  assert.equal(nextScrambleIndex('You look nice', tiles, [1, 2]), 0);
+  assert.equal(nextScrambleIndex('You look nice', tiles, ['you']), 2);
+  assert.equal(nextScrambleIndex('You look nice', tiles, ['you', 'look']), 0);
+});
+
+test('타일 번호가 바뀌어도 이어서 놓는다', () => {
+  // 사이트는 낱말을 놓을 때마다 남은 타일을 다시 늘어놓아 번호가 0부터 다시 매겨진다
+  const left = [tile(0, 'nice'), tile(1, 'look')];
+  assert.equal(nextScrambleIndex('You look nice', left, ['you']), 1);
+  assert.equal(nextScrambleIndex('You look nice', [tile(0, 'nice')], ['you', 'look']), 0);
+});
+
+test('같은 낱말이 두 번 나오면 한 번씩 놓는다', () => {
+  const tiles = [tile(0, 'the'), tile(1, 'the'), tile(2, 'end')];
+  assert.equal(nextScrambleIndex('the the end', tiles, []), 0);
+  assert.equal(nextScrambleIndex('the the end', [tile(0, 'the'), tile(1, 'end')], ['the']), 0);
+  assert.equal(nextScrambleIndex('the the end', [tile(0, 'end')], ['the', 'the']), 0);
 });
 
 test('문장을 다 만들면 null', () => {
   const tiles = [tile(0, 'You'), tile(1, 'win')];
-  assert.equal(nextScrambleIndex('You win', tiles, [0, 1]), null);
+  assert.equal(nextScrambleIndex('You win', tiles, ['you', 'win']), null);
 });
 
 test('타일에 구두점이 붙어 있어도 찾는다', () => {
@@ -161,7 +175,7 @@ test('타일에 구두점이 붙어 있어도 찾는다', () => {
 test('이미 쓴 타일과 정답을 모를 때', () => {
   const tiles = [tile(0, 'a', true), tile(1, 'b'), tile(2, 'c')];
   assert.equal(nextScrambleIndex(null, tiles, []), 1);       // 안 쓴 첫 타일
-  assert.equal(nextScrambleIndex(null, tiles, [1]), 2);
+  assert.equal(nextScrambleIndex(null, tiles, [1]), 2);      // 정답을 모를 땐 번호로 기억한다
   assert.equal(nextScrambleIndex(null, [tile(0, 'a', true)], []), null);
 });
 
@@ -355,4 +369,24 @@ test('맞는 보기가 없으면 null', () => {
   const c = choices('a', 'b');
   assert.equal(pickByAnswers(c, ['zzz'], new Set()), null);
   assert.equal(pickByAnswers(c, [], new Set()), null);
+});
+
+
+// ---------------------------------------------- 사이트 정답을 빈칸 단위로 나누기
+
+test("';' 는 빈칸, '|' 는 같은 칸의 다른 답", () => {
+  assert.deepEqual(splitBlanks('do;love'), ['do', 'love']);
+  assert.deepEqual(splitBlanks('It;was;a;puppy;that|which'),
+    ['It', 'was', 'a', 'puppy', 'that']);
+  assert.deepEqual(splitBlanks('does look'), ['does look']);
+  assert.deepEqual(splitBlanks(''), []);
+});
+
+test('빈칸 수에 맞춰 사이트 정답을 나눠 넣는다', () => {
+  assert.deepEqual(fillValues(5, 'It;was;a;puppy;that|which', ''),
+    ['It', 'was', 'a', 'puppy', 'that']);
+  assert.deepEqual(fillValues(2, 'do;love', ''), ['do', 'love']);
+  // 한 칸짜리인데 다른 답이 '|' 로 붙어 있으면 첫 번째만 쓴다
+  assert.deepEqual(fillValues(1, 'It was a teacher that Jason became.|It was Jason that became a teacher.', ''),
+    ['It was a teacher that Jason became.']);
 });

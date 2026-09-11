@@ -178,14 +178,30 @@ class GrammarLogicTest {
     fun scramblePicksWordsInAnswerOrder() {
         val tiles = listOf(tile(0, "nice"), tile(1, "You"), tile(2, "look"))
         assertEquals(1, Grammar.nextScrambleIndex("You look nice", tiles, emptyList()))
-        assertEquals(2, Grammar.nextScrambleIndex("You look nice", tiles, listOf(1)))
-        assertEquals(0, Grammar.nextScrambleIndex("You look nice", tiles, listOf(1, 2)))
+        assertEquals(2, Grammar.nextScrambleIndex("You look nice", tiles, listOf("you")))
+        assertEquals(0, Grammar.nextScrambleIndex("You look nice", tiles, listOf("you", "look")))
+    }
+
+    @JUnitTest
+    fun scrambleKeepsGoingWhenTileNumbersChange() {
+        // 사이트는 낱말을 놓을 때마다 남은 타일을 다시 늘어놓아 번호가 0부터 다시 매겨진다
+        val left = listOf(tile(0, "nice"), tile(1, "look"))
+        assertEquals(1, Grammar.nextScrambleIndex("You look nice", left, listOf("you")))
+        assertEquals(0, Grammar.nextScrambleIndex("You look nice", listOf(tile(0, "nice")), listOf("you", "look")))
+    }
+
+    @JUnitTest
+    fun scrambleHandlesRepeatedWords() {
+        val tiles = listOf(tile(0, "the"), tile(1, "the"), tile(2, "end"))
+        assertEquals(0, Grammar.nextScrambleIndex("the the end", tiles, emptyList()))
+        assertEquals(0, Grammar.nextScrambleIndex("the the end", listOf(tile(0, "the"), tile(1, "end")), listOf("the")))
+        assertEquals(0, Grammar.nextScrambleIndex("the the end", listOf(tile(0, "end")), listOf("the", "the")))
     }
 
     @JUnitTest
     fun scrambleReturnsNullWhenSentenceComplete() {
         val tiles = listOf(tile(0, "You"), tile(1, "win"))
-        assertNull(Grammar.nextScrambleIndex("You win", tiles, listOf(0, 1)))
+        assertNull(Grammar.nextScrambleIndex("You win", tiles, listOf("you", "win")))
     }
 
     @JUnitTest
@@ -198,8 +214,34 @@ class GrammarLogicTest {
     fun scrambleFallsBackWhenAnswerUnknown() {
         val tiles = listOf(tile(0, "a", used = true), tile(1, "b"), tile(2, "c"))
         assertEquals(1, Grammar.nextScrambleIndex(null, tiles, emptyList()))
-        assertEquals(2, Grammar.nextScrambleIndex(null, tiles, listOf(1)))
+        assertEquals(2, Grammar.nextScrambleIndex(null, tiles, listOf("1")))   // 정답을 모를 땐 번호로 기억한다
         assertNull(Grammar.nextScrambleIndex(null, listOf(tile(0, "a", used = true)), emptyList()))
+    }
+
+    // ================================================ 사이트 정답을 빈칸 단위로 나누기
+
+    @JUnitTest
+    fun splitBlanksSplitsByBlankAndKeepsFirstAlternative() {
+        assertEquals(listOf("do", "love"), Grammar.splitBlanks("do;love"))
+        assertEquals(
+            listOf("It", "was", "a", "puppy", "that"),
+            Grammar.splitBlanks("It;was;a;puppy;that|which"),
+        )
+        assertEquals(listOf("does look"), Grammar.splitBlanks("does look"))
+        assertEquals(emptyList<String>(), Grammar.splitBlanks(""))
+    }
+
+    @JUnitTest
+    fun fillValuesUsesSiteAnswerPerBlank() {
+        assertEquals(
+            listOf("It", "was", "a", "puppy", "that"),
+            Grammar.fillValues(5, "It;was;a;puppy;that|which", ""),
+        )
+        assertEquals(listOf("do", "love"), Grammar.fillValues(2, "do;love", ""))
+        assertEquals(
+            listOf("It was a teacher that Jason became."),
+            Grammar.fillValues(1, "It was a teacher that Jason became.|It was Jason that became a teacher.", ""),
+        )
     }
 
     // ================================================ 짝맞추기

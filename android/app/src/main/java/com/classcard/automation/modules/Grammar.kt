@@ -200,6 +200,19 @@ object Grammar {
         var NEXT_SEL = [".flip-card.showing .btn-next-card",".btn-next-card",".flip-card.showing .default-btn-body .btn-gclass",".study-bottom .btn-next-box .btn-gclass",".study-bottom .btn-next-box a",".btn-next-box .btn-gclass",".btnNextCard",".btn-condition-next",".btn-next",".btn-continue",".btn-quiz-start",".btn-opt-start"].join(',');
         var END_SEL = [".start-opt-body",".end-opt-body",".result-body",".quiz-result","a.btn-go-result"].join(',');
 
+        // 지난 화면에서 붙여 둔 표시를 먼저 지운다.
+        // 문제 화면은 카드가 여러 장 겹쳐 보이므로, 남아 있는 표시를 그대로 두면
+        // **이전 카드의 빈칸·보기**를 채우거나 눌러 버린다(그 문제는 빈칸으로 제출되어 틀린다).
+        (function () {
+            var marks = ['data-cc-input', 'data-cc-tinput', 'data-cc-opt', 'data-cc-order',
+                         'data-cc-sel', 'data-cc-next', 'data-cc-rowopt', 'data-cc-row',
+                         'data-cc-left', 'data-cc-right'];
+            for (var m = 0; m < marks.length; m++) {
+                var stale = document.querySelectorAll('[' + marks[m] + ']');
+                for (var i = 0; i < stale.length; i++) stale[i].removeAttribute(marks[m]);
+            }
+        })();
+
         // ================================================ 0) 로그인 화면
         // 세션이 끊기면 사이트가 어떤 주소든 로그인 화면으로 돌려보낸다.
         // 이걸 문제 화면으로 착각하면 '아이디/비밀번호 찾기' 같은 링크를 눌러 버린다.
@@ -847,25 +860,37 @@ object Grammar {
 
     /**
      * 어순 배열: 다음에 누를 타일 번호.
-     * 정답 문장을 토큰으로 끊어, 지금까지 고른 개수만큼 건너뛴 다음 단어와 같은 타일을 찾는다.
+     *
+     * 사이트는 낱말을 놓을 때마다 남은 타일을 다시 늘어놓아 번호가 바뀐다.
+     * 그래서 번호가 아니라 **이미 놓은 낱말 목록(placed)** 으로 진행 상황을 센다.
+     * (같은 낱말이 두 번 나오는 문장도 한 번씩 차례로 지워 가며 맞춘다)
      * 정답을 모르면 아직 안 쓴 첫 타일(왼쪽부터)을 고른다.
      */
-    fun nextScrambleIndex(answer: String?, tiles: List<Tile>, clicked: List<Int>): Int? {
-        val open = tiles.filter { !it.used && it.index !in clicked }
+    fun nextScrambleIndex(answer: String?, tiles: List<Tile>, placed: List<String>): Int? {
+        val open = tiles.filter { !it.used }
         if (open.isEmpty()) return null
 
-        val words = if (answer.isNullOrEmpty()) emptyList() else Norm.splitTargetWords(answer)
-        if (words.isNotEmpty()) {
-            if (clicked.size >= words.size) return null   // 문장 완성
-            val need = Norm.wnorm(words[clicked.size])
+        val words = if (answer.isNullOrEmpty()) emptyList()
+        else Norm.splitTargetWords(answer).map { Norm.wnorm(it) }.filter { it.isNotEmpty() }
+        if (words.isEmpty()) {
+            // 정답을 모르면 번호로 기억한다
+            val left = open.filter { it.index.toString() !in placed }
+            return left.firstOrNull()?.index
+        }
+
+        val rest = placed.toMutableList()
+        for (need in words) {
+            val already = rest.indexOf(need)
+            if (already >= 0) { rest.removeAt(already); continue }
             open.firstOrNull { Norm.wnorm(it.raw) == need }?.let { return it.index }
             // 타일이 여러 토큰을 담는 경우("without." 처럼) 앞부분만 맞아도 받아준다
             open.firstOrNull {
                 val tn = Norm.wnorm(it.raw)
-                tn.isNotEmpty() && need.isNotEmpty() && (tn.startsWith(need) || need.startsWith(tn))
+                tn.isNotEmpty() && (tn.startsWith(need) || need.startsWith(tn))
             }?.let { return it.index }
+            return null                  // 다음 낱말이 화면에 없다 -> 더 놓을 수 없다
         }
-        return open.first().index
+        return null                      // 정답 낱말을 다 놓았다
     }
 
     /** 짝맞추기에서 다음에 시도할 (왼쪽, 오른쪽) 짝. 없으면 null. */
@@ -1078,6 +1103,21 @@ return out;
     """
 
     /** 정답 문자열을 조각으로 나눈다 (빈칸별 ';', 복수정답 '|'). */
+    /**
+     * 사이트 정답 문자열을 **빈칸 단위**로 나눈다.
+     *
+     * 규칙(gclass_test.js 의 arr_answer 를 보고 확인):
+     *   - ';' 는 빈칸 구분    'do;love'              -> ['do', 'love']
+     *   - '|' 는 같은 칸의 다른 답  'that|which'     -> ['that']  (첫 번째만 쓴다)
+     *   - 'It;was;a;puppy;that|which' -> 5칸
+     *
+     * (여러 답을 다 알아야 하는 보기 고르기에는 splitAnswers 를 그대로 쓴다)
+     */
+    fun splitBlanks(raw: String?): List<String> =
+        (raw ?: "").split(";")
+            .map { it.split("|")[0].replace(Regex("\\s+"), " ").trim() }
+            .filter { it.isNotEmpty() }
+
     fun splitAnswers(raw: String?): List<String> =
         (raw ?: "").split(Regex("[|;]"))
             .map { it.replace(Regex("\\s*/\\s*"), " ").replace(Regex("\\s+"), " ").trim() }
@@ -1104,13 +1144,18 @@ return out;
     }
 
     /** 사이트 정답 데이터. (어디서 읽었는지, 정답 조각들) */
-    private data class PageAnswer(val src: String, val answers: List<String>)
+    private data class PageAnswer(
+        val src: String,
+        val answers: List<String>,
+        val raw: String,          // 사이트 정답 원문 (';' 로 빈칸이 나뉘어 있다)
+    )
 
     private suspend fun readPageAnswer(d: Driver): PageAnswer? {
         val o = d.evalObjectOrNull(READ_PAGE_ANSWER_JS) ?: return null
-        val answers = splitAnswers(o.optString("answer", ""))
+        val raw = o.optString("answer", "")
+        val answers = splitAnswers(raw)
         if (answers.isEmpty()) return null
-        return PageAnswer(o.optString("src", "arr"), answers)
+        return PageAnswer(o.optString("src", "arr"), answers, raw)
     }
 
     /** 새 화면에 들어갈 때마다 정답 데이터를 확인해 로그에 남긴다. */
@@ -1326,8 +1371,13 @@ return out;
     fun fillValues(count: Int, answer: String?, hint: String): List<String> {
         if (count <= 0) return emptyList()
         if (!answer.isNullOrEmpty()) {
+            // 사이트 정답은 빈칸을 ';' 로 나누고, 한 칸에 여러 답이 되면 '|' 로 잇는다.
+            //   'It;was;a;puppy;that|which'  -> 5칸: It / was / a / puppy / that
+            // 이걸 안 풀면 빈칸 수와 안 맞아 한 칸도 못 채운다.
+            val blanks = splitBlanks(answer)
+            if (blanks.size == count) return blanks
             val words = Norm.splitTargetWords(answer).filter { it.isNotBlank() }
-            if (count == 1) return listOf(answer)
+            if (count == 1) return listOf(blanks.firstOrNull() ?: answer)
             if (words.size == count) return words
             if (words.size > count) {
                 // 빈칸보다 단어가 많으면 마지막 칸에 남은 단어를 몰아 넣는다
@@ -1380,6 +1430,58 @@ return out;
      * 그래서 스피커를 눌러 사이트가 오디오를 잡게 한 뒤 pause 를 알려 준다.
      * 휴대폰처럼 자동 재생이 막힌 화면에서도 학습이 멈추지 않게 하기 위한 것이다.
      */
+    /**
+     * 어순 배열(문장 만들기)을 **사이트 방식 그대로** 다룬다.
+     *
+     * 사이트 스크립트(gclass_test.js)를 확인한 결과:
+     *   - 지금 푸는 카드는 전역 card_index 가 가리키는 .flip-card 다.
+     *     (카드가 여러 장 겹쳐 있고, 지나간 카드의 낱말 버튼은 눌러도 아무 일이 없다)
+     *   - 낱말 버튼(.btn-sentence-word)을 누르면 .scramble-body 에
+     *     <span class="scramble-word">낱말</span> 이 순서대로 쌓이고, 누른 버튼에는 'clicked' 가 붙는다.
+     *   - 그래서 **지금까지 놓은 낱말은 .scramble-body 의 span 들**이다(우리가 따로 셀 필요가 없다).
+     *
+     * @return placed(놓은 낱말 수)·clicked(이번에 눌렀는지). 카드를 못 찾으면 null.
+     */
+    private suspend fun scrambleStep(d: Driver, words: List<String>): Pair<Int, Boolean>? {
+        val json = org.json.JSONArray(words).toString()
+        val v = d.evalObjectOrNull(
+            """
+            function norm(s) {
+                return String(s || '').toLowerCase().replace(/[^a-z0-9가-힣]+/g, '');
+            }
+            var want = ${'$'}WANT;
+            var cards = document.querySelectorAll('.flip-card');
+            var card = null;
+            if (typeof card_index !== 'undefined' && card_index >= 0 && cards[card_index]) {
+                card = cards[card_index];
+            } else {
+                card = document.querySelector('.flip-card.showing');
+            }
+            if (!card) return null;
+
+            // 사이트가 기록해 둔 '지금까지 놓은 낱말'
+            var spans = card.querySelectorAll('.scramble-body .scramble-word, .scramble-body span');
+            var placed = spans.length;
+            if (placed >= want.length) return { placed: placed, clicked: false };
+
+            var need = norm(want[placed]);
+            var tiles = card.querySelectorAll('.test-sentence-words .btn-sentence-word, .btn-sentence-word');
+            for (var i = 0; i < tiles.length; i++) {
+                var t = tiles[i];
+                if ((' ' + t.className + ' ').indexOf(' clicked ') >= 0) continue;
+                if (t.offsetParent === null) continue;
+                var tn = norm(t.textContent);
+                if (tn === need || (tn && need && (tn.indexOf(need) === 0 || need.indexOf(tn) === 0))) {
+                    t.click();
+                    return { placed: placed, clicked: true };
+                }
+            }
+            return { placed: placed, clicked: false };
+            """.replace("${'$'}WANT", json)
+        ) ?: return null
+        return v.optInt("placed", 0) to v.optBoolean("clicked", false)
+    }
+
     private suspend fun skipTalkAudio(d: Driver): Boolean = d.evalBool(
         """
         var cards = document.querySelectorAll('.talk-card');
@@ -1426,26 +1528,40 @@ return out;
             }
             if (!modal) return null;
 
+            var msg = ((modal.querySelector('.msg') || modal).textContent || '')
+                .replace(/\s+/g, ' ').trim();
+            // 답을 비운 채 제출하거나, 오타·대소문자를 그대로 밀어 넣으면 그 문제는 틀린다.
+            // (gclass_test.js: '답을 입력하지 않은 문항이 있습니다. 이대로 제출할까요?' [제출/취소] 등)
+            // 이런 창은 '취소·수정'을 눌러 돌아가서 답을 채워야 한다.
+            var goBack = /입력하지 않은|개만 선택|오타|대소문자|바꾸어 입력/.test(msg);
+
             var btns = modal.querySelectorAll('button, a, .btn');
             var best = null, bestScore = -1, bestText = '';
             for (var i = 0; i < btns.length; i++) {
                 var b = btns[i];
                 if (!vis(b)) continue;
                 var t = ((b.textContent || '') + '').replace(/\s+/g, ' ').trim();
-                // 학습을 건너뛰거나 닫는 버튼은 절대 고르지 않는다
-                if (/생략|취소|나중|닫기|아니/.test(t)) continue;
                 var score = 0;
-                if (/학습 ?시작/.test(t)) score = 6;
-                else if (/시작/.test(t)) score = 5;
-                else if (/계속/.test(t)) score = 4;
-                else if (/확인|예|네/.test(t)) score = 3;
-                else if (b.className.indexOf('btn-ok') >= 0) score = 2;
-                else continue;
+                if (goBack) {
+                    // 돌아가서 고쳐야 하는 창: 수정 > 취소. 제출·확인은 절대 누르지 않는다.
+                    if (/수정/.test(t)) score = 6;
+                    else if (/취소/.test(t)) score = 5;
+                    else continue;
+                } else {
+                    // 학습을 건너뛰거나 닫는 버튼은 절대 고르지 않는다
+                    if (/생략|취소|나중|닫기|아니/.test(t)) continue;
+                    if (/학습 ?시작/.test(t)) score = 6;
+                    else if (/시작/.test(t)) score = 5;
+                    else if (/계속/.test(t)) score = 4;
+                    else if (/확인|예|네/.test(t)) score = 3;
+                    else if (b.className.indexOf('btn-ok') >= 0) score = 2;
+                    else continue;
+                }
                 if (score > bestScore) { bestScore = score; best = b; bestText = t; }
             }
             if (!best) return null;
             best.setAttribute('data-cc-modal-btn', '1');
-            return bestText;
+            return bestText + '\u0001' + msg.slice(0, 40);
             """
         )?.trim()?.ifEmpty { null } ?: return null
         d.clickFirstVisible("[data-cc-modal-btn=\"1\"]")
@@ -1511,7 +1627,7 @@ return out;
         var talkAudioSkipped: String? = null      // 소리를 넘긴 카드(같은 카드에서 두 번 넘기지 않는다)
         var lastModal: String? = null             // 직전에 누른 안내 창의 글자
         var sameModal = 0                         // 같은 안내 창이 연달아 뜬 횟수
-        val scrambleClicks = HashMap<String, MutableList<Int>>()           // 문제별로 누른 타일 순서
+        val scrambleStuck = HashMap<String, Int>()        // 어순 배열에서 낱말을 못 찾고 기다린 횟수
         val failedPairs = HashMap<String, MutableSet<String>>()            // 문제별로 틀린 짝
         val wrongByRow = HashMap<String, HashMap<Int, MutableSet<Int>>>()  // 문제별·줄별 오답
         var lastGroupPick: Triple<String, Int, Int>? = null
@@ -1611,7 +1727,9 @@ return out;
                             stop.set()
                             break
                         }
-                        d.log("[문법] 안내 창의 '$picked' 를 눌렀습니다.")
+                        val parts = picked.split("\u0001")
+                        d.log("[문법] 안내 창(\"${parts.getOrNull(1)?.take(34) ?: ""}\")의 " +
+                            "'${parts[0]}' 를 눌렀습니다.")
                         if (stop.await(700)) break
                         continue
                     }
@@ -1654,7 +1772,9 @@ return out;
                             // (사이트가 '학습 생략'을 확인 버튼에 달아 두므로 글자를 보고 고른다)
                             val picked = handleModal(d)
                             if (picked != null) {
-                                d.log("[문법] 확인 창의 '$picked' 를 눌렀습니다.")
+                                val parts = picked.split("\u0001")
+                                d.log("[문법] 확인 창(\"${parts.getOrNull(1)?.take(34) ?: ""}\")의 " +
+                                    "'${parts[0]}' 를 눌렀습니다.")
                                 val again = (modalRetry[act.stage.key] ?: 0) + 1
                                 modalRetry[act.stage.key] = again
                                 if (again <= 2) triedStages.remove(act.stage.key)
@@ -2018,7 +2138,10 @@ return out;
 
                 val qid = state.qid
                 val tries = triesByQid.getOrDefault(qid, 0)
-                if (tries >= MAX_TRY_PER_QUESTION) {
+                // 어순 배열·분류·짝맞추기는 한 문제에서 낱말/칸 수만큼 눌러야 끝난다.
+                // 이때도 '시도 횟수'로 세면 문장을 다 못 만들고 넘어가 버린다 -> 칸 수만큼 여유를 준다.
+                val steps = state.tiles.size + state.rows.size + state.left.size + state.blanks
+                if (tries >= MAX_TRY_PER_QUESTION + steps) {
                     clickNext(d)
                     triesByQid[qid] = 0
                     wrongByQid.remove(qid)
@@ -2031,11 +2154,13 @@ return out;
                 var answer = ""
                 var answerFrom = ""
                 var answerList: List<String> = emptyList()
+                var rawAnswer = ""        // 사이트 정답 원문 ('It;was;a;puppy;that|which')
 
                 val pageAns = readPageAnswer(d)
                 if (pageAns != null) {
                     answerList = pageAns.answers
                     answer = pageAns.answers.first()
+                    rawAnswer = pageAns.raw
                     answerFrom = "사이트 정답(${pageAns.src})"
                 }
                 if (answer.isEmpty()) {
@@ -2083,8 +2208,15 @@ return out;
                         if (stop.await(pace())) break
                         continue
                     }
-                    val values = if (answerList.size == state.blanks) answerList
-                        else fillValues(state.blanks, answer.ifEmpty { null }, state.hint)
+                    // 빈칸 수에 맞추는 순서: 빈칸 단위로 쪼갠 사이트 정답 > 정답 조각 > 추정
+                    // (사이트 정답 원문을 써야 한다. answer 는 첫 조각뿐이라 빈칸 수를 못 맞춘다)
+                    val raw = rawAnswer.ifEmpty { answer }
+                    val blanks = splitBlanks(raw)
+                    val values = when {
+                        blanks.size == state.blanks -> blanks
+                        answerList.size == state.blanks -> answerList
+                        else -> fillValues(state.blanks, raw.ifEmpty { null }, state.hint)
+                    }
                     if (values.isEmpty()) {
                         d.log("[문법] 답을 알 수 없는 입력형 문제(빈칸 ${state.blanks}칸) — 비운 채 넘어갑니다.")
                         clickNext(d)
@@ -2100,6 +2232,27 @@ return out;
                         if (stop.await(120)) { stopped = true; break }
                     }
                     if (stopped) break
+                    // 사이트는 빈칸이 하나라도 비면 '이대로 제출할까요?' 를 띄우고 그 문제를 틀린다.
+                    // 값이 정말 들어갔는지 읽어 보고, 안 들어간 칸이 있으면 구조를 알려 준다.
+                    val written = d.evalObjectOrNull(
+                        """
+                        var card = document.querySelector('.flip-card.showing') || document;
+                        var els = card.querySelectorAll('[data-cc-input]');
+                        var empty = 0, total = 0, cls = '';
+                        for (var i = 0; i < els.length; i++) {
+                            if (els[i].offsetParent === null) continue;
+                            total++;
+                            if (!String(els[i].value || '').trim()) { empty++; cls = els[i].className; }
+                        }
+                        return { total: total, empty: empty, cls: cls };
+                        """
+                    )
+                    if (written != null && written.optInt("empty", 0) > 0) {
+                        d.log(
+                            "[문법] 빈칸 ${written.optInt("empty", 0)}/${written.optInt("total", 0)}칸이 " +
+                                "비어 있습니다 (입력창 구조: ${written.optString("cls", "?")}) — 그대로 채점합니다."
+                        )
+                    }
                     clickNext(d)
                     if (stop.await(pace())) break
                     continue
@@ -2107,21 +2260,35 @@ return out;
 
                 // ------------------------------------------ 어순 배열
                 if (state.type == "scramble") {
-                    val clicked = scrambleClicks.getOrPut(qid) { mutableListOf() }
-                    val tile = nextScrambleIndex(answer.ifEmpty { null }, state.tiles, clicked)
-                    if (tile == null) {
-                        scrambleClicks.remove(qid)
-                        clickNext(d)
-                        if (stop.await(pace())) break
+                    // 사이트 정답은 낱말을 ';' 로 이어 준다 ('The;children;do;like;…').
+                    val raw = rawAnswer.ifEmpty { answer }
+                    val blanks = splitBlanks(raw)
+                    val words = if (blanks.size > 1) blanks
+                    else Norm.splitTargetWords(raw).filter { it.isNotBlank() }
+                    val step = if (words.isEmpty()) null else scrambleStep(d, words)
+                    if (step == null) {
+                        if (stop.await(400)) break
                         continue
                     }
-                    if (DEBUG) {
-                        val t = state.tiles.firstOrNull { it.index == tile }
-                        d.log("[문법] (어순) ${clicked.size + 1}번째 -> '${t?.raw ?: ""}'")
+                    val (placedCnt, clicked) = step
+                    if (clicked) {
+                        if (DEBUG) d.log("[문법] (어순) ${placedCnt + 1}번째 -> '${words[placedCnt]}'")
+                        if (stop.await(400)) break
+                        continue
                     }
-                    clicked.add(tile)
-                    clickTagged(d, "data-cc-opt", tile.toString(), ignoredClicks >= TRUSTED_AFTER)
-                    if (stop.await(400)) break
+                    if (placedCnt < words.size) {
+                        // 아직 덜 놓였는데 누를 낱말을 못 찾았다 (카드가 막 바뀌는 중일 수 있다)
+                        val n = (scrambleStuck[qid] ?: 0) + 1
+                        scrambleStuck[qid] = n
+                        if (n < 8) {
+                            if (stop.await(500)) break
+                            continue
+                        }
+                        d.log("[문법] 어순 배열에서 '${words[placedCnt]}' 를 찾지 못했습니다 — 그대로 채점합니다.")
+                    }
+                    scrambleStuck.remove(qid)
+                    clickNext(d)               // 문장 완성 -> 채점하기
+                    if (stop.await(pace())) break
                     continue
                 }
 
