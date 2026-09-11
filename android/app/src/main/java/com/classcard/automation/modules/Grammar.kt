@@ -2223,6 +2223,49 @@ return out;
                         return@solveClass 0
         }
 
+        // 이 화면의 정답을 전부 미리 읽어 둔다 (②③④). 메서드 크기 때문에 지역 람다로 둔다.
+        val preread: suspend (String) -> Unit = preread@{ label ->
+                        if (stgDone) startStage(stgUnit, label)
+
+                        // ② 페이지의 문제·설명을 처음부터 끝까지 읽는다
+                        d.log("[문법] ② ${label}의 내용을 처음부터 끝까지 읽는 중…")
+
+                        // ③ 모든 항목이 로드될 때까지 대기 (두 번 재서 개수가 같아지면 로드 완료)
+                        var prev: String? = null
+                        var quiz = 0; var talk = 0; var withAnswer = 0
+                        for (i in 0 until 12) {
+                            val v = d.evalObjectOrNull(CHECK_ANSWER_SOURCE_JS)
+                            quiz = v?.optInt("quiz", 0) ?: 0
+                            talk = v?.optInt("talk", 0) ?: 0
+                            withAnswer = maxOf(v?.optInt("quizWith", 0) ?: 0, v?.optInt("talkWith", 0) ?: 0)
+                            val sig = "$quiz/$talk"
+                            if (prev != null && sig == prev && (quiz > 0 || talk > 0)) break
+                            prev = sig
+                            if (stop.await(LOAD_SETTLE_MS)) break
+                        }
+                        if (stop.isSet) return@preread
+
+                        stgTotal = quiz
+                        stgCards = talk
+                        stgWithAnswer = withAnswer
+                        stgNo = 0
+                        d.log(
+                            "[문법] ③ 로드 완료 — " +
+                                if (stgTotal > 0) "문항 ${stgTotal}개" else "카드 ${stgCards}장"
+                        )
+
+                        // ④ 학습 내용 확인 완료 (정답 데이터를 미리 다 읽어 둔다)
+                        fastScreen = stgWithAnswer > 0
+                        if (fastScreen) {
+                            d.log(
+                                "[문법] ④ 학습 내용 확인 완료 — 정답 ${stgWithAnswer}개를 미리 읽었습니다. " +
+                                    "⑤ 1번 문제부터 순서대로 풉니다."
+                            )
+                        } else {
+                            d.log("[문법] ④ 학습 내용 확인 완료 — 정답 데이터가 없어 화면 정보로 풉니다.")
+                        }
+        }
+
             while (!stop.isSet) {
                 val state = readState(d)
                 if (state == null) {
@@ -2269,47 +2312,21 @@ return out;
                 // 읽어 뒀으면(fastScreen) 문제마다 찍어 볼 필요가 없으므로 기다리지 않고 바로 푼다.
                 if (state.kind == "talk" || state.kind == "quiz") {
                     val screen = state.kind + "|" + d.currentUrl()
+                    val label = if (state.kind == "talk") "개념 톡" else "문제 화면"
                     if (screen != checkedScreen) {
                         checkedScreen = screen
-                        val label = if (state.kind == "talk") "개념 톡" else "문제 화면"
-                        if (stgDone) startStage(stgUnit, label)
-
-                        // ② 페이지의 문제·설명을 처음부터 끝까지 읽는다
-                        d.log("[문법] ② ${label}의 내용을 처음부터 끝까지 읽는 중…")
-
-                        // ③ 모든 항목이 로드될 때까지 대기 (두 번 재서 개수가 같아지면 로드 완료)
-                        var prev: String? = null
-                        var quiz = 0; var talk = 0; var withAnswer = 0
-                        for (i in 0 until 12) {
-                            val v = d.evalObjectOrNull(CHECK_ANSWER_SOURCE_JS)
-                            quiz = v?.optInt("quiz", 0) ?: 0
-                            talk = v?.optInt("talk", 0) ?: 0
-                            withAnswer = maxOf(v?.optInt("quizWith", 0) ?: 0, v?.optInt("talkWith", 0) ?: 0)
-                            val sig = "$quiz/$talk"
-                            if (prev != null && sig == prev && (quiz > 0 || talk > 0)) break
-                            prev = sig
-                            if (stop.await(LOAD_SETTLE_MS)) break
-                        }
+                        preread(label)
                         if (stop.isSet) break
-
-                        stgTotal = quiz
-                        stgCards = talk
-                        stgWithAnswer = withAnswer
-                        stgNo = 0
-                        d.log(
-                            "[문법] ③ 로드 완료 — " +
-                                if (stgTotal > 0) "문항 ${stgTotal}개" else "카드 ${stgCards}장"
-                        )
-
-                        // ④ 학습 내용 확인 완료 (정답 데이터를 미리 다 읽어 둔다)
-                        fastScreen = stgWithAnswer > 0
-                        if (fastScreen) {
-                            d.log(
-                                "[문법] ④ 학습 내용 확인 완료 — 정답 ${stgWithAnswer}개를 미리 읽었습니다. " +
-                                    "⑤ 1번 문제부터 순서대로 풉니다."
-                            )
-                        } else {
-                            d.log("[문법] ④ 학습 내용 확인 완료 — 정답 데이터가 없어 화면 정보로 풉니다.")
+                    } else if (!fastScreen) {
+                        // 새 단계는 '시작' 화면으로 열려서, 그때는 문제가 아직 만들어지지 않았다.
+                        // (그 상태로 읽으면 '카드 0장'이 되고, 다시 안 읽으면 정답 없이 풀게 된다)
+                        // 그래서 정답표를 아직 못 읽었으면 **내용이 생겼는지 확인해서 다시 읽는다.**
+                        val now = d.evalObjectOrNull(CHECK_ANSWER_SOURCE_JS)
+                        val nowSize = (now?.optInt("quiz", 0) ?: 0) + (now?.optInt("talk", 0) ?: 0)
+                        if (nowSize > stgTotal + stgCards) {
+                            d.log("[문법] 문제가 이제 나타났습니다 — 정답 데이터를 다시 읽습니다.")
+                            preread(label)
+                            if (stop.isSet) break
                         }
                     }
                 }

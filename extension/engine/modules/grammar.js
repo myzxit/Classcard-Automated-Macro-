@@ -1794,9 +1794,10 @@ export async function grammar(d, answerDict, stop) {
       // 읽어 뒀으면(fastScreen) 문제마다 찍어 볼 필요가 없으므로 기다리지 않고 바로 푼다.
       if (state.kind === 'talk' || state.kind === 'quiz') {
         const screen = state.kind + '|' + (await d.currentUrl());
-        if (screen !== checkedScreen) {
-          checkedScreen = screen;
-          const label = state.kind === 'talk' ? '개념 톡' : '문제 화면';
+        const label = state.kind === 'talk' ? '개념 톡' : '문제 화면';
+
+        // 이 화면의 정답을 전부 미리 읽어 둔다 (②③④).
+        const preread = async () => {
           if (!stage) stage = newStage('', label);
 
           // ② 페이지의 문제·설명을 처음부터 끝까지 읽는다
@@ -1812,7 +1813,7 @@ export async function grammar(d, answerDict, stop) {
             prev = sig;
             if (await stop.await(CONFIG.loadSettleMs)) break;
           }
-          if (stop.isSet) break;
+          if (stop.isSet) return;
 
           stage.total = (counts && counts.quiz) || 0;
           stage.cards = (counts && counts.talk) || 0;
@@ -1832,6 +1833,24 @@ export async function grammar(d, answerDict, stop) {
             );
           } else {
             d.log('[문법] ④ 학습 내용 확인 완료 — 정답 데이터가 없어 화면 정보로 풉니다.');
+          }
+        };
+
+        if (screen !== checkedScreen) {
+          checkedScreen = screen;
+          await preread();
+          if (stop.isSet) break;
+        } else if (!fastScreen) {
+          // 새 단계는 '시작' 화면으로 열려서, 그때는 문제가 아직 만들어지지 않았다.
+          // (그 상태로 읽으면 '카드 0장'이 되고, 다시 안 읽으면 정답 없이 풀게 된다)
+          // 그래서 정답표를 아직 못 읽었으면 **내용이 생겼는지 계속 확인해서 다시 읽는다.**
+          const now = await d.eval(CHECK_ANSWER_SOURCE_JS);
+          const nowSize = now ? (now.quiz || 0) + (now.talk || 0) : 0;
+          const hadSize = stage ? (stage.total || 0) + (stage.cards || 0) : 0;
+          if (nowSize > hadSize) {
+            d.log('[문법] 문제가 이제 나타났습니다 — 정답 데이터를 다시 읽습니다.');
+            await preread();
+            if (stop.isSet) break;
           }
         }
       }
