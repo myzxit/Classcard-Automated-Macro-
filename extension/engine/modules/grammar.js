@@ -14,8 +14,13 @@
  *                 .gclass-q-input .inline-box .option-box .option-item   인라인 선택
  *                 .gclass-q-input input / .inline-input-body input       입력형
  *
- * 확인하지 못한 화면(매칭·분류 등)을 위해, 이름을 모를 때 쓰는 구조 기반 폴백도 남겨 둔다.
- * 정답을 못 읽는 문제는 찍고 채점 결과를 기억해서 오답을 지워 나간다.
+ * 짝맞추기(16)·분류(17)는 gclass_test.js 의 채점부에서 규칙을 확인했다:
+ *   16 — 같은 줄에 놓인 왼쪽·오른쪽 .match-item 의 data-idx 가 같으면 정답
+ *   17 — .grouping-item 의 data-key 와 고른 .chk_grouping 의 value 가 같으면 정답
+ * 그래서 이 두 유형은 추측 없이 화면에 실린 값 그대로 푼다.
+ *
+ * 그래도 값이 실려 있지 않은 화면을 대비해, 찍고 채점 결과를 기억해 오답을 지워 나가는
+ * 구조 기반 폴백을 남겨 둔다.
  */
 
 import * as N from '../norm.js';
@@ -374,15 +379,39 @@ for (var i = 0; i < items.length; i++) {
             for (var k = 0; k < labels.length; k++) {
                 if (!vis(labels[k])) continue;
                 labels[k].setAttribute('data-cc-rowopt', j + '_' + k);
-                opts.push({ i: k, key: j + '_' + k, text: txt(labels[k]) });
+                // 이 라벨이 누르는 라디오의 value. gclass_test.js 는 채점할 때
+                // select_el.val() 과 줄의 data-key 를 견준다 (drill_type 17).
+                var rad = null;
+                try {
+                    var forId = labels[k].getAttribute('for');
+                    if (forId) rad = document.getElementById(forId);
+                    if (!rad && labels[k].parentNode) {
+                        rad = labels[k].parentNode.querySelector('input.chk_grouping, input[type="radio"]');
+                    }
+                } catch (e) {}
+                opts.push({
+                    i: k, key: j + '_' + k, text: txt(labels[k]),
+                    val: rad ? String(rad.value == null ? '' : rad.value).trim() : ''
+                });
             }
             // 줄 이름: 라디오 라벨 텍스트를 뺀 나머지
             var name = txt(row);
             for (var k = 0; k < opts.length; k++) name = name.replace(opts[k].text, ' ');
+            // 사이트가 정답으로 쓰는 값 — 줄의 data-key 가 그 줄이 속할 그룹 번호다.
+            var rkey = row.getAttribute('data-key');
+            // 이 줄에서 이미 고른 보기(라디오)가 있으면 다시 고르지 않는다
+            var rsel = '';
+            try {
+                var on = row.querySelector('input.chk_grouping:checked, input[type="radio"]:checked');
+                if (on) rsel = String(on.value == null ? '' : on.value).trim();
+            } catch (e) {}
             rows.push({
                 i: j,
                 text: name.replace(/\\s+/g, ' ').trim(),
                 options: opts,
+                key: rkey == null ? '' : String(rkey).trim(),
+                sel: rsel,
+                bad: rcls.indexOf(' wrong ') >= 0,
                 done: rcls.indexOf(' correct ') >= 0 || rcls.indexOf(' wrong ') >= 0
             });
         }
@@ -398,9 +427,13 @@ for (var i = 0; i < items.length; i++) {
             for (var j = 0; j < cells.length; j++) {
                 if (!vis(cells[j])) continue;
                 cells[j].setAttribute('data-cc-' + side, String(j));
+                // 사이트는 같은 줄에 놓인 왼쪽·오른쪽의 data-idx 가 같으면 정답으로 친다
+                // (gclass_test.js drill_type 16). 즉 data-idx 가 곧 짝 번호다.
+                var mIdx = cells[j].getAttribute('data-idx');
                 bucket.push({
                     i: j,
                     text: txt(cells[j]),
+                    idx: mIdx == null ? '' : String(mIdx).trim(),
                     done: (' ' + cells[j].className + ' ').indexOf(' end ') >= 0
                 });
             }
@@ -616,12 +649,18 @@ async function readState(d) {
       index: r.i,
       text: (r.text || '').trim(),
       done: !!r.done,
+      key: (r.key || '').trim(),          // 사이트가 쓰는 정답 그룹 번호
+      sel: (r.sel || '').trim(),          // 이미 골라 둔 값 (있으면 그 줄은 끝났다)
+      bad: !!r.bad,                       // 채점에서 틀렸다고 표시된 줄
       options: (r.options || []).map((o) => ({
         index: o.i, key: o.key, raw: (o.text || '').trim(), norm: N.mnorm(o.text || ''),
+        val: (o.val || '').trim(),        // 이 보기를 고르면 저장되는 값
       })),
     })),
-    left: (data.left || []).map((c) => ({ index: c.i, raw: (c.text || '').trim(), done: !!c.done })),
-    right: (data.right || []).map((c) => ({ index: c.i, raw: (c.text || '').trim(), done: !!c.done })),
+    left: (data.left || []).map((c) => (
+      { index: c.i, raw: (c.text || '').trim(), idx: (c.idx || '').trim(), done: !!c.done })),
+    right: (data.right || []).map((c) => (
+      { index: c.i, raw: (c.text || '').trim(), idx: (c.idx || '').trim(), done: !!c.done })),
     tiles: (data.tiles || []).map((t) => ({
       index: t.i, raw: (t.text || '').trim(), norm: N.mnorm(t.text || ''), used: !!t.used,
     })),
@@ -759,6 +798,16 @@ export function nextScrambleIndex(answer, tiles, placed) {
  * @param {Set<string>} failed "l_r" 형태로 저장한 실패 조합
  */
 export function nextPairAttempt(left, right, failed) {
+  // 사이트는 같은 줄의 왼쪽·오른쪽 data-idx 가 같으면 정답으로 친다(drill_type 16).
+  // 그 번호가 화면에 실려 있으면 추측하지 않고 바로 맞는 짝을 누른다.
+  for (const l of left || []) {
+    if (l.done || !l.idx) continue;
+    for (const r of right || []) {
+      if (r.done || r.idx !== l.idx) continue;
+      return { left: l.index, right: r.index };
+    }
+  }
+  // 번호가 없는 화면에서만 하나씩 시도한다.
   for (const l of left || []) {
     if (l.done) continue;
     for (const r of right || []) {
@@ -776,8 +825,14 @@ export function nextPairAttempt(left, right, failed) {
  */
 export function nextGroupPick(rows, answer, wrongByRow) {
   for (const row of rows || []) {
-    if (row.done || !row.options.length) continue;
+    if (row.done || row.sel || !row.options.length) continue;
     const wrong = (wrongByRow && wrongByRow.get(row.index)) || new Set();
+    // 사이트는 줄의 data-key 와 고른 라디오 값이 같으면 정답으로 친다(drill_type 17).
+    // 그 값이 화면에 실려 있으면 추측하지 않고 바로 맞는 보기를 고른다.
+    if (row.key) {
+      const sure = row.options.find((o) => o.val && o.val === row.key);
+      if (sure) return { row: row.index, option: sure.index };
+    }
     let hint = null;
     if (answer && row.text) {
       // 정답 문장에서 줄 이름 뒤에 나오는 보기를 찾는다
@@ -2188,8 +2243,9 @@ export async function grammar(d, answerDict, stop) {
 
       // 분류형: 방금 고른 줄이 오답으로 표시되면 그 보기를 기억한다.
       if (lastGroupPick && state.type === 'group') {
+        // 맞은 줄까지 오답으로 기억하면 다시 풀 때 정답을 피하게 된다. 틀린 줄만 기억한다.
         const row = (state.rows || []).find((r) => r.index === lastGroupPick.row);
-        if (row && row.done) {
+        if (row && row.bad) {
           const map = wrongByRow.get(lastGroupPick.qid);
           if (map) {
             if (!map.has(row.index)) map.set(row.index, new Set());

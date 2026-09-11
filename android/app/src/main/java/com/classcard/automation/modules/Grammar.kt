@@ -24,8 +24,13 @@ import org.json.JSONObject
  *                 .gclass-q-input .inline-box .option-box .option-item   인라인 선택
  *                 .gclass-q-input input / .inline-input-body input       입력형
  *
- * 확인하지 못한 화면(매칭·분류 등)을 위해, 이름을 모를 때 쓰는 구조 기반 폴백도 남겨 둔다.
- * 정답을 못 읽는 문제는 찍고 채점 결과를 기억해서 오답을 지워 나간다.
+ * 짝맞추기(16)·분류(17)는 gclass_test.js 의 채점부에서 규칙을 확인했다:
+ *   16 — 같은 줄에 놓인 왼쪽·오른쪽 .match-item 의 data-idx 가 같으면 정답
+ *   17 — .grouping-item 의 data-key 와 고른 .chk_grouping 의 value 가 같으면 정답
+ * 그래서 이 두 유형은 추측 없이 화면에 실린 값 그대로 푼다.
+ *
+ * 그래도 값이 실려 있지 않은 화면을 대비해, 찍고 채점 결과를 기억해 오답을 지워 나가는
+ * 구조 기반 폴백을 남겨 둔다.
  */
 object Grammar {
 
@@ -123,21 +128,28 @@ object Grammar {
         object None : ClassAction()
     }
 
-    /** 분류형 한 줄의 보기. */
-    data class RowOption(val index: Int, val raw: String) {
+    /** 분류형 한 줄의 보기. val 은 이 보기를 고르면 저장되는 라디오 값. */
+    data class RowOption(val index: Int, val raw: String, val value: String = "") {
         val norm: String = Norm.mnorm(raw)
     }
 
-    /** 분류형 한 줄. */
+    /** 분류형 한 줄. key 는 사이트가 정답으로 쓰는 그룹 번호(data-key). */
     data class Row(
         val index: Int,
         val text: String,
         val done: Boolean,
         val options: List<RowOption>,
+        val key: String = "",
+        /** 이미 골라 둔 값 (있으면 그 줄은 끝났다). */
+        val sel: String = "",
+        /** 채점에서 틀렸다고 표시된 줄. */
+        val bad: Boolean = false,
     )
 
-    /** 짝맞추기 칸 하나. */
-    data class MatchCell(val index: Int, val raw: String, val done: Boolean)
+    /** 짝맞추기 칸 하나. idx 는 사이트가 짝 판정에 쓰는 번호(data-idx). */
+    data class MatchCell(
+        val index: Int, val raw: String, val done: Boolean, val idx: String = "",
+    )
 
     /** 어순 배열 타일 하나. */
     data class Tile(val index: Int, val raw: String, val used: Boolean) {
@@ -491,15 +503,39 @@ object Grammar {
                     for (var k = 0; k < labels.length; k++) {
                         if (!vis(labels[k])) continue;
                         labels[k].setAttribute('data-cc-rowopt', j + '_' + k);
-                        opts.push({ i: k, key: j + '_' + k, text: txt(labels[k]) });
+                        // 이 라벨이 누르는 라디오의 value. gclass_test.js 는 채점할 때
+                        // select_el.val() 과 줄의 data-key 를 견준다 (drill_type 17).
+                        var rad = null;
+                        try {
+                            var forId = labels[k].getAttribute('for');
+                            if (forId) rad = document.getElementById(forId);
+                            if (!rad && labels[k].parentNode) {
+                                rad = labels[k].parentNode.querySelector('input.chk_grouping, input[type="radio"]');
+                            }
+                        } catch (e) {}
+                        opts.push({
+                            i: k, key: j + '_' + k, text: txt(labels[k]),
+                            val: rad ? String(rad.value == null ? '' : rad.value).trim() : ''
+                        });
                     }
                     // 줄 이름: 라디오 라벨 텍스트를 뺀 나머지
                     var name = txt(row);
                     for (var k = 0; k < opts.length; k++) name = name.replace(opts[k].text, ' ');
+                    // 사이트가 정답으로 쓰는 값 — 줄의 data-key 가 그 줄이 속할 그룹 번호다.
+                    var rkey = row.getAttribute('data-key');
+                    // 이 줄에서 이미 고른 보기(라디오)가 있으면 다시 고르지 않는다
+                    var rsel = '';
+                    try {
+                        var on = row.querySelector('input.chk_grouping:checked, input[type="radio"]:checked');
+                        if (on) rsel = String(on.value == null ? '' : on.value).trim();
+                    } catch (e) {}
                     rows.push({
                         i: j,
                         text: name.replace(/\s+/g, ' ').trim(),
                         options: opts,
+                        key: rkey == null ? '' : String(rkey).trim(),
+                        sel: rsel,
+                        bad: rcls.indexOf(' wrong ') >= 0,
                         done: rcls.indexOf(' correct ') >= 0 || rcls.indexOf(' wrong ') >= 0
                     });
                 }
@@ -515,9 +551,13 @@ object Grammar {
                     for (var j = 0; j < cells.length; j++) {
                         if (!vis(cells[j])) continue;
                         cells[j].setAttribute('data-cc-' + side, String(j));
+                        // 사이트는 같은 줄에 놓인 왼쪽·오른쪽의 data-idx 가 같으면 정답으로 친다
+                        // (gclass_test.js drill_type 16). 즉 data-idx 가 곧 짝 번호다.
+                        var mIdx = cells[j].getAttribute('data-idx');
                         bucket.push({
                             i: j,
                             text: txt(cells[j]),
+                            idx: mIdx == null ? '' : String(mIdx).trim(),
                             done: (' ' + cells[j].className + ' ').indexOf(' end ') >= 0
                         });
                     }
@@ -789,7 +829,13 @@ object Grammar {
                 r.optJSONArray("options")?.let { oarr ->
                     for (j in 0 until oarr.length()) {
                         val o = oarr.optJSONObject(j) ?: continue
-                        opts.add(RowOption(o.optInt("i", j), o.optString("text", "").trim()))
+                        opts.add(
+                            RowOption(
+                                o.optInt("i", j),
+                                o.optString("text", "").trim(),
+                                o.optString("val", "").trim(),
+                            )
+                        )
                     }
                 }
                 rows.add(
@@ -798,6 +844,9 @@ object Grammar {
                         text = r.optString("text", "").trim(),
                         done = r.optBoolean("done", false),
                         options = opts,
+                        key = r.optString("key", "").trim(),
+                        sel = r.optString("sel", "").trim(),
+                        bad = r.optBoolean("bad", false),
                     )
                 )
             }
@@ -808,7 +857,14 @@ object Grammar {
             val out = mutableListOf<MatchCell>()
             for (i in 0 until arr2.length()) {
                 val c = arr2.optJSONObject(i) ?: continue
-                out.add(MatchCell(c.optInt("i", i), c.optString("text", "").trim(), c.optBoolean("done", false)))
+                out.add(
+                    MatchCell(
+                        c.optInt("i", i),
+                        c.optString("text", "").trim(),
+                        c.optBoolean("done", false),
+                        c.optString("idx", "").trim(),
+                    )
+                )
             }
             return out
         }
@@ -984,6 +1040,16 @@ object Grammar {
     fun nextPairAttempt(
         left: List<MatchCell>, right: List<MatchCell>, failed: Set<String>,
     ): Pair<Int, Int>? {
+        // 사이트는 같은 줄의 왼쪽·오른쪽 data-idx 가 같으면 정답으로 친다(drill_type 16).
+        // 그 번호가 화면에 실려 있으면 추측하지 않고 바로 맞는 짝을 누른다.
+        for (l in left) {
+            if (l.done || l.idx.isEmpty()) continue
+            for (r in right) {
+                if (r.done || r.idx != l.idx) continue
+                return l.index to r.index
+            }
+        }
+        // 번호가 없는 화면에서만 하나씩 시도한다.
         for (l in left) {
             if (l.done) continue
             for (r in right) {
@@ -1003,8 +1069,14 @@ object Grammar {
         rows: List<Row>, answer: String?, wrongByRow: Map<Int, Set<Int>>,
     ): Pair<Int, Int>? {
         for (row in rows) {
-            if (row.done || row.options.isEmpty()) continue
+            if (row.done || row.sel.isNotEmpty() || row.options.isEmpty()) continue
             val wrong = wrongByRow[row.index] ?: emptySet()
+            // 사이트는 줄의 data-key 와 고른 라디오 값이 같으면 정답으로 친다(drill_type 17).
+            // 그 값이 화면에 실려 있으면 추측하지 않고 바로 맞는 보기를 고른다.
+            if (row.key.isNotEmpty()) {
+                val sure = row.options.firstOrNull { it.value.isNotEmpty() && it.value == row.key }
+                if (sure != null) return row.index to sure.index
+            }
             var hint: String? = null
             if (!answer.isNullOrEmpty() && row.text.isNotEmpty()) {
                 val am = Norm.mnorm(answer)
@@ -2450,11 +2522,12 @@ object Grammar {
                 }
                 idleStreak = 0
 
-                // 분류형: 방금 고른 줄이 채점되면 그 보기를 오답으로 기억한다.
+                // 분류형: 방금 고른 줄이 틀렸다고 표시되면 그 보기를 오답으로 기억한다.
+                // (맞은 줄까지 기억하면 다시 풀 때 정답을 피하게 된다)
                 lastGroupPick?.let { (gq, rowIdx, optIdx) ->
                     if (state.type == "group") {
                         val row = state.rows.firstOrNull { it.index == rowIdx }
-                        if (row != null && row.done) {
+                        if (row != null && row.bad) {
                             wrongByRow.getOrPut(gq) { HashMap() }
                                 .getOrPut(rowIdx) { mutableSetOf() }.add(optIdx)
                         }

@@ -198,6 +198,23 @@ test('맞춘 칸(done)은 건너뛴다', () => {
   assert.equal(nextPairAttempt(L, R, new Set(['1_1'])), null);
 });
 
+test('짝 번호(data-idx)가 있으면 추측하지 않고 같은 번호끼리 맞춘다', () => {
+  // 사이트 기준: 같은 줄의 왼쪽·오른쪽 data-idx 가 같으면 정답 (gclass_test.js 16)
+  const L = [{ index: 0, raw: 'A', idx: '2', done: false },
+             { index: 1, raw: 'B', idx: '0', done: false }];
+  const R = [{ index: 0, raw: '가', idx: '0', done: false },
+             { index: 1, raw: '나', idx: '2', done: false }];
+  assert.deepEqual(nextPairAttempt(L, R, new Set()), { left: 0, right: 1 });
+});
+
+test('짝 번호가 있어도 이미 맞춘 칸은 넘어간다', () => {
+  const L = [{ index: 0, raw: 'A', idx: '2', done: true },
+             { index: 1, raw: 'B', idx: '0', done: false }];
+  const R = [{ index: 0, raw: '가', idx: '0', done: false },
+             { index: 1, raw: '나', idx: '2', done: true }];
+  assert.deepEqual(nextPairAttempt(L, R, new Set()), { left: 1, right: 0 });
+});
+
 // ---------------------------------------------------------------- 분류형
 
 const row = (i, text, opts, done = false) => ({
@@ -227,6 +244,17 @@ test('정답 문장에 줄 이름과 보기가 있으면 그것을 고른다', (
 
 test('풀 줄이 없으면 null', () => {
   assert.equal(nextGroupPick([row(0, 'a', ['x', 'y'], true)], null, new Map()), null);
+});
+
+test('줄의 data-key 가 있으면 추측하지 않고 그 값의 보기를 고른다', () => {
+  // 사이트 기준: data-key 와 고른 라디오 value 가 같으면 정답 (gclass_test.js 17)
+  const rows = [{
+    index: 0, text: 'water', done: false, key: '1',
+    options: [{ index: 0, key: '0_0', raw: '셀 수 있음', norm: N.mnorm('셀 수 있음'), val: '0' },
+              { index: 1, key: '0_1', raw: '셀 수 없음', norm: N.mnorm('셀 수 없음'), val: '1' }],
+  }];
+  // 정답 문장이 반대로 말해도, 사이트가 쓰는 값이 이긴다
+  assert.deepEqual(nextGroupPick(rows, 'water 셀 수 있음', new Map()), { row: 0, option: 1 });
 });
 
 // ---------------------------------------------------------------- 빈칸 채우기

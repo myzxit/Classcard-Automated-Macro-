@@ -298,6 +298,21 @@ class GrammarLogicTest {
         assertNull(Grammar.nextPairAttempt(l, r, setOf("1_1")))
     }
 
+    @JUnitTest
+    fun matchUsesPairIndexWhenPresent() {
+        // 사이트 기준: 같은 줄의 왼쪽·오른쪽 data-idx 가 같으면 정답 (gclass_test.js 16)
+        val l = listOf(Grammar.MatchCell(0, "A", false, "2"), Grammar.MatchCell(1, "B", false, "0"))
+        val r = listOf(Grammar.MatchCell(0, "가", false, "0"), Grammar.MatchCell(1, "나", false, "2"))
+        assertEquals(0 to 1, Grammar.nextPairAttempt(l, r, emptySet()))
+    }
+
+    @JUnitTest
+    fun matchWithPairIndexSkipsFinished() {
+        val l = listOf(Grammar.MatchCell(0, "A", true, "2"), Grammar.MatchCell(1, "B", false, "0"))
+        val r = listOf(Grammar.MatchCell(0, "가", false, "0"), Grammar.MatchCell(1, "나", true, "2"))
+        assertEquals(1 to 0, Grammar.nextPairAttempt(l, r, emptySet()))
+    }
+
     // ================================================ 분류형
 
     private fun row(i: Int, text: String, opts: List<String>, done: Boolean = false) =
@@ -331,6 +346,20 @@ class GrammarLogicTest {
     fun groupReturnsNullWhenAllRowsDone() {
         val rows = listOf(row(0, "a", listOf("x", "y"), done = true))
         assertNull(Grammar.nextGroupPick(rows, null, emptyMap()))
+    }
+
+    @JUnitTest
+    fun groupUsesRowKeyWhenPresent() {
+        // 사이트 기준: data-key 와 고른 라디오 value 가 같으면 정답 (gclass_test.js 17)
+        val rows = listOf(
+            Grammar.Row(
+                0, "water", false,
+                listOf(Grammar.RowOption(0, "셀 수 있음", "0"), Grammar.RowOption(1, "셀 수 없음", "1")),
+                key = "1",
+            )
+        )
+        // 정답 문장이 반대로 말해도, 사이트가 쓰는 값이 이긴다
+        assertEquals(0 to 1, Grammar.nextGroupPick(rows, "water 셀 수 있음", emptyMap()))
     }
 
     // ================================================ 빈칸 채우기
