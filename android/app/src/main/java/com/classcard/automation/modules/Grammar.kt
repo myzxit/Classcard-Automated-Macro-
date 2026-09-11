@@ -1945,6 +1945,284 @@ return out;
         }
 
         try {
+        // 개념 톡 한 바퀴. 메서드 크기 제한(64KB) 때문에 따로 뺀다.
+        // 지역 람다라서 위의 값들(stgNo, talkStuck …)을 그대로 쓰고 고칠 수 있다.
+        //   0 = 루프를 계속, 1 = 매크로를 멈춤
+        val solveTalk: suspend (State) -> Int = solveTalk@{ state ->
+                        // 개념 톡: 사이트 스크립트대로 '지금 카드(card_idx)' 에서만 조작한다.
+                        val ans = state.answers
+                        val talkKey = state.qid
+                        val tried = wrongByQid[talkKey] ?: emptySet<Int>()
+
+                        // 1) 객관식 — 정답 글자와 같은 보기를 고른다 (.option-txt 로 비교)
+                        if (state.options.isNotEmpty() && !state.talkDone) {
+                            var pick = pickByAnswers(state.options, ans, tried)
+                            if (pick == null) {
+                                // 정답을 모르면 다음 카드 해설 -> 전역 훑기 -> 안 해 본 보기 순으로 고른다
+                                val open = state.options.filter { it.index !in tried }
+                                pick = pickTalkAnswer(open, state.upcoming)
+                                if (pick == null) {
+                                    val scanned = findAnswerInPage(d, state.options.map { it.raw }, -1)
+                                    if (scanned != null) {
+                                        pick = open.firstOrNull { Norm.mnorm(it.raw) == Norm.mnorm(scanned) }?.index
+                                    }
+                                }
+                                if (pick == null) pick = open.firstOrNull()?.index
+                                if (pick != null && ans.isNotEmpty()) {
+                                    d.log("[문법] (개념 톡) 정답과 같은 보기를 못 찾아 ${pick + 1}번을 고릅니다.")
+                                }
+                            }
+                            if (pick == null) {
+                                if (backToClass("개념 톡 보기를 모두 눌러 봤습니다")) return@solveTalk 0
+                                d.log("[문법] 개념 톡 보기를 모두 눌러도 넘어가지 않습니다 -> 종료")
+                                stop.set()
+                                return@solveTalk 1
+                            }
+
+                            val label = state.options.firstOrNull { it.index == pick }?.raw ?: ""
+                            if (talkKey !in answeredQ) {
+                                answeredQ.add(talkKey)
+                                stgNo++
+                                stgSolved++
+                                d.log(
+                                    "[문법] ⑤ ${stgNo}번 (개념 톡 객관식) -> ${pick + 1}번 '${label.take(20)}'" +
+                                        (if (ans.isNotEmpty()) " (사이트 정답)" else " (추정)")
+                                )
+                            }
+                            clickTagged(d, "data-cc-opt", pick.toString(), talkStuck >= 1)
+                            if (stop.await(pace())) return@solveTalk 1
+
+                            val after = readState(d)
+                            if (after != null && after.kind == "talk" && after.sig == state.sig) {
+                                talkStuck++
+                                wrongByQid.getOrPut(talkKey) { mutableSetOf() }.add(pick)   // 이 보기는 아니었다
+                                if (talkStuck == 1) {
+                                    d.log("[문법] 개념 톡 클릭이 한 번 무시됨 -> 신뢰된 클릭으로 재시도")
+                                }
+                            } else {
+                                talkStuck = 0
+                                if (after != null && after.kind == "talk" && after.talkWrong &&
+                                    stgWrong.none { it[0] == talkKey }
+                                ) {
+                                    stgWrong.add(arrayOf(talkKey, "개념 톡 객관식", label, ans.joinToString(" / ")))
+                                    d.log("[문법] ⑨ 오답 -> 오답노트에 저장 (${stgWrong.size}번째)")
+                                }
+                            }
+                            return@solveTalk 0
+                        }
+
+                        // 2) 어순 배열 — 정답 순서대로 낱말을 누른다
+                        if (state.orders.isNotEmpty() && state.orders.any { !it.picked }) {
+                            val picked = state.orders.count { it.picked }
+                            var target: Int? = null
+                            val want = ans.getOrNull(picked)
+                            if (want != null) {
+                                val w = Norm.mnorm(want).lowercase()
+                                target = state.orders.firstOrNull { !it.picked && it.norm.lowercase() == w }?.index
+                            }
+                            if (target == null) target = state.orders.firstOrNull { !it.picked }?.index
+                            if (target == null) {
+                                if (stop.await(400)) return@solveTalk 1
+                                return@solveTalk 0
+                            }
+                            if (talkKey !in answeredQ) {
+                                answeredQ.add(talkKey)
+                                stgNo++
+                                stgSolved++
+                                d.log("[문법] ⑤ ${stgNo}번 (개념 톡 어순 배열) — 정답 순서대로 놓습니다.")
+                            }
+                            clickTagged(d, "data-cc-order", target.toString(), talkStuck >= 1)
+                            if (stop.await(400)) return@solveTalk 1
+                            val after = readState(d)
+                            if (after != null && after.kind == "talk" && after.sig == state.sig) talkStuck++
+                            else talkStuck = 0
+                            return@solveTalk 0
+                        }
+
+                        // 3) 빈칸 — 보기가 있으면 고르고, 없으면 직접 써 넣는다
+                        val emptyBlank = state.talkBlanks.filter { !it.filled }
+                        if (emptyBlank.isNotEmpty()) {
+                            val cur = emptyBlank.firstOrNull { it.current } ?: emptyBlank.first()
+                            val want = (if (cur.cnt >= 0) ans.getOrNull(cur.cnt) else null)
+                                ?: ans.getOrNull(cur.i) ?: ans.firstOrNull() ?: ""
+
+                            if (state.picks.isNotEmpty()) {
+                                val pkey = talkKey + "_p" + cur.i
+                                val ptried = wrongByQid[pkey] ?: emptySet<Int>()
+                                var pick = if (want.isNotEmpty()) {
+                                    pickByAnswers(state.picks, listOf(want), ptried)
+                                } else null
+                                if (pick == null) {
+                                    // 정답을 모르면 다음 카드 해설 -> 전역 훑기 -> 안 해 본 보기 순으로 고른다
+                                    val open = state.picks.filter { it.index !in ptried }
+                                    pick = pickTalkAnswer(open, state.upcoming)
+                                    if (pick == null) {
+                                        val scanned = findAnswerInPage(
+                                            d, state.picks.map { it.raw }, if (cur.cnt >= 0) cur.cnt else -1,
+                                        )
+                                        if (scanned != null) {
+                                            pick = open.firstOrNull { Norm.mnorm(it.raw) == Norm.mnorm(scanned) }?.index
+                                        }
+                                    }
+                                    if (pick == null) pick = open.firstOrNull()?.index
+                                }
+                                if (pick == null) {
+                                    if (backToClass("개념 톡 빈칸 보기를 모두 눌러 봤습니다")) return@solveTalk 0
+                                    d.log("[문법] 개념 톡 빈칸 보기를 모두 눌러도 넘어가지 않습니다 -> 종료")
+                                    stop.set()
+                                    return@solveTalk 1
+                                }
+                                val key = talkKey + "_" + cur.i
+                                if (key !in answeredQ) {
+                                    answeredQ.add(key)
+                                    stgNo++
+                                    stgSolved++
+                                    val lab = state.picks.firstOrNull { it.index == pick }?.raw ?: ""
+                                    d.log(
+                                        "[문법] ⑤ ${stgNo}번 (개념 톡 빈칸) -> '${lab.take(20)}'" +
+                                            (if (want.isNotEmpty()) " (사이트 정답)" else " (추정)")
+                                    )
+                                }
+                                clickTagged(d, "data-cc-sel", pick.toString(), talkStuck >= 1)
+                                if (stop.await(pace())) return@solveTalk 1
+                                val after = readState(d)
+                                if (after != null && after.kind == "talk" && after.sig == state.sig) {
+                                    talkStuck++
+                                    wrongByQid.getOrPut(pkey) { mutableSetOf() }.add(pick)   // 이 보기는 아니었다
+                                } else {
+                                    talkStuck = 0
+                                }
+                                return@solveTalk 0
+                            }
+
+                            // 직접 입력 (사이트가 값 비교만 하므로 값 설정으로 충분하다)
+                            val written = d.evalArrayOrNull(TALK_FILL_JS)
+                            val wrote = written?.length() ?: 0
+                            for (i in 0 until wrote) {
+                                val w = written?.optJSONObject(i) ?: continue
+                                d.log(
+                                    "[문법] ⑤ (개념 톡 입력) ${w.optInt("i", i) + 1}번 칸 -> " +
+                                        "'${w.optString("value", "")}' (사이트 정답)"
+                                )
+                            }
+                            if (wrote > 0) {
+                                stgNo++
+                                stgSolved++
+                                if (!clickTagged(d, "data-cc-next", "1", false)) d.pressEnter()
+                                if (stop.await(pace())) return@solveTalk 1
+                                val after = readState(d)
+                                if (after != null && after.kind == "talk" && after.sig == state.sig) talkStuck++
+                                else talkStuck = 0
+                                return@solveTalk 0
+                            }
+                            d.log("[문법] 개념 톡 빈칸의 정답을 찾지 못했습니다 — 그대로 넘깁니다.")
+                        }
+
+                        // 3-b) 소리(해설 음성)가 아직 재생 중이면 사이트가 아무 입력도 받지 않는다.
+                        //      이때 누르면 헛손질이므로 끝날 때까지 조용히 기다린다.
+                        if (state.talkWaiting && state.options.isEmpty() &&
+                            state.orders.isEmpty() && state.talkBlanks.isEmpty()
+                        ) {
+                            talkWait++
+                            if (talkWait == 1) d.log("[문법] 개념 톡 해설 음성이 끝나기를 기다리는 중…")
+                            // 잠깐 기다려도 안 끝나면(자동 재생이 막힌 화면 등) 사이트 방식대로 소리를 끝낸다
+                            if (talkWait >= TALK_AUDIO_SKIP_AFTER && talkAudioSkipped != state.sig) {
+                                talkAudioSkipped = state.sig
+                                if (skipTalkAudio(d)) d.log("[문법] 해설 음성을 넘기고 다음으로 진행합니다.")
+                            }
+                            if (talkWait > TALK_WAIT_LIMIT) {
+                                d.log("[문법] 해설 음성이 끝나지 않습니다 — 소리가 나오는지 확인해 주세요.")
+                                talkWait = 0
+                                talkStuck++
+                            }
+                            if (stop.await(700)) return@solveTalk 1
+                            return@solveTalk 0
+                        }
+                        talkWait = 0
+
+                        // 4) 고를 것이 없으면 '계속하기'(next-btn) 또는 Enter 로 다음 카드
+                        if (state.hasNext) {
+                            if (!clickTagged(d, "data-cc-next", "1", talkStuck >= 2)) d.pressEnter()
+                        } else {
+                            d.pressEnter()
+                        }
+                        if (stop.await(pace())) return@solveTalk 1
+
+                        val after = readState(d)
+                        if (after != null && after.kind == "talk" && after.sig == state.sig) {
+                            talkStuck++
+                            if (talkStuck == 3) {
+                                d.trustedClick(
+                                    "return { x: window.innerWidth / 2, y: window.innerHeight / 2, " +
+                                        "w: window.innerWidth };"
+                                )
+                                d.pressEnter()
+                            }
+                            if (talkStuck >= IDLE_GIVE_UP) {
+                                if (backToClass("개념 톡이 끝났거나 더 넘어가지 않습니다")) return@solveTalk 0
+                                d.log("[문법] 개념 톡이 더 넘어가지 않습니다 -> 종료")
+                                stop.set()
+                                return@solveTalk 1
+                            }
+                        } else {
+                            talkStuck = 0
+                            if (after != null && after.kind == "talk" && DEBUG) {
+                                d.log("[문법] (개념 톡) ${after.talkIdx + 1}/${after.cards}장")
+                            }
+                        }
+                        return@solveTalk 0
+        }
+
+        // 문법 클래스 페이지에서 다음 단계를 여는 부분. 메서드 크기 제한 때문에 따로 뺀다.
+        //   0 = 루프를 계속, 1 = 매크로를 멈춤
+        val solveClass: suspend (State) -> Int = solveClass@{ state ->
+                        d.currentUrl().let { if (it.isNotEmpty()) classUrl = it }
+                        if (!DRIVE_CLASS_PAGE) {
+                            d.log("[문법] 클래스 페이지입니다. 학습할 단계를 직접 열고 다시 실행하세요.")
+                            stop.set()
+                            return@solveClass 1
+                        }
+                        // ⑬ 직전 단계에 오답이 있으면 '누적오답복습'(틀린 문제만 다시 학습)을 먼저 한다.
+                        val prefer = if (REVIEW_WRONG && wrongLastStage) "누적오답복습" else null
+                        when (val act = nextClassAction(state.units, triedStages, prefer)) {
+                            is ClassAction.None -> {
+                                d.log("[문법] 남은 단계가 없습니다 -> 종료")
+                                stop.set()
+                            }
+                            is ClassAction.Open -> {
+                                triedStages.add("open_${act.unit.i}")
+                                d.clickFirstVisible("[data-cc-unit=\"${act.unit.i}\"] .unit-title")
+                            }
+                            is ClassAction.Start -> {
+                                triedStages.add(act.stage.key)
+                                checkedScreen = ""        // 새 단계 -> 정답 데이터를 다시 확인한다
+                                fastScreen = false
+                                reportStage()
+                                startStage(act.unit.name, act.stage.title)
+                                if (prefer != null && act.stage.title == prefer) {
+                                    d.log("[문법] ⑬ 직전 단계에 오답이 있어 틀린 문제부터 다시 학습합니다.")
+                                }
+                                d.log("[문법] ① '${act.unit.name}' — ${act.stage.title} 열기")
+                                clickTagged(d, "data-cc-stage", act.stage.key, false)
+                                stop.await(700)
+                                // '누적오답복습'처럼 확인 창이 먼저 뜨는 단계가 있다.
+                                // (사이트가 '학습 생략'을 확인 버튼에 달아 두므로 글자를 보고 고른다)
+                                val picked = handleModal(d)
+                                if (picked != null) {
+                                    val parts = picked.split("\u0001")
+                                    d.log("[문법] 확인 창(\"${parts.getOrNull(1)?.take(34) ?: ""}\")의 " +
+                                        "'${parts[0]}' 를 눌렀습니다.")
+                                    val again = (modalRetry[act.stage.key] ?: 0) + 1
+                                    modalRetry[act.stage.key] = again
+                                    if (again <= 2) triedStages.remove(act.stage.key)
+                                }
+                            }
+                        }
+                        if (stop.isSet) return@solveClass 1
+                        if (stop.await(STEP_DELAY_MS)) return@solveClass 1
+                        return@solveClass 0
+        }
+
             while (!stop.isSet) {
                 val state = readState(d)
                 if (state == null) {
@@ -1983,50 +2261,7 @@ return out;
 
                 // ------------------------------------------ 문법 클래스 페이지
                 if (state.kind == "class") {
-                    d.currentUrl().let { if (it.isNotEmpty()) classUrl = it }
-                    if (!DRIVE_CLASS_PAGE) {
-                        d.log("[문법] 클래스 페이지입니다. 학습할 단계를 직접 열고 다시 실행하세요.")
-                        stop.set()
-                        break
-                    }
-                    // ⑬ 직전 단계에 오답이 있으면 '누적오답복습'(틀린 문제만 다시 학습)을 먼저 한다.
-                    val prefer = if (REVIEW_WRONG && wrongLastStage) "누적오답복습" else null
-                    when (val act = nextClassAction(state.units, triedStages, prefer)) {
-                        is ClassAction.None -> {
-                            d.log("[문법] 남은 단계가 없습니다 -> 종료")
-                            stop.set()
-                        }
-                        is ClassAction.Open -> {
-                            triedStages.add("open_${act.unit.i}")
-                            d.clickFirstVisible("[data-cc-unit=\"${act.unit.i}\"] .unit-title")
-                        }
-                        is ClassAction.Start -> {
-                            triedStages.add(act.stage.key)
-                            checkedScreen = ""        // 새 단계 -> 정답 데이터를 다시 확인한다
-                            fastScreen = false
-                            reportStage()
-                            startStage(act.unit.name, act.stage.title)
-                            if (prefer != null && act.stage.title == prefer) {
-                                d.log("[문법] ⑬ 직전 단계에 오답이 있어 틀린 문제부터 다시 학습합니다.")
-                            }
-                            d.log("[문법] ① '${act.unit.name}' — ${act.stage.title} 열기")
-                            clickTagged(d, "data-cc-stage", act.stage.key, false)
-                            stop.await(700)
-                            // '누적오답복습'처럼 확인 창이 먼저 뜨는 단계가 있다.
-                            // (사이트가 '학습 생략'을 확인 버튼에 달아 두므로 글자를 보고 고른다)
-                            val picked = handleModal(d)
-                            if (picked != null) {
-                                val parts = picked.split("\u0001")
-                                d.log("[문법] 확인 창(\"${parts.getOrNull(1)?.take(34) ?: ""}\")의 " +
-                                    "'${parts[0]}' 를 눌렀습니다.")
-                                val again = (modalRetry[act.stage.key] ?: 0) + 1
-                                modalRetry[act.stage.key] = again
-                                if (again <= 2) triedStages.remove(act.stage.key)
-                            }
-                        }
-                    }
-                    if (stop.isSet) break
-                    if (stop.await(STEP_DELAY_MS)) break
+                    if (solveClass(state) == 1) break
                     continue
                 }
 
@@ -2081,227 +2316,7 @@ return out;
 
                 // ------------------------------------------ 개념 톡 (설명 카드)
                 if (state.kind == "talk") {
-                    // 개념 톡: 사이트 스크립트대로 '지금 카드(card_idx)' 에서만 조작한다.
-                    val ans = state.answers
-                    val talkKey = state.qid
-                    val tried = wrongByQid[talkKey] ?: emptySet<Int>()
-
-                    // 1) 객관식 — 정답 글자와 같은 보기를 고른다 (.option-txt 로 비교)
-                    if (state.options.isNotEmpty() && !state.talkDone) {
-                        var pick = pickByAnswers(state.options, ans, tried)
-                        if (pick == null) {
-                            // 정답을 모르면 다음 카드 해설 -> 전역 훑기 -> 안 해 본 보기 순으로 고른다
-                            val open = state.options.filter { it.index !in tried }
-                            pick = pickTalkAnswer(open, state.upcoming)
-                            if (pick == null) {
-                                val scanned = findAnswerInPage(d, state.options.map { it.raw }, -1)
-                                if (scanned != null) {
-                                    pick = open.firstOrNull { Norm.mnorm(it.raw) == Norm.mnorm(scanned) }?.index
-                                }
-                            }
-                            if (pick == null) pick = open.firstOrNull()?.index
-                            if (pick != null && ans.isNotEmpty()) {
-                                d.log("[문법] (개념 톡) 정답과 같은 보기를 못 찾아 ${pick + 1}번을 고릅니다.")
-                            }
-                        }
-                        if (pick == null) {
-                            if (backToClass("개념 톡 보기를 모두 눌러 봤습니다")) continue
-                            d.log("[문법] 개념 톡 보기를 모두 눌러도 넘어가지 않습니다 -> 종료")
-                            stop.set()
-                            break
-                        }
-
-                        val label = state.options.firstOrNull { it.index == pick }?.raw ?: ""
-                        if (talkKey !in answeredQ) {
-                            answeredQ.add(talkKey)
-                            stgNo++
-                            stgSolved++
-                            d.log(
-                                "[문법] ⑤ ${stgNo}번 (개념 톡 객관식) -> ${pick + 1}번 '${label.take(20)}'" +
-                                    (if (ans.isNotEmpty()) " (사이트 정답)" else " (추정)")
-                            )
-                        }
-                        clickTagged(d, "data-cc-opt", pick.toString(), talkStuck >= 1)
-                        if (stop.await(pace())) break
-
-                        val after = readState(d)
-                        if (after != null && after.kind == "talk" && after.sig == state.sig) {
-                            talkStuck++
-                            wrongByQid.getOrPut(talkKey) { mutableSetOf() }.add(pick)   // 이 보기는 아니었다
-                            if (talkStuck == 1) {
-                                d.log("[문법] 개념 톡 클릭이 한 번 무시됨 -> 신뢰된 클릭으로 재시도")
-                            }
-                        } else {
-                            talkStuck = 0
-                            if (after != null && after.kind == "talk" && after.talkWrong &&
-                                stgWrong.none { it[0] == talkKey }
-                            ) {
-                                stgWrong.add(arrayOf(talkKey, "개념 톡 객관식", label, ans.joinToString(" / ")))
-                                d.log("[문법] ⑨ 오답 -> 오답노트에 저장 (${stgWrong.size}번째)")
-                            }
-                        }
-                        continue
-                    }
-
-                    // 2) 어순 배열 — 정답 순서대로 낱말을 누른다
-                    if (state.orders.isNotEmpty() && state.orders.any { !it.picked }) {
-                        val picked = state.orders.count { it.picked }
-                        var target: Int? = null
-                        val want = ans.getOrNull(picked)
-                        if (want != null) {
-                            val w = Norm.mnorm(want).lowercase()
-                            target = state.orders.firstOrNull { !it.picked && it.norm.lowercase() == w }?.index
-                        }
-                        if (target == null) target = state.orders.firstOrNull { !it.picked }?.index
-                        if (target == null) {
-                            if (stop.await(400)) break
-                            continue
-                        }
-                        if (talkKey !in answeredQ) {
-                            answeredQ.add(talkKey)
-                            stgNo++
-                            stgSolved++
-                            d.log("[문법] ⑤ ${stgNo}번 (개념 톡 어순 배열) — 정답 순서대로 놓습니다.")
-                        }
-                        clickTagged(d, "data-cc-order", target.toString(), talkStuck >= 1)
-                        if (stop.await(400)) break
-                        val after = readState(d)
-                        if (after != null && after.kind == "talk" && after.sig == state.sig) talkStuck++
-                        else talkStuck = 0
-                        continue
-                    }
-
-                    // 3) 빈칸 — 보기가 있으면 고르고, 없으면 직접 써 넣는다
-                    val emptyBlank = state.talkBlanks.filter { !it.filled }
-                    if (emptyBlank.isNotEmpty()) {
-                        val cur = emptyBlank.firstOrNull { it.current } ?: emptyBlank.first()
-                        val want = (if (cur.cnt >= 0) ans.getOrNull(cur.cnt) else null)
-                            ?: ans.getOrNull(cur.i) ?: ans.firstOrNull() ?: ""
-
-                        if (state.picks.isNotEmpty()) {
-                            val pkey = talkKey + "_p" + cur.i
-                            val ptried = wrongByQid[pkey] ?: emptySet<Int>()
-                            var pick = if (want.isNotEmpty()) {
-                                pickByAnswers(state.picks, listOf(want), ptried)
-                            } else null
-                            if (pick == null) {
-                                // 정답을 모르면 다음 카드 해설 -> 전역 훑기 -> 안 해 본 보기 순으로 고른다
-                                val open = state.picks.filter { it.index !in ptried }
-                                pick = pickTalkAnswer(open, state.upcoming)
-                                if (pick == null) {
-                                    val scanned = findAnswerInPage(
-                                        d, state.picks.map { it.raw }, if (cur.cnt >= 0) cur.cnt else -1,
-                                    )
-                                    if (scanned != null) {
-                                        pick = open.firstOrNull { Norm.mnorm(it.raw) == Norm.mnorm(scanned) }?.index
-                                    }
-                                }
-                                if (pick == null) pick = open.firstOrNull()?.index
-                            }
-                            if (pick == null) {
-                                if (backToClass("개념 톡 빈칸 보기를 모두 눌러 봤습니다")) continue
-                                d.log("[문법] 개념 톡 빈칸 보기를 모두 눌러도 넘어가지 않습니다 -> 종료")
-                                stop.set()
-                                break
-                            }
-                            val key = talkKey + "_" + cur.i
-                            if (key !in answeredQ) {
-                                answeredQ.add(key)
-                                stgNo++
-                                stgSolved++
-                                val lab = state.picks.firstOrNull { it.index == pick }?.raw ?: ""
-                                d.log(
-                                    "[문법] ⑤ ${stgNo}번 (개념 톡 빈칸) -> '${lab.take(20)}'" +
-                                        (if (want.isNotEmpty()) " (사이트 정답)" else " (추정)")
-                                )
-                            }
-                            clickTagged(d, "data-cc-sel", pick.toString(), talkStuck >= 1)
-                            if (stop.await(pace())) break
-                            val after = readState(d)
-                            if (after != null && after.kind == "talk" && after.sig == state.sig) {
-                                talkStuck++
-                                wrongByQid.getOrPut(pkey) { mutableSetOf() }.add(pick)   // 이 보기는 아니었다
-                            } else {
-                                talkStuck = 0
-                            }
-                            continue
-                        }
-
-                        // 직접 입력 (사이트가 값 비교만 하므로 값 설정으로 충분하다)
-                        val written = d.evalArrayOrNull(TALK_FILL_JS)
-                        val wrote = written?.length() ?: 0
-                        for (i in 0 until wrote) {
-                            val w = written?.optJSONObject(i) ?: continue
-                            d.log(
-                                "[문법] ⑤ (개념 톡 입력) ${w.optInt("i", i) + 1}번 칸 -> " +
-                                    "'${w.optString("value", "")}' (사이트 정답)"
-                            )
-                        }
-                        if (wrote > 0) {
-                            stgNo++
-                            stgSolved++
-                            if (!clickTagged(d, "data-cc-next", "1", false)) d.pressEnter()
-                            if (stop.await(pace())) break
-                            val after = readState(d)
-                            if (after != null && after.kind == "talk" && after.sig == state.sig) talkStuck++
-                            else talkStuck = 0
-                            continue
-                        }
-                        d.log("[문법] 개념 톡 빈칸의 정답을 찾지 못했습니다 — 그대로 넘깁니다.")
-                    }
-
-                    // 3-b) 소리(해설 음성)가 아직 재생 중이면 사이트가 아무 입력도 받지 않는다.
-                    //      이때 누르면 헛손질이므로 끝날 때까지 조용히 기다린다.
-                    if (state.talkWaiting && state.options.isEmpty() &&
-                        state.orders.isEmpty() && state.talkBlanks.isEmpty()
-                    ) {
-                        talkWait++
-                        if (talkWait == 1) d.log("[문법] 개념 톡 해설 음성이 끝나기를 기다리는 중…")
-                        // 잠깐 기다려도 안 끝나면(자동 재생이 막힌 화면 등) 사이트 방식대로 소리를 끝낸다
-                        if (talkWait >= TALK_AUDIO_SKIP_AFTER && talkAudioSkipped != state.sig) {
-                            talkAudioSkipped = state.sig
-                            if (skipTalkAudio(d)) d.log("[문법] 해설 음성을 넘기고 다음으로 진행합니다.")
-                        }
-                        if (talkWait > TALK_WAIT_LIMIT) {
-                            d.log("[문법] 해설 음성이 끝나지 않습니다 — 소리가 나오는지 확인해 주세요.")
-                            talkWait = 0
-                            talkStuck++
-                        }
-                        if (stop.await(700)) break
-                        continue
-                    }
-                    talkWait = 0
-
-                    // 4) 고를 것이 없으면 '계속하기'(next-btn) 또는 Enter 로 다음 카드
-                    if (state.hasNext) {
-                        if (!clickTagged(d, "data-cc-next", "1", talkStuck >= 2)) d.pressEnter()
-                    } else {
-                        d.pressEnter()
-                    }
-                    if (stop.await(pace())) break
-
-                    val after = readState(d)
-                    if (after != null && after.kind == "talk" && after.sig == state.sig) {
-                        talkStuck++
-                        if (talkStuck == 3) {
-                            d.trustedClick(
-                                "return { x: window.innerWidth / 2, y: window.innerHeight / 2, " +
-                                    "w: window.innerWidth };"
-                            )
-                            d.pressEnter()
-                        }
-                        if (talkStuck >= IDLE_GIVE_UP) {
-                            if (backToClass("개념 톡이 끝났거나 더 넘어가지 않습니다")) continue
-                            d.log("[문법] 개념 톡이 더 넘어가지 않습니다 -> 종료")
-                            stop.set()
-                            break
-                        }
-                    } else {
-                        talkStuck = 0
-                        if (after != null && after.kind == "talk" && DEBUG) {
-                            d.log("[문법] (개념 톡) ${after.talkIdx + 1}/${after.cards}장")
-                        }
-                    }
+                    if (solveTalk(state) == 1) break
                     continue
                 }
 
