@@ -323,6 +323,8 @@ for (var i = 0; i < items.length; i++) {
     var groups = [
         ['object', '.gclass-q-input .object-body .object'],
         ['option', '.inline-box .option-box:not(.hidden) .option-item'],
+        // 실전 문제의 객관식(정답이 여러 개일 수 있다) — gclass_test.js 는 .option-list 를 쓴다
+        ['option', '.option-list .option-item'],
         ['scramble', '.test-sentence-words .btn-sentence-word, .scramble-body .scramble-word'],
         ['group', '.grouping-body .grouping-item'],
         ['match', '.match-content .match-body .match-item']
@@ -421,12 +423,19 @@ for (var i = 0; i < items.length; i++) {
     if (type === 'object' || type === 'option' || type === 'fallback' || type === '') {
         for (var j = 0; j < found.length; j++) {
             found[j].setAttribute('data-cc-opt', String(j));
-            choices.push({ i: j, text: optTxt(found[j]) });
             var scls = ' ' + found[j].className + ' ';
-            if (scls.indexOf(' selected ') >= 0 || scls.indexOf(' active ') >= 0
-                || scls.indexOf(' checked ') >= 0) {
-                selectedIdx = j;
-            }
+            var on = scls.indexOf(' selected ') >= 0 || scls.indexOf(' active ') >= 0
+                || scls.indexOf(' checked ') >= 0;
+            // 사이트는 채점할 때 보기 안에 숨겨 둔 .option-answer 의 글자를 쓴다
+            // (화면에 보이는 글자와 다를 수 있어 둘 다 들고 있는다)
+            var aEl = found[j].querySelector('.option-answer');
+            choices.push({
+                i: j,
+                text: optTxt(found[j]),
+                ans: aEl ? txt(aEl) : '',
+                on: on
+            });
+            if (on) selectedIdx = j;
         }
     }
 
@@ -446,8 +455,12 @@ for (var i = 0; i < items.length; i++) {
     var qid = question;
     for (var j = 0; j < choices.length; j++) qid += '|' + choices[j].text;
 
+    // 카드 종류 (gclass_test.js 의 data-type). 2·3 이 '여러 개 고르는' 객관식이다.
+    var flip = it.closest ? it.closest('.flip-card') : null;
+    var cardType = flip ? (flip.getAttribute('data-type') || '') : '';
+
     return {
-        kind: 'quiz', type: type, qid: qid, sig: sig,
+        kind: 'quiz', type: type, qid: qid, sig: sig, cardType: cardType,
         question: question, answer: answer,
         choices: choices, selectedIdx: selectedIdx, filled: filled,
         hasInput: inputs.length > 0, inputs: inputs, hint: hint, opening: opening,
@@ -563,6 +576,7 @@ async function readState(d) {
   return {
     kind: 'quiz',
     type: data.type || '',
+    cardType: String(data.cardType || ''),   // 사이트 카드 종류 (data-type)
     qid: data.qid || '',
     sig: data.sig || '',
     question: (data.question || '').trim(),
@@ -577,7 +591,13 @@ async function readState(d) {
     next: !!data.next,
     choices: (data.choices || [])
       .filter((c) => c && (c.text || '').trim())
-      .map((c) => ({ index: c.i, raw: c.text.trim(), norm: N.mnorm(c.text.trim()) })),
+      .map((c) => ({
+        index: c.i,
+        raw: c.text.trim(),
+        norm: N.mnorm(c.text.trim()),
+        ans: (c.ans || '').trim(),          // 사이트가 채점에 쓰는 글자
+        on: !!c.on,                         // 지금 골라져 있는가
+      })),
     rows: (data.rows || []).map((r) => ({
       index: r.i,
       text: (r.text || '').trim(),
@@ -592,6 +612,53 @@ async function readState(d) {
       index: t.i, raw: (t.text || '').trim(), norm: N.mnorm(t.text || ''), used: !!t.used,
     })),
   };
+}
+
+/**
+ * 보기 선택형에서 **골라야 하는 보기들**.
+ *
+ * 사이트 스크립트(gclass_test.js)를 확인한 결과, 객관식(카드 type 2·3)은
+ * 정답을 '|' 로 이어 두고 **그 개수만큼 골라야** 제출을 받는다:
+ *   if ($(el).find('.option-item.selected').length < answer.split('|').length) {
+ *       showConfirm('정답이 N개인데 M개만 선택하였습니다. 이대로 제출할까요?' …)
+ *   }
+ * 채점도 고른 보기들의 .option-answer 글자를 '|' 로 이어 맞춰 본다.
+ * (빈칸형에서 '|' 가 '둘 중 아무거나'인 것과 다르다 — 그쪽은 splitBlanks 를 쓴다)
+ *
+ * @param {string} raw 사이트 정답 원문
+ * @returns {string[]} 골라야 하는 보기 글자들 (1개면 한 개만 고른다)
+ */
+export function splitPicks(raw) {
+  return String(raw == null ? '' : raw)
+    .split('|')
+    .map((x) => x.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+}
+
+/**
+ * 정답 보기 여러 개 중 **아직 고르지 않은 첫 번째** 보기 번호. 다 골랐으면 null.
+ *
+ * @param {{index:number, raw:string, ans?:string, on?:boolean}[]} choices
+ * @param {string[]} wanted 골라야 하는 보기 글자들
+ */
+export function nextPickIndex(choices, wanted) {
+  const list = choices || [];
+  const norm = (t) => N.mnorm(String(t || ''));
+  const match = (c, w) => {
+    const nw = norm(w);
+    if (!nw) return false;
+    return norm(c.ans) === nw || norm(c.raw) === nw;
+  };
+  const taken = new Set();
+  for (const w of wanted || []) {
+    // 이미 골라 둔 보기가 이 정답을 맡고 있으면 넘어간다
+    const done = list.find((c) => c.on && !taken.has(c.index) && match(c, w));
+    if (done) { taken.add(done.index); continue; }
+    const open = list.find((c) => !c.on && !taken.has(c.index) && match(c, w));
+    if (open) return open.index;
+    return null;            // 화면에 없는 정답 -> 더 고를 수 없다
+  }
+  return null;              // 다 골랐다
 }
 
 /**
@@ -923,8 +990,10 @@ export function pickByAnswers(choices, answers, wrong) {
   if (!open.length || !list.length) return null;
 
   // 1) 정확히 같은 보기부터. ('동사' 정답이 '동사원형' 보기에 걸리면 안 된다)
+  //    사이트가 채점에 쓰는 글자(.option-answer)도 함께 본다 — 화면 글자와 다를 수 있다.
   for (const am of list) {
-    const hit = open.find((c) => c.norm.toLowerCase() === am);
+    const hit = open.find((c) => c.norm.toLowerCase() === am ||
+      (c.ans && N.mnorm(c.ans).toLowerCase() === am));
     if (hit) return hit.index;
   }
   // 2) 정확히 같은 게 없을 때만 포함 관계로 (정답이 문장이고 보기가 그 일부인 경우 등)
@@ -2093,6 +2162,43 @@ export async function grammar(d, answerDict, stop) {
       }
 
       // ---------------------------------------------- 보기 선택형
+
+      // 정답이 여러 개인 문제(실전 문제 등)는 **개수만큼 다 골라야** 제출이 된다.
+      // 1개짜리는 아래 원래 흐름 그대로 하나만 고른다.
+      // '|' 는 카드 종류에 따라 뜻이 다르다:
+      //   type 2·3 (객관식)  -> 여러 개를 **다 골라야** 한다
+      //   그 밖(빈칸·인라인)  -> 둘 중 아무거나 하나면 된다
+      const multiPick = state.cardType === '2' || state.cardType === '3' ||
+        (!state.cardType && state.type === 'option');
+      const wanted = multiPick ? splitPicks(rawAnswer) : [];
+      if (wanted.length > 1) {
+        const next = nextPickIndex(state.choices, wanted);
+        if (next !== null) {
+          const chosen = state.choices.filter((c) => c.on).length;
+          if (stage && !answeredQ.has(qid)) {
+            answeredQ.add(qid);
+            stage.no++;
+            stage.solved++;
+            d.log(
+              `[문법] ⑤ ${stage.no}${stage.total ? `/${stage.total}` : ''}번 문제 ` +
+                `'${state.question.slice(0, 30)}' — 정답 ${wanted.length}개를 고릅니다 (${answerFrom})`,
+            );
+          }
+          const ok = await clickTagged(d, 'data-cc-opt', next, ignoredClicks >= TRUSTED_AFTER);
+          if (!ok) ignoredClicks++;
+          if (await stop.await(400)) break;
+          const after = await readState(d);
+          if (after && after.kind === 'quiz' &&
+              after.choices.filter((c) => c.on).length <= chosen) {
+            ignoredClicks++;         // 클릭이 안 먹었다 -> 다음엔 신뢰된 클릭으로
+          }
+          continue;
+        }
+        // 다 골랐다 -> 채점하기
+        await d.evalBool(CLICK_NEXT_JS);
+        if (await stop.await(pace())) break;
+        continue;
+      }
 
       // 이미 하나를 골라 둔 상태면 채점하기를 눌러 결과를 받는다.
       if (state.selectedIdx >= 0) {

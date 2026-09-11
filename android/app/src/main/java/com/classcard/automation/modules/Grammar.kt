@@ -90,7 +90,14 @@ object Grammar {
     /** 개념 톡 빈칸. current 면 지금 채울 칸(.choice). */
     data class TalkBlank(val i: Int, val cnt: Int, val filled: Boolean, val current: Boolean)
 
-    data class Choice(val index: Int, val raw: String) {
+    data class Choice(
+        val index: Int,
+        val raw: String,
+        /** 사이트가 채점에 쓰는 글자(.option-answer). 화면 글자와 다를 수 있다. */
+        val ans: String = "",
+        /** 지금 골라져 있는가. */
+        val on: Boolean = false,
+    ) {
         val norm: String = Norm.mnorm(raw)
     }
 
@@ -137,6 +144,7 @@ object Grammar {
     private data class State(
         val kind: String,                 // "class" | "end" | "quiz" | "idle" | "login"
         val type: String = "",
+        val cardType: String = "",     // 사이트 카드 종류 (data-type)
         val qid: String = "",
         val sig: String = "",
         val question: String = "",
@@ -429,6 +437,8 @@ object Grammar {
             var groups = [
                 ['object', '.gclass-q-input .object-body .object'],
                 ['option', '.inline-box .option-box:not(.hidden) .option-item'],
+                // 실전 문제의 객관식(정답이 여러 개일 수 있다) — gclass_test.js 는 .option-list 를 쓴다
+                ['option', '.option-list .option-item'],
                 ['scramble', '.test-sentence-words .btn-sentence-word, .scramble-body .scramble-word'],
                 ['group', '.grouping-body .grouping-item'],
                 ['match', '.match-content .match-body .match-item']
@@ -527,12 +537,19 @@ object Grammar {
             if (type === 'object' || type === 'option' || type === 'fallback' || type === '') {
                 for (var j = 0; j < found.length; j++) {
                     found[j].setAttribute('data-cc-opt', String(j));
-                    choices.push({ i: j, text: optTxt(found[j]) });
                     var scls = ' ' + found[j].className + ' ';
-                    if (scls.indexOf(' selected ') >= 0 || scls.indexOf(' active ') >= 0
-                        || scls.indexOf(' checked ') >= 0) {
-                        selectedIdx = j;
-                    }
+                    var on = scls.indexOf(' selected ') >= 0 || scls.indexOf(' active ') >= 0
+                        || scls.indexOf(' checked ') >= 0;
+                    // 사이트는 채점할 때 보기 안에 숨겨 둔 .option-answer 의 글자를 쓴다
+                    // (화면에 보이는 글자와 다를 수 있어 둘 다 들고 있는다)
+                    var aEl = found[j].querySelector('.option-answer');
+                    choices.push({
+                        i: j,
+                        text: optTxt(found[j]),
+                        ans: aEl ? txt(aEl) : '',
+                        on: on
+                    });
+                    if (on) selectedIdx = j;
                 }
             }
 
@@ -552,8 +569,12 @@ object Grammar {
             var qid = question;
             for (var j = 0; j < choices.length; j++) qid += '|' + choices[j].text;
 
+            // 카드 종류 (gclass_test.js 의 data-type). 2·3 이 '여러 개 고르는' 객관식이다.
+            var flip = it.closest ? it.closest('.flip-card') : null;
+            var cardType = flip ? (flip.getAttribute('data-type') || '') : '';
+
             return {
-                kind: 'quiz', type: type, qid: qid, sig: sig,
+                kind: 'quiz', type: type, qid: qid, sig: sig, cardType: cardType,
                 question: question, answer: answer,
                 choices: choices, selectedIdx: selectedIdx, filled: filled,
                 hasInput: inputs.length > 0, inputs: inputs, hint: hint, opening: opening,
@@ -699,7 +720,12 @@ object Grammar {
             for (i in 0 until a.length()) {
                 val o = a.optJSONObject(i) ?: continue
                 val raw = o.optString("text", "").trim()
-                if (raw.isNotEmpty()) out.add(Choice(o.optInt("i", i), raw))
+                if (raw.isNotEmpty()) out.add(
+                    Choice(
+                        o.optInt("i", i), raw,
+                        o.optString("ans", "").trim(), o.optBoolean("on", false),
+                    )
+                )
             }
             return out
         }
@@ -733,7 +759,12 @@ object Grammar {
             for (i in 0 until arr.length()) {
                 val o = arr.optJSONObject(i) ?: continue
                 val raw = o.optString("text", "").trim()
-                if (raw.isNotEmpty()) choices.add(Choice(o.optInt("i", i), raw))
+                if (raw.isNotEmpty()) choices.add(
+                    Choice(
+                        o.optInt("i", i), raw,
+                        o.optString("ans", "").trim(), o.optBoolean("on", false),
+                    )
+                )
             }
         }
         val rows = mutableListOf<Row>()
@@ -778,6 +809,7 @@ object Grammar {
 
         return State(
             kind = data.optString("kind", "idle"),
+            cardType = data.optString("cardType", ""),
             cards = data.optInt("cards", 0),
             shown = data.optInt("shown", 0),
             upcoming = data.optString("upcoming", "").trim(),
@@ -837,6 +869,44 @@ object Grammar {
      * @param answer 정답 문자열(모르면 null)
      * @param wrong  이 문제에서 이미 틀린 보기 번호
      */
+    /**
+     * 보기 선택형에서 **골라야 하는 보기들**.
+     *
+     * 사이트 스크립트(gclass_test.js)를 확인한 결과, 객관식(카드 type 2·3)은
+     * 정답을 '|' 로 이어 두고 **그 개수만큼 골라야** 제출을 받는다:
+     *   if ($(el).find('.option-item.selected').length < answer.split('|').length) {
+     *       showConfirm('정답이 N개인데 M개만 선택하였습니다. 이대로 제출할까요?' …)
+     *   }
+     * 채점도 고른 보기들의 .option-answer 글자를 '|' 로 이어 맞춰 본다.
+     * (빈칸형에서 '|' 가 '둘 중 아무거나'인 것과 다르다 — 그쪽은 splitBlanks 를 쓴다)
+     */
+    fun splitPicks(raw: String?): List<String> =
+        (raw ?: "").split("|")
+            .map { it.replace(Regex("\\s+"), " ").trim() }
+            .filter { it.isNotEmpty() }
+
+    /**
+     * 정답 보기 여러 개 중 **아직 고르지 않은 첫 번째** 보기 번호. 다 골랐으면 null.
+     */
+    fun nextPickIndex(choices: List<Choice>, wanted: List<String>): Int? {
+        fun norm(t: String?) = Norm.mnorm(t ?: "")
+        fun match(c: Choice, w: String): Boolean {
+            val nw = norm(w)
+            if (nw.isEmpty()) return false
+            return norm(c.ans) == nw || norm(c.raw) == nw
+        }
+        val taken = HashSet<Int>()
+        for (w in wanted) {
+            // 이미 골라 둔 보기가 이 정답을 맡고 있으면 넘어간다
+            val done = choices.firstOrNull { it.on && it.index !in taken && match(it, w) }
+            if (done != null) { taken.add(done.index); continue }
+            val open = choices.firstOrNull { !it.on && it.index !in taken && match(it, w) }
+            if (open != null) return open.index
+            return null            // 화면에 없는 정답 -> 더 고를 수 없다
+        }
+        return null                // 다 골랐다
+    }
+
     fun pickChoice(choices: List<Choice>, answer: String?, wrong: Set<Int>): Int? {
         if (choices.isEmpty()) return null
         val open = choices.filter { it.index !in wrong }
@@ -1130,8 +1200,12 @@ return out;
         if (open.isEmpty() || list.isEmpty()) return null
 
         // 1) 정확히 같은 보기부터. ('동사' 정답이 '동사원형' 보기에 걸리면 안 된다)
+        //    사이트가 채점에 쓰는 글자(.option-answer)도 함께 본다 — 화면 글자와 다를 수 있다.
         for (am in list) {
-            open.firstOrNull { it.norm.lowercase() == am }?.let { return it.index }
+            open.firstOrNull {
+                it.norm.lowercase() == am ||
+                    (it.ans.isNotEmpty() && Norm.mnorm(it.ans).lowercase() == am)
+            }?.let { return it.index }
         }
         // 2) 정확히 같은 게 없을 때만 포함 관계로
         for (am in list) {
@@ -2340,6 +2414,43 @@ return out;
                 }
 
                 // ------------------------------------------ 보기 선택형
+
+                // 정답이 여러 개인 문제(실전 문제 등)는 **개수만큼 다 골라야** 제출이 된다.
+                // 1개짜리는 아래 원래 흐름 그대로 하나만 고른다.
+                // '|' 는 카드 종류에 따라 뜻이 다르다:
+                //   type 2·3 (객관식)  -> 여러 개를 **다 골라야** 한다
+                //   그 밖(빈칸·인라인)  -> 둘 중 아무거나 하나면 된다
+                val multiPick = state.cardType == "2" || state.cardType == "3" ||
+                    (state.cardType.isEmpty() && state.type == "option")
+                val wanted = if (multiPick) splitPicks(rawAnswer) else emptyList()
+                if (wanted.size > 1) {
+                    val next = nextPickIndex(state.choices, wanted)
+                    if (next != null) {
+                        val chosen = state.choices.count { it.on }
+                        if (qid !in answeredQ) {
+                            answeredQ.add(qid)
+                            stgNo++
+                            stgSolved++
+                            d.log(
+                                "[문법] ⑤ ${stgNo}${if (stgTotal > 0) "/$stgTotal" else ""}번 문제 " +
+                                    "'${state.question.take(30)}' — 정답 ${wanted.size}개를 고릅니다 ($answerFrom)"
+                            )
+                        }
+                        val ok = clickTagged(d, "data-cc-opt", next.toString(), ignoredClicks >= TRUSTED_AFTER)
+                        if (!ok) ignoredClicks++
+                        if (stop.await(400)) break
+                        val after = readState(d)
+                        if (after != null && after.kind == "quiz" &&
+                            after.choices.count { it.on } <= chosen
+                        ) {
+                            ignoredClicks++       // 클릭이 안 먹었다 -> 다음엔 신뢰된 클릭으로
+                        }
+                        continue
+                    }
+                    clickNext(d)                  // 다 골랐다 -> 채점하기
+                    if (stop.await(pace())) break
+                    continue
+                }
 
                 // 이미 하나를 골라 둔 상태면 채점하기를 눌러 결과를 받는다.
                 if (state.selectedIdx >= 0) {

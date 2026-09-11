@@ -244,6 +244,40 @@ class GrammarLogicTest {
         )
     }
 
+    // ================================================ 정답이 여러 개인 객관식 (실전 문제)
+
+    private fun opt(i: Int, raw: String, on: Boolean = false, ans: String = "") =
+        Grammar.Choice(i, raw, ans, on)
+
+    @JUnitTest
+    fun splitPicksCountsEveryRequiredOption() {
+        assertEquals(
+            listOf("I do love it.", "She does look nice."),
+            Grammar.splitPicks("I do love it.|She does look nice."),
+        )
+        assertEquals(listOf("that"), Grammar.splitPicks("that"))
+        assertEquals(emptyList<String>(), Grammar.splitPicks(""))
+    }
+
+    @JUnitTest
+    fun picksEveryAnswerOneByOne() {
+        val wanted = listOf("was", "were")
+        assertEquals(0, Grammar.nextPickIndex(listOf(opt(0, "was"), opt(1, "were"), opt(2, "is")), wanted))
+        assertEquals(1, Grammar.nextPickIndex(listOf(opt(0, "was", true), opt(1, "were"), opt(2, "is")), wanted))
+        assertNull(Grammar.nextPickIndex(listOf(opt(0, "was", true), opt(1, "were", true), opt(2, "is")), wanted))
+    }
+
+    @JUnitTest
+    fun picksByGradingTextToo() {
+        val a = listOf(opt(0, "① 보기 하나", false, "was"), opt(1, "② 보기 둘", false, "were"))
+        assertEquals(1, Grammar.nextPickIndex(a, listOf("were")))
+    }
+
+    @JUnitTest
+    fun picksNullWhenAnswerNotOnScreen() {
+        assertNull(Grammar.nextPickIndex(listOf(opt(0, "is"), opt(1, "are")), listOf("was", "were")))
+    }
+
     // ================================================ 짝맞추기
 
     private fun cell(i: Int, text: String, done: Boolean = false) = Grammar.MatchCell(i, text, done)

@@ -15,7 +15,8 @@ import * as N from '../engine/norm.js';
 import { buildLookups } from '../engine/modules/games.js';
 import {
   pickChoice, lookupAnswer, nextClassAction,
-  nextScrambleIndex, nextPairAttempt, nextGroupPick, fillValues, splitBlanks, pickTalkAnswer,
+  nextScrambleIndex, nextPairAttempt, nextGroupPick, fillValues, splitBlanks,
+  splitPicks, nextPickIndex, pickTalkAnswer,
   FIND_ANSWER_JS, splitAnswers, pickByAnswers,
 } from '../engine/modules/grammar.js';
 
@@ -389,4 +390,36 @@ test('빈칸 수에 맞춰 사이트 정답을 나눠 넣는다', () => {
   // 한 칸짜리인데 다른 답이 '|' 로 붙어 있으면 첫 번째만 쓴다
   assert.deepEqual(fillValues(1, 'It was a teacher that Jason became.|It was Jason that became a teacher.', ''),
     ['It was a teacher that Jason became.']);
+});
+
+
+// ---------------------------------------------- 정답이 여러 개인 객관식 (실전 문제)
+
+const opt = (i, raw, on = false, ans = '') => ({ index: i, raw, norm: N.mnorm(raw), ans, on });
+
+test("객관식 정답은 '|' 로 이어져 있고 그 개수만큼 고른다", () => {
+  assert.deepEqual(splitPicks('I do love it.|She does look nice.'),
+    ['I do love it.', 'She does look nice.']);
+  assert.deepEqual(splitPicks('that'), ['that']);          // 1개짜리는 하나만
+  assert.deepEqual(splitPicks(''), []);
+});
+
+test('정답 2개를 하나씩 골라 나간다', () => {
+  const wanted = ['was', 'were'];
+  const a = [opt(0, 'was'), opt(1, 'were'), opt(2, 'is')];
+  assert.equal(nextPickIndex(a, wanted), 0);
+  const b = [opt(0, 'was', true), opt(1, 'were'), opt(2, 'is')];
+  assert.equal(nextPickIndex(b, wanted), 1);
+  const c = [opt(0, 'was', true), opt(1, 'were', true), opt(2, 'is')];
+  assert.equal(nextPickIndex(c, wanted), null);            // 다 골랐다 -> 제출
+});
+
+test('사이트가 채점에 쓰는 글자로도 보기를 찾는다', () => {
+  const a = [opt(0, '① 보기 하나', false, 'was'), opt(1, '② 보기 둘', false, 'were')];
+  assert.equal(nextPickIndex(a, ['were']), 1);
+});
+
+test('정답 보기가 화면에 없으면 null', () => {
+  const a = [opt(0, 'is'), opt(1, 'are')];
+  assert.equal(nextPickIndex(a, ['was', 'were']), null);
 });
