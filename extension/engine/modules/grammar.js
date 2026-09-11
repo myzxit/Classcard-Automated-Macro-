@@ -944,44 +944,53 @@ return null;
  * 어떤 칸에 무엇을 썼는지 [{i, value}] 로 돌려준다.
  */
 const TALK_FILL_JS = `
+// 개념 톡 빈칸 채우기 — 사이트 채점 방식 그대로.
+//
+// grammar_talk.js 의 setAnswer():
+//     $.each(card_obj.answer.split(';'), function (i, v) {
+//         checkAnswer2(v.trim(), card_el.find('.user-text').eq(i).val().trim(), …)
+//     })
+//   즉 **지금 카드(card_idx) 안의 i번째 .user-text** 에 정답의 i번째 조각을 넣어야 한다.
+//   ';' 는 칸 구분, '|' 는 같은 칸의 다른 답이다 ('|' 로도 쪼개면 칸 번호가 밀린다).
 var out = [];
-var ALL = null;
-try { ALL = (window.__ccGAll && typeof window.__ccGAll === 'object') ? window.__ccGAll : null; } catch (e) {}
-
-// 빈칸이 들어 있는 카드의 정답을 그 카드 번호로 찾는다 (사이트가 채점에 쓰는 arr_card).
 var cards = document.querySelectorAll('.talk-card');
-function answerFor(card) {
-    var idx = -1;
-    for (var i = 0; i < cards.length; i++) if (cards[i] === card) idx = i;
-    if (idx < 0) return null;
-    if (typeof arr_card !== 'undefined' && arr_card && arr_card[idx] && arr_card[idx].answer != null) {
-        return String(arr_card[idx].answer);
+var idx = (typeof card_idx !== 'undefined' && card_idx >= 0) ? card_idx : -1;
+var card = idx >= 0 ? cards[idx] : null;
+if (!card) {                       // card_idx 를 못 읽으면 마지막으로 보이는 카드
+    for (var i = 0; i < cards.length; i++) {
+        if (cards[i].offsetParent !== null) { card = cards[i]; idx = i; }
     }
-    if (ALL && ALL.talk[idx] != null) return String(ALL.talk[idx]);
-    return null;
 }
+if (!card) return out;
 
-var boxes = document.querySelectorAll('[data-cc-tinput]');
-for (var i = 0; i < boxes.length; i++) {
+var raw = null;
+if (typeof arr_card !== 'undefined' && arr_card && arr_card[idx] && arr_card[idx].answer != null) {
+    raw = String(arr_card[idx].answer);
+} else {
+    try {
+        var ALL = (window.__ccGAll && typeof window.__ccGAll === 'object') ? window.__ccGAll : null;
+        if (ALL && ALL.talk[idx] != null) raw = String(ALL.talk[idx]);
+    } catch (e) {}
+}
+if (raw == null) return out;
+
+var parts = raw.split(';').map(function (x) {
+    return x.split('|')[0].replace(/\\s*\\/\\s*/g, ' ').replace(/\\s+/g, ' ').trim();
+});
+
+var boxes = card.querySelectorAll('.user-text');
+for (var i = 0; i < boxes.length && i < parts.length; i++) {
     var el = boxes[i];
-    if ((el.value || '').trim()) continue;                 // 이미 쓴 칸은 그대로 둔다
-    var card = el.closest ? el.closest('.talk-card') : null;
-    var raw = card ? answerFor(card) : null;
-    if (raw == null) continue;
-    var parts = String(raw).split(/[|;]/).map(function (x) {
-        return x.replace(/\\s*\\/\\s*/g, ' ').replace(/\\s+/g, ' ').trim();
-    }).filter(Boolean);
-    var dc = el.getAttribute('data-cnt');
-    var n = dc === null ? -1 : parseInt(dc, 10);
-    var v = (n >= 0 ? parts[n] : null) || parts[i] || parts[0];
+    var v = parts[i];
     if (!v) continue;
+    if ((el.value || '').trim() === v) continue;        // 이미 맞게 들어 있다
     var proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
     var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
     el.focus();
     setter.call(el, v);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
-    out.push({ i: Number(el.getAttribute('data-cc-tinput')), value: v });
+    out.push({ i: i, value: v });
 }
 return out;
 `;
@@ -1369,6 +1378,7 @@ async function handleModal(d) {
         var b = btns[i];
         if (!vis(b)) continue;
         var t = ((b.textContent || '') + '').replace(/\\s+/g, ' ').trim();
+        if (!t) continue;                    // 글자 없는 버튼(X 닫기)은 고르지 않는다
         var score = 0;
         if (goBack) {
             // 돌아가서 고쳐야 하는 창: 수정 > 취소. 제출·확인은 절대 누르지 않는다.
@@ -1380,6 +1390,7 @@ async function handleModal(d) {
             if (/생략|취소|나중|닫기|아니/.test(t)) continue;
             if (/학습 ?시작/.test(t)) score = 6;
             else if (/시작/.test(t)) score = 5;
+            else if (/재시도|다시/.test(t)) score = 5;   // 소리를 못 받았을 때의 '재시도'
             else if (/계속/.test(t)) score = 4;
             else if (/확인|예|네/.test(t)) score = 3;
             else if (b.className.indexOf('btn-ok') >= 0) score = 2;
