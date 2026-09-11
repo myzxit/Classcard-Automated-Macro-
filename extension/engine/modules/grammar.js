@@ -458,9 +458,17 @@ for (var i = 0; i < items.length; i++) {
     // 카드 종류 (gclass_test.js 의 data-type). 2·3 이 '여러 개 고르는' 객관식이다.
     var flip = it.closest ? it.closest('.flip-card') : null;
     var cardType = flip ? (flip.getAttribute('data-type') || '') : '';
+    // 아직 보기·입력이 아닌 유형들 (구문 표시 / 문단 순서 / 드롭다운)
+    var scope = flip || it;
+    var paints = scope.querySelectorAll('.paint-word').length;
+    var paragraphs = scope.querySelectorAll('.paragraph-row').length;
+    var selects = 0;
+    var selEls = scope.querySelectorAll('select.select-option, .select-option select');
+    for (var j = 0; j < selEls.length; j++) if (vis(selEls[j])) selects++;
 
     return {
         kind: 'quiz', type: type, qid: qid, sig: sig, cardType: cardType,
+        paints: paints, paragraphs: paragraphs, selects: selects,
         question: question, answer: answer,
         choices: choices, selectedIdx: selectedIdx, filled: filled,
         hasInput: inputs.length > 0, inputs: inputs, hint: hint, opening: opening,
@@ -577,6 +585,9 @@ async function readState(d) {
     kind: 'quiz',
     type: data.type || '',
     cardType: String(data.cardType || ''),   // 사이트 카드 종류 (data-type)
+    paints: data.paints || 0,                // 구문 표시형의 낱말 수
+    paragraphs: data.paragraphs || 0,        // 문단 순서형의 조각 수
+    selects: data.selects || 0,              // 드롭다운 칸 수
     qid: data.qid || '',
     sig: data.sig || '',
     question: (data.question || '').trim(),
@@ -1466,6 +1477,149 @@ async function scrambleStep(d, targetWords) {
   `);
 }
 
+/**
+ * 지금 푸는 카드 안에서 JS 를 돌린다 (문제 화면 공통).
+ * 사이트는 카드를 여러 장 겹쳐 두고 전역 card_index 로 현재 카드를 가리킨다.
+ */
+function inCurrentCard(body) {
+  return `
+    var cards = document.querySelectorAll('.flip-card');
+    var card = null;
+    if (typeof card_index !== 'undefined' && card_index >= 0 && cards[card_index]) {
+      card = cards[card_index];
+    } else {
+      card = document.querySelector('.flip-card.showing');
+    }
+    if (!card) return null;
+    ${body}
+  `;
+}
+
+/**
+ * 구문 표시형(카드 type 8·11): 문장의 낱말에 '주어/동사/목적어' 같은 표시를 칠한다.
+ *
+ * 사이트 규칙(gclass_test.js):
+ *   - 정답은 '이름:낱말번호,낱말번호;이름:번호' 형식이다 (예: '주어:0,1;동사:2').
+ *     이름 순서는 화면의 .syntax-options 순서와 같고, 번호는 .paint-word 의 순번이다.
+ *   - 먼저 .syntax-options 를 눌러 그 표시를 고르고(active), 그 다음 .paint-word 를 누르면
+ *     그 낱말에 표시가 칠해진다.
+ *   - type 11 은 '[[wr]]:쓴내용' 조각으로 주관식 입력도 함께 낸다.
+ */
+async function applySyntaxMarking(d, raw) {
+  return d.eval(inCurrentCard(`
+    function norm(s) { return String(s || '').replace(/\\s+/g, ' ').trim(); }
+    var answer = ${JSON.stringify(String(raw))};
+    var parts = answer.split(';');
+    var opts = card.querySelectorAll('.syntax-options');
+    var words = card.querySelectorAll('.paint-word');
+    var done = 0, wrote = 0;
+    for (var i = 0; i < parts.length; i++) {
+      var at = parts[i].indexOf(':');
+      if (at < 0) continue;
+      var name = norm(parts[i].slice(0, at));
+      var idxs = parts[i].slice(at + 1).trim();
+
+      if (name === '[[wr]]') {                     // type 11 의 주관식 칸
+        var input = card.querySelector('input[type="text"], .subject-input');
+        if (input) {
+          var setter = Object.getOwnPropertyDescriptor(
+            window.HTMLInputElement.prototype, 'value').set;
+          setter.call(input, idxs);
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          wrote++;
+        }
+        continue;
+      }
+      if (!idxs) continue;
+
+      // 이름이 같은 표시를 고른다 (없으면 순서로)
+      var opt = null;
+      for (var j = 0; j < opts.length; j++) {
+        if (norm(opts[j].textContent) === name) { opt = opts[j]; break; }
+      }
+      if (!opt) opt = opts[i] || null;
+      if (!opt) continue;
+      opt.click();
+
+      var list = idxs.split(',');
+      for (var k = 0; k < list.length; k++) {
+        var w = words[parseInt(list[k], 10)];
+        if (!w) continue;
+        if ((' ' + w.className + ' ').indexOf(' option-except ') >= 0) continue;
+        if (w.getAttribute('data-opidx') === opt.getAttribute('data-opidx')) continue;  // 이미 칠해짐
+        w.click();
+        done++;
+      }
+    }
+    return { marked: done, wrote: wrote, options: opts.length, words: words.length };
+  `));
+}
+
+/**
+ * 드롭다운형(카드 type 5·9·10 에 섞여 나온다): `select.select-option` 을 정답으로 맞춘다.
+ *
+ * 사이트 규칙(gclass_test.js): 칸마다 고른 값을 ';' 로 이어 채점한다
+ *   ($(el).find('.select-option option:selected').val())
+ * 정답도 ';' 로 칸이, '|' 로 같은 칸의 다른 답이 나뉘어 있다.
+ */
+async function fillSelects(d, values) {
+  return d.eval(inCurrentCard(`
+    function norm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9가-힣]+/g, ''); }
+    var want = ${JSON.stringify(values)};
+    var sels = card.querySelectorAll('select.select-option, .select-option select, select');
+    var open = [];
+    for (var i = 0; i < sels.length; i++) {
+      if (sels[i].offsetParent === null && !sels[i].closest('.select2-container')) continue;
+      open.push(sels[i]);
+    }
+    if (!open.length) return { filled: 0, total: 0 };
+    var filled = 0;
+    for (var i = 0; i < open.length && i < want.length; i++) {
+      var sel = open[i];
+      var target = norm(want[i]);
+      for (var j = 0; j < sel.options.length; j++) {
+        var o = sel.options[j];
+        if (norm(o.value) === target || norm(o.textContent) === target) {
+          sel.value = o.value;
+          sel.dispatchEvent(new Event('change', { bubbles: true }));
+          // select2 를 쓰는 화면이면 jQuery 쪽에도 알려 준다
+          try { if (window.jQuery) window.jQuery(sel).trigger('change'); } catch (e) {}
+          filled++;
+          break;
+        }
+      }
+    }
+    return { filled: filled, total: open.length };
+  `));
+}
+
+/**
+ * 문단 순서형(카드 type 12): 문단 조각을 정답 순서대로 놓는다.
+ *
+ * 사이트 규칙(gclass_test.js): `.paragraph-row` 들의 data-idx 를 **화면에 놓인 순서대로**
+ * ';' 로 이어 채점한다. 그래서 정답 순서대로 DOM 에 다시 꽂아 주면 그대로 정답이 된다.
+ * (사이트는 드래그(sortable)로 순서를 바꾸지만, 채점은 순서만 본다)
+ */
+async function applyParagraphOrder(d, raw) {
+  return d.eval(inCurrentCard(`
+    var want = ${JSON.stringify(String(raw))}.split(';').map(function (x) { return x.trim(); });
+    var rows = card.querySelectorAll('.paragraph-row');
+    if (!rows.length) return { moved: 0, rows: 0 };
+    var parent = rows[0].parentNode;
+    var byIdx = {};
+    for (var i = 0; i < rows.length; i++) byIdx[String(rows[i].getAttribute('data-idx'))] = rows[i];
+    var moved = 0;
+    for (var i = 0; i < want.length; i++) {
+      var row = byIdx[want[i]];
+      if (!row) continue;
+      parent.appendChild(row);          // 정답 순서대로 뒤에 붙여 나간다
+      moved++;
+    }
+    return { moved: moved, rows: rows.length };
+  `));
+}
+
 export async function grammar(d, answerDict, stop) {
   d.log('[문법] 시작');
 
@@ -1921,14 +2075,37 @@ export async function grammar(d, answerDict, stop) {
       }
 
       const hasWork = state.choices.length || state.hasInput ||
-        (state.rows || []).length || (state.left || []).length || (state.tiles || []).length;
+        (state.rows || []).length || (state.left || []).length || (state.tiles || []).length ||
+        // 구문 표시 · 문단 순서 · 드롭다운도 '풀 거리'다 (없다고 보면 그냥 넘겨 버린다)
+        state.paints || state.paragraphs || state.selects;
       if (state.kind === 'idle' || !hasWork) {
         if ((state.next || state.kind === 'idle') && (await d.evalBool(CLICK_NEXT_JS))) {
           idleStreak = 0;
         } else {
           idleStreak++;
           if (idleStreak === 15) {
-            d.log('[문법] 문제도 버튼도 찾지 못했습니다. CONFIG.debug 를 켜고 다시 실행해 보세요.');
+            // 처음 보는 유형이면 무엇이 있었는지 남긴다 (다음에 그 유형을 붙일 수 있게)
+            const shape = await d.eval(`
+              var cards = document.querySelectorAll('.flip-card');
+              var card = (typeof card_index !== 'undefined' && cards[card_index])
+                ? cards[card_index] : document.querySelector('.flip-card.showing');
+              if (!card) return null;
+              function n(sel) { return card.querySelectorAll(sel).length; }
+              return {
+                type: card.getAttribute('data-type') || '',
+                option: n('.option-item'), input: n('input[type=\\'text\\'], textarea'),
+                select: n('select'), paint: n('.paint-word'), para: n('.paragraph-row'),
+                word: n('.btn-sentence-word'), row: n('.grouping-item'), match: n('.match-item')
+              };
+            `);
+            d.log(
+              '[문법] 문제도 버튼도 찾지 못했습니다. ' +
+              (shape
+                ? `현재 화면 구조: 카드종류=${shape.type} 보기=${shape.option} 입력=${shape.input} ` +
+                  `드롭다운=${shape.select} 구문표시=${shape.paint} 문단=${shape.para} ` +
+                  `낱말=${shape.word} 분류=${shape.row} 짝=${shape.match}`
+                : '화면을 읽지 못했습니다.'),
+            );
           }
           if (idleStreak >= CONFIG.idleGiveUp) {
             if (await backToClass('이 단계에서 더 풀 문제가 없습니다')) { idleStreak = 0; continue; }
@@ -2032,6 +2209,73 @@ export async function grammar(d, answerDict, stop) {
           `[문법] ⑤ ${stage.no}${stage.total ? `/${stage.total}` : ''}번 문제 (${kind}) ` +
             `'${state.question.slice(0, 30)}'${answer ? ` (${answerFrom})` : ' (추정)'}`,
         );
+      }
+
+      // ---------------------------------------------- 구문 표시형 (카드 type 8·11)
+      // 문장의 낱말에 '주어/동사/목적어' 같은 표시를 칠하는 문제.
+      if ((state.cardType === '8' || state.cardType === '11') && rawAnswer) {
+        const r = await applySyntaxMarking(d, rawAnswer);
+        if (stage && !answeredQ.has(qid)) {
+          answeredQ.add(qid);
+          stage.no++;
+          stage.solved++;
+          d.log(
+            `[문법] ⑤ ${stage.no}${stage.total ? `/${stage.total}` : ''}번 문제 (구문 표시) ` +
+              `'${state.question.slice(0, 30)}' — 낱말 ${(r && r.marked) || 0}개 표시 (${answerFrom})`,
+          );
+        }
+        if (await stop.await(pace())) break;
+        await d.evalBool(CLICK_NEXT_JS);          // 채점하기
+        if (await stop.await(pace())) break;
+        continue;
+      }
+
+      // ---------------------------------------------- 문단 순서형 (카드 type 12)
+      if (state.cardType === '12' && rawAnswer) {
+        const r = await applyParagraphOrder(d, rawAnswer);
+        if (stage && !answeredQ.has(qid)) {
+          answeredQ.add(qid);
+          stage.no++;
+          stage.solved++;
+          d.log(
+            `[문법] ⑤ ${stage.no}${stage.total ? `/${stage.total}` : ''}번 문제 (문단 순서) ` +
+              `— ${(r && r.moved) || 0}조각을 정답 순서로 놓았습니다 (${answerFrom})`,
+          );
+        }
+        if (await stop.await(pace())) break;
+        await d.evalBool(CLICK_NEXT_JS);
+        if (await stop.await(pace())) break;
+        continue;
+      }
+
+      // ---------------------------------------------- 드롭다운형 (select.select-option)
+      // 빈칸이 드롭다운으로 나오는 화면. 보기·입력형보다 먼저 확인한다.
+      if (rawAnswer && !state.choices.length) {
+        const picks = splitBlanks(rawAnswer);
+        if (picks.length) {
+          const r = await fillSelects(d, picks);
+          if (r && r.filled) {
+            // 드롭다운과 빈칸이 같이 있는 화면(카드 type 9)은 빈칸까지 채운 뒤에 채점한다.
+            // 먼저 채점하면 '답을 입력하지 않은 문항' 창이 떠서 한 바퀴를 버린다.
+            if (state.hasInput && !state.filled) {
+              if (await stop.await(300)) break;
+              continue;
+            }
+            if (stage && !answeredQ.has(qid)) {
+              answeredQ.add(qid);
+              stage.no++;
+              stage.solved++;
+              d.log(
+                `[문법] ⑤ ${stage.no}${stage.total ? `/${stage.total}` : ''}번 문제 (드롭다운) ` +
+                  `— ${r.filled}/${r.total}칸을 골랐습니다 (${answerFrom})`,
+              );
+            }
+            if (await stop.await(pace())) break;
+            await d.evalBool(CLICK_NEXT_JS);
+            if (await stop.await(pace())) break;
+            continue;
+          }
+        }
       }
 
       // ---------------------------------------------- 입력형
