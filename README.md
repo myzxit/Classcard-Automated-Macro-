@@ -1,226 +1,268 @@
 <a id="readme-top"></a>
-[![Contributors][contributors-shield]][contributors-url]
-[![Forks][forks-shield]][forks-url]
-[![Stargazers][stars-shield]][stars-url]
-[![Issues][issues-shield]][issues-url]
-[![Unlicense License][license-shield]][license-url]
 
-<!-- PROJECT LOGO -->
 <br />
 <div align="center">
-  <a href="https://github.com/youngmin0/Classcard-Automation">
-    <img src="https://play-lh.googleusercontent.com/howCUVHqn67CQ_1VuMAICY7FIwUGT-4c6_Tcii_9z0dE1_2ZN2vA8Ny1EMkJVYMGBQUw" alt="Classcard" width="80" height="80">
-  </a>
+  <img src="https://play-lh.googleusercontent.com/howCUVHqn67CQ_1VuMAICY7FIwUGT-4c6_Tcii_9z0dE1_2ZN2vA8Ny1EMkJVYMGBQUw" alt="Classcard" width="80" height="80">
 
   <h3 align="center">Classcard Automation</h3>
 
   <p align="center">
-    클래스카드(Classcard)의 암기, 리콜, 스펠, 테스트 학습을 자동화하는 Python 스크립트입니다.
-    단어장 전체 자동 학습(전체 자동화)과 여러 계정 동시(병렬) 실행을 지원합니다.
+    클래스카드(Classcard)의 암기 · 리콜 · 스펠 · 매칭 · 스크램블 · 테스트 학습을 자동화합니다.
     <br />
-    <a href="https://github.com/youngmin0/Classcard-Automation"><strong>GitHub »</strong></a>
-    <br />
-    <br />
+    <b>📱 안드로이드 앱</b> 과 <b>🧩 크롬 확장프로그램</b> 두 가지로 쓸 수 있고, <b>기능은 완전히 같습니다.</b>
   </p>
 </div>
 
 <br />
 
-## About The Project
+## 다운로드
 
-이 프로젝트는 클래스카드의 반복적인 학습 과정(암기, 리콜, 스펠, 테스트)을 자동화하여, 학습 시간을 절약하기 위해 개발되었습니다.
+| | 받는 곳 | 설치 |
+|---|---|---|
+| 📱 **안드로이드** | [classcard-automation.apk](https://github.com/myzxit/Classcard-Automated-Macro-/releases/download/apk-latest/classcard-automation.apk) | 폰 브라우저로 링크를 열면 바로 받아집니다 |
+| 🧩 **크롬 확장** | [classcard-automation-extension.zip](https://github.com/myzxit/Classcard-Automated-Macro-/releases/download/apk-latest/classcard-automation-extension.zip) | 압축을 풀고 개발자 모드로 로드 |
 
-Selenium을 사용하여 웹 브라우저를 제어하고, Pynput을 통해 글로벌 단축키를 지원합니다.
-
-* **자동 로그인**: `.env` 파일의 ID/PW로 자동 로그인
-* **다계정 병렬 실행**: `.env`에 여러 계정을 적으면(쉼표 구분) `python main.py` 한 번으로
-  계정 수만큼 크롬 창이 열려 각각 로그인. 단축키 한 번이면 **모든 계정이 동시에** 같은 자동화를 수행
-  (계정마다 다른 set이어도 각자 자기 단어장으로 동작).
-  창은 데스크톱 레이아웃 유지를 위해 큰 크기로 계단식으로 겹쳐 띄웁니다. 포커스가 없거나 창이
-  겹쳐도 백그라운드에서 정상 동작하니, **창 크기를 줄이지 마세요**(좁아지면 클래스카드가 모바일
-  레이아웃으로 바뀌어 문장 테스트/리콜 등이 깨집니다).
-* **암기(Memorize)**: 단어/문장 암기 자동화
-* **리콜(Recall)**: 단어/문장 리콜 자동화
-* **스펠(Spell)**: `data.json`의 정답 목록을 기반으로 자동으로 정답을 타이핑.
-  전체 자동화에서는 선생님이 **필수로 지정한 단어 set**에서만 수행(자율이면 건너뜀)
-* **테스트(Test, 단어)**: 단어 객관식 테스트 자동 풀이. `data.json` 기반 양방향(영↔한) 매칭으로
-  정답 보기를 골라 입력. 항상 100점이 되지 않도록 일부 문항은 랜덤 오답 처리(단, **70점 초과 보장**).
-  탭/창 포커스를 잃어도 '이탈'로 잡히지 않아 **백그라운드 실행** 가능
-* **테스트(Test, 문장)**: 문장 어순 배열 테스트 자동 풀이. 한글 문제 → `data.json`에서 영어 정답
-  문장을 찾아 스크램블 단어를 어순대로 클릭. 실시간 채점에 대응하기 위해 **CDP 트러스티드 클릭**으로
-  입력하며, 괄호 묶음 `(...)`·대소문자 중복(`The`/`the`)·구두점 차이를 모두 정규화해 매칭.
-  0~1개만 랜덤 오답 처리(**90점 패스 기준** 안전 통과). 단어 테스트와 동일하게 **백그라운드 실행** 가능
-* **매칭(Matching, 단어)**: 영어↔한국어 카드 매칭 게임 자동 풀이. 페이지의 `card_list`를
-  직접 읽어 짝을 찾아 클릭. 목표 점수(**1000~2000점 랜덤**)에 도달하면 게임 도중에
-  자동으로 빠져나옴(필수 1000점 충족, 점수 저장됨). **백그라운드 실행** 가능
-* **스크램블(Scramble, 문장)**: 문장 어순 배열 게임 자동 풀이. 페이지의 `study_data`를
-  읽어 한글 문제에 해당하는 영어 문장을 찾고, 단어 타일을 어순대로 클릭. 목표 점수
-  (**4000~5000점 랜덤**)에 도달하면 빠져나옴(필수 4000점 충족, 점수 저장됨). **백그라운드 실행** 가능
-* **단어장 가져오기**: 현재 페이지에서 단어 데이터를 `data.json`으로 추출
-* **전체 자동화(AutoAll)**: 단어장 목록 페이지에서 맨 아래 set부터 위로 올라가며
-  단어/문장 자동 판별 → 학습구간을 '전체 카드 학습'으로 변경 → `data.json` 자동 업데이트 →
-  암기 → 리콜 → 스펠 → 매칭/스크램블 → 테스트를 차례로 수행
-  (단어 set은 (필수면)스펠+매칭+단어 테스트, 문장 set은 스크램블+문장 테스트).
-  이미 완료된 모드와 set은 자동으로 스킵
-  (테스트는 최고점수가 단어 70점 / 문장 90점, 매칭은 1000점 / 스크램블은 4000점 이상이면 스킵)
-* **한 세트 자동화**: 셋홈(set 상세) 페이지를 열어둔 상태에서 `Ctrl + Alt + S`를 누르면
-  그 한 set만 전체 모드(암기→리콜→(필수면)스펠→매칭/스크램블→테스트)를 수행하고 멈춤
+코드가 바뀔 때마다 같은 주소에 최신 빌드가 자동으로 올라갑니다.
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-### Built With
+## 기능 (두 버전 모두 동일)
 
-* [![Selenium][Selenium-shield]][Selenium-url]
-* [![Pynput][Pynput-shield]][Pynput-url]
-* [![BeautifulSoup][BeautifulSoup-shield]][BeautifulSoup-url]
+* **자동 로그인** — 저장한 아이디/비밀번호로 자동 로그인
+* **다계정** — 계정 여러 개를 등록해 두고 한 번에 실행
+  (안드로이드는 계정별 세션을 분리해 **동시** 실행, 크롬은 쿠키를 공유하므로 **순차** 실행)
+* **암기 / 리콜 / 스펠** — 단어 학습 자동화. 스펠은 선생님이 **필수**로 지정한 set 에서만 수행
+* **문장 암기 / 문장 리콜** — 문장 학습 자동화.
+  문장 리콜은 페이지가 콘솔로 흘리는 정답을 가로채 맞춥니다(정답이 DOM 에 없어서 이 방법뿐)
+* **단어 테스트** — 객관식 자동 풀이. 양방향(영↔한) 매칭으로 정답을 고르고,
+  항상 100점이 되지 않도록 일부를 랜덤 오답 처리(**70점 초과 보장**)
+* **문장 테스트** — 어순 배열 자동 풀이. 한글 문제 → 영어 정답을 찾아 순서대로 클릭.
+  괄호 묶음 `(...)`·대소문자 중복(`The`/`the`)·구두점 차이를 정규화해 매칭하고,
+  0~1개만 랜덤 오답 처리(**90점 패스 안전 통과**)
+* **단어 매칭** — 매칭 게임 자동 풀이. 목표 점수(**7,000~8,500 랜덤**) 도달 시 중도 종료(점수 저장됨)
+* **문장 스크램블** — 스크램블 게임 자동 풀이. 목표 점수(**7,000~8,500 랜덤**) 도달 시 종료
+* **문법** — 문법훈련(GClass) 자동 풀이.
+  문법 클래스 페이지에서 실행하면 유닛의 단계(개념 톡 → 연습 문제 A/B → 서술형 →
+  실전 → 누적오답복습 → Scramble)를 **잠기지 않은 것부터 순서대로, 끝까지** 진행합니다.
+  한 단계를 마치면 스스로 클래스 페이지로 돌아와 다음 단계를 시작하고,
+  앞 단계를 끝내야 열리는 잠긴 단계도 그때 풀려서 이어집니다.
+  한 동작(보기 클릭·채점하기·Enter·화면 이동)마다 **3초씩 기다립니다** —
+  문법훈련은 소리를 읽어 주고 카드가 애니메이션으로 나타나서, 빨리 누르면 페이지가 받지 못합니다.
+  **개념 톡**은 Enter 로 설명 카드를 넘기며, 중간에 나오는 빈칸·객관식을 풀어 진행합니다.
+  이때 **바로 다음 설명 카드가 정답을 풀어서 말해 주므로**(예: 빈칸 '___를 강조' →
+  다음 카드 "…해석해서 **동사**의 뜻을 강조해 줘요.") 그 문장과 가장 많이 겹치는 보기를 고릅니다.
+  찍지 않고 정답을 눌러 진행합니다.
+  문제 화면은 실제 시험지(70문항)에 나오는 유형을 전부 처리합니다 —
+  **객관식**(`data-type=3`) · **인라인 선택**( ? 를 눌러 고르는 것, `10`) ·
+  **서술형 입력**(`1`) · **어순 배열**(단어 타일 클릭, `4`) ·
+  **배열형 빈칸**(빈칸 여러 개 + 화면의 힌트 단어, `6`) · 분류 · 짝맞추기.
+  **정답은 사이트가 채점에 쓰는 그 데이터를 그대로 읽습니다.**
+  클래스카드는 채점을 브라우저에서 하기 때문에 정답이 페이지 안에 실려 옵니다 —
+  실제 소스(`scripts/v2/gclass_test.js`, `grammar_talk.js`)를 확인한 결과
+  문제 화면은 `arr_answer[{card_idx, answer}]`, 개념 톡은 `arr_card[i].answer` 입니다.
+  단계(개념 톡·연습 문제·서술형·실전·누적오답복습)마다 페이지가 새로 열리므로
+  **새 화면에 들어갈 때마다 정답 데이터를 다시 확인**하고 로그에 남깁니다
+  (`정답 데이터 확인 — 문항 40개 중 정답 40개 읽음`).
+  못 읽는 화면에서는 ① 화면의 정답 표시 ② 단어장 ③ 전역 훑기
+  ④ 개념 톡의 다음 설명 카드 ⑤ 찍고 채점 결과 기억 순으로 풉니다.
+  > 실전/연습 테스트 화면은 정답이 페이지에 들어 있지 않고 채점이 서버에서 이루어집니다.
+  > 이때는 한 문제당 한 번만 답할 수 있어, 정답 표시가 없는 문항은 확률적으로 맞힙니다.
+* **단어장 가져오기** — 현재 학습 페이지에서 단어/뜻 데이터를 추출해 계정별로 보관
+* **전체 자동화** — 단어장 목록에서 맨 아래 set 부터 위로 올라가며 단어/문장 자동 판별 →
+  학습구간을 '전체 카드 학습'으로 변경 → 단어장 갱신 →
+  암기 → 리콜 → 스펠 → 매칭/스크램블 → 테스트를 차례로 수행.
+  이미 끝난 모드와 set 은 자동으로 스킵(테스트 90점 / 매칭 7000점 / 스크램블 7000점 이상)
+* **한 세트 자동화** — 셋홈(set 상세)에서 그 한 set 만 전 과정 수행
+* **백그라운드 실행** — 화면이 꺼지거나 창이 가려져도 '이탈'로 잡히지 않고 계속 실행
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Getting Started
+## 📱 안드로이드 설치
 
-로컬 환경에서 이 스크립트를 설정하고 실행하기 위한 단계입니다.
+1. 위 표의 **APK 링크**를 폰 브라우저(크롬)로 열기 → 자동 다운로드
+2. 다운로드 알림(또는 **파일** 앱 → **다운로드**)에서 APK를 누름
+3. "출처를 알 수 없는 앱" 경고 → **설정** → 해당 브라우저에 **이 소스 허용** → 뒤로 → **설치**
+4. "기기가 손상될 수 있다"(Play 프로텍트) 경고는 **무시하고 설치**
+   — 개인 서명 APK라 항상 뜨는 경고입니다
 
-### Prerequisites
+### 설치가 안 될 때 ("앱이 설치되지 않음")
 
-* **Python 3.x**
-* **Google Chrome** 브라우저
+거의 항상 **서명 충돌**입니다. 예전에 깔아 둔 앱과 새 APK의 서명이 다르면 덮어쓰기가 막힙니다.
 
-### Installation
+1. **기존 앱을 지우고 다시 설치하세요** — 설정 → 앱 → *클래스카드 자동화* → 삭제
+   (v3.0.0 부터는 저장소에 넣어 둔 고정 키로 서명하므로, 한 번만 지우면 이후로는 덮어쓰기가 됩니다)
+2. 그래도 안 되면:
+   - **다운로드가 끊겼는지** 확인 — APK 크기가 6MB 정도인지 보고, 작으면 다시 받기
+   - **저장 공간**이 부족하지 않은지
+   - **Play 프로텍트**: 설정 → Play 프로텍트 → 설정(톱니) → *유해한 앱 검색* 잠시 끄기
+   - 폰이 **Android 8.0 미만**이면 설치되지 않습니다 (아래 요구 사항)
 
-1. GitHub 저장소를 복제(Clone)합니다.
+**요구 사항**: Android 8.0(API 26) 이상.
+문장 리콜의 정답 캡처와 계정별 쿠키 분리는 최신 WebView 기능을 씁니다.
+잘 안 되면 Play 스토어에서 **Android System WebView** 와 **Chrome** 을 업데이트하세요.
+
+### 사용법
+
+1. 앱을 켜고 왼쪽 **계정 리스트** 에 아이디/비밀번호를 넣고 **+**
+   (기존 `.env` 는 **⤓ .env 불러오기** 로 붙여넣으면 됩니다)
+2. **🌐 브라우저 열기** → 자동으로 로그인됩니다
+3. 계정 줄을 누르면 그 계정의 브라우저 화면이 열립니다. 단어장 목록 페이지로 이동하세요
+4. 오른쪽에서 **학습 모드**를 고르고 아래 **▶ 자동화 시작**
+5. 진행 상황은 위쪽 **LOG** 탭에서 볼 수 있습니다
+
+> **화면이 작게 보이는 건 정상입니다.** 클래스카드는 화면이 좁으면 모바일 레이아웃으로 바뀌는데,
+> 그러면 스크램블 타일이 잘려 자동화가 깨집니다. 그래서 앱이 **데스크톱 화면(가로 1280px)** 을
+> 강제로 유지하고 축소해 보여 줍니다. 손가락으로 확대/스크롤하면 됩니다.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## 🧩 크롬 확장프로그램 설치
+
+1. 위 표의 **확장 zip** 을 받아 **압축을 풉니다** (폴더가 하나 생깁니다)
+2. 크롬 주소창에 `chrome://extensions` 입력
+3. 오른쪽 위 **개발자 모드** 를 켭니다
+4. **압축해제된 확장 프로그램을 로드합니다** → 방금 푼 폴더 선택
+5. 툴바의 퍼즐 아이콘에서 **클래스카드 자동화** 를 고정해 두면 편합니다
+
+> 크롬 웹스토어에 올린 앱이 아니라서 개발자 모드로 넣어야 합니다.
+> Edge, Whale 등 크로미움 기반 브라우저도 같은 방법으로 됩니다.
+
+### 사용법
+
+1. 확장 아이콘을 눌러 팝업을 엽니다 (안드로이드 앱과 같은 화면입니다)
+2. 계정을 등록하고 **🌐 탭 열기** → 새 탭이 열리며 자동 로그인됩니다
+   - 이미 로그인해 둔 탭이 있으면 **↪ 지금 보는 탭 사용** 이 더 빠릅니다
+3. 그 탭에서 단어장 목록 페이지로 이동
+4. **학습 모드** 를 고르고 **▶ 자동화 시작**
+
+**문장 테스트를 돌리면 "…에서 디버깅하고 있습니다" 알림 바가 뜹니다.** 정상입니다.
+그 화면의 버튼은 진짜 마우스 입력에만 반응해서, 크롬 디버거(CDP)로 신뢰된 클릭을 보냅니다.
+자동화가 끝나면 자동으로 연결이 끊깁니다. (원본 파이썬 버전이 쓰던 것과 **같은** 방식입니다)
+
+**다계정은 순차로 돌아갑니다.** 크롬은 프로필 하나에서 쿠키를 공유하므로 여러 계정을
+동시에 로그인해 둘 수 없습니다. 그래서 계정1 실행 → 쿠키 정리 → 계정2 로그인 → 실행 …
+순서로 진행합니다. 정말 동시에 돌리고 싶다면 안드로이드 앱을 쓰거나,
+크롬 **프로필**을 계정 수만큼 만들어 각각 확장을 설치하세요.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## 어떻게 만들어졌나
+
+원래 이 프로젝트는 PC에서 **Selenium** 으로 크롬을 조종하고 **pynput** 글로벌 단축키로
+자동화를 켜는 파이썬 스크립트였습니다. 자동화의 두뇌(카드 판별 · 정답 매칭 · 클릭 순서 ·
+목표 점수 · 이탈 감지 우회)는 **로직 그대로** 옮기고, "브라우저를 조종하는 부분"만
+플랫폼에 맞게 갈아 끼웠습니다.
+
+| 원본 (PC / Selenium) | 📱 안드로이드 | 🧩 크롬 확장 |
+|---|---|---|
+| `driver.execute_script(...)` | `Driver.eval()` (WebView) | `Driver.eval()` (`chrome.scripting`, MAIN world) |
+| CDP `Input.dispatchMouseEvent` (신뢰된 클릭) | 네이티브 `MotionEvent` 주입 | `chrome.debugger` → **같은 CDP** |
+| `body.send_keys(SPACE)` | 네이티브 `KeyEvent` 주입 | CDP `Input.dispatchKeyEvent` |
+| CDP `addScriptToEvaluateOnNewDocument` | `addDocumentStartJavaScript` | `document_start` 콘텐츠 스크립트 |
+| 크롬 창 N개 (계정 격리) | WebView N개 + `ProfileStore` 분리 | 순차 실행 + 쿠키 정리 |
+| 창 크기 1280×900 강제 | 데스크톱 UA + `initialScale` + viewport 강제 | (PC라 불필요) |
+| `pynput` 글로벌 단축키 | 화면 하단 버튼 | 팝업 버튼 |
+| `.env` 파일 | 앱 내 계정 설정 | 팝업 내 계정 설정 |
+
+두 버전 모두 **페이지가 이동해도 자동화가 살아남도록** 조종 주체를 페이지 밖
+(안드로이드는 코틀린 코루틴, 확장은 백그라운드 서비스 워커)에 두었습니다.
+전체 자동화처럼 여러 페이지를 오가는 흐름이 이 구조라서 가능합니다.
+
+### 이식이 맞는지 어떻게 검증했나
+
+`android/tools/gen_reference.py` 가 **원본 파이썬 구현을 실제로 import 해서 실행**하고,
+그 출력을 `reference.json` 으로 저장합니다. 두 이식본은 **같은 기준 파일**로 검증합니다.
+
 ```sh
-git clone https://github.com/youngmin0/Classcard-Automation.git
+node extension/test/parity.test.mjs      # 확장  — 223개 단언
+cd android && ./gradlew testDebugUnitTest # 안드로이드 — 14개 테스트
 ```
-2. 프로젝트 폴더로 이동합니다.
-```sh
-cd Classcard-Automation
+
+정규화 함수 전부, 토큰화, `difflib.SequenceMatcher.ratio()`, 스크램블 정렬/다음 단어 선택,
+문장 리콜 매칭, 스펠 정답 찾기, 단어 테스트 정답 고르기, 매칭 쌍 찾기, 오답 주입 개수를
+원본과 한 글자도 다르지 않은지 대조합니다.
+
+> 이 과정에서 실제 차이를 하나 잡았습니다: `Test.py` 의 `mnorm` 은 HTML 태그를 제거하지 **않고**
+> `Matching.py` 의 `mnorm` 은 제거합니다. 처음엔 하나로 합쳤다가 테스트가 잡아내서 분리했습니다.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## 코드 구조
+
 ```
-3. Python 라이브러리를 설치합니다.
-```sh
-pip install -r requirements.txt
-```
-4. `.env.example`을 복사하여 `.env` 파일을 만들고 클래스카드 ID/PW를 입력합니다.
-```sh
-cp Classcard-Automation/.env.example Classcard-Automation/.env
-```
-```
-CLASSCARD_ID=내_아이디
-CLASSCARD_PW=내_비밀번호
-```
-여러 계정을 동시에 돌리려면 쉼표(,)로 구분해 적습니다. (ID와 PW의 순서·개수를 맞출 것)
-```
-CLASSCARD_ID=계정1,계정2,계정3
-CLASSCARD_PW=비번1,비번2,비번3
+android/                                  📱 안드로이드 앱 (Kotlin)
+  app/src/main/java/com/classcard/automation/
+    MainActivity.kt        계정 리스트 · 학습 모드 · 고급 설정 · LOG 탭
+    AccountStore.kt        계정 저장 / .env 파싱
+    SettingsStore.kt       고급 설정 값
+    LogBus.kt              로그(날짜별 보존)
+    AutomationService.kt   포그라운드 서비스 + WakeLock
+    core/
+      Driver.kt      WebView 래퍼 (Selenium 대체)
+      Session.kt     계정 1개 = WebView 1개
+      Controller.kt  버튼 -> 전 계정 fan-out
+      StopFlag.kt    threading.Event 대체
+      Norm.kt        정규화/토큰화 (원본 함수별 1:1)
+      Similarity.kt  difflib ratio 이식
+      AntiBlur.kt    이탈 감지 우회
+    modules/         자동화 모듈 (원본 파이썬 파일과 1:1) + Grammar.kt(문법훈련)
+  app/src/main/assets/preload.js          문서 시작 주입
+  app/src/test/                           이식 정확성 테스트
+
+extension/                                🧩 크롬 확장 (MV3)
+  manifest.json
+  background.js                 오케스트레이터 (계정/실행/로그)
+  content/preload.js            문서 시작 주입 (이탈 감지 우회 + 정답 캡처)
+  engine/
+    driver.js                   탭 조종 + CDP 신뢰된 입력
+    norm.js  similarity.js      안드로이드판과 같은 내용
+    modules/
+      basic.js      HtmlParser · 암기 · 리콜 · 스펠
+      sentence.js   문장 암기 · 문장 리콜
+      games.js      단어/문장 테스트 · 매칭 · 스크램블
+      grammar.js    문법훈련
+      autoall.js    전체 자동화 · 한 세트 자동화
+  popup/                        팝업 UI (안드로이드 앱과 같은 화면)
+  test/parity.test.mjs          이식 정확성 테스트
+  test/grammar.test.mjs         문법 보기 선택 로직 테스트
 ```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
-## Usage
+## 직접 빌드하기
 
-1. 터미널에서 `main.py`를 실행합니다.
 ```sh
-cd Classcard-Automation
-python main.py
-```
-2. Chrome 브라우저가 열리고 자동으로 로그인됩니다. (`.env` 미설정 시 수동 로그인)
-   - 여러 계정을 설정한 경우 계정 수만큼 창이 열리며, 아래 단축키는 **모든 계정에 동시에** 적용됩니다.
-3. 자동화 방식 선택:
-   - **개별 모드**: 학습 세트 페이지로 직접 이동한 뒤 `Ctrl + M`으로 단어 추출 → 원하는 모드 단축키 사용
-   - **전체 자동화**: 단어장 목록 페이지(여러 set이 보이는 페이지)에서 `Ctrl + A` 한 번. 맨 아래 set부터 위로 순차 처리
-4. 아래 단축키를 사용하여 자동화를 제어합니다.
+# 안드로이드 (JDK 17 + Android SDK 필요)
+cd android && ./gradlew assembleDebug
+#   -> app/build/outputs/apk/debug/app-debug.apk
 
-| 단축키 | 기능 |
-|--------|------|
-| `Ctrl + A` | **전체 자동화** 시작 (단어장 목록 페이지에서) |
-| `Ctrl + Alt + S` | **한 세트 자동화** 시작 (열어둔 셋홈 페이지에서) |
-| `Ctrl + I` | **암기** 자동화 시작 |
-| `Ctrl + Y` | **리콜** 자동화 시작 |
-| `Ctrl + X` | **스펠** 자동화 시작 |
-| `Ctrl + B` | **문장 암기** 자동화 시작 |
-| `Ctrl + Q` | **문장 리콜** 자동화 시작 |
-| `Ctrl + Alt + G` | **단어 테스트** 자동화 시작 |
-| `Ctrl + Alt + H` | **문장 테스트** 자동화 시작 |
-| `Ctrl + Alt + J` | **단어 매칭** 자동화 시작 |
-| `Ctrl + Alt + K` | **문장 스크램블** 자동화 시작 |
-| `Ctrl + M` | **단어장 가져오기** (현재 페이지에서 데이터 추출) |
-| `Ctrl + E` | 현재 자동화 **중지** |
-| `Ctrl + Esc` | 프로그램 **전체 종료** (브라우저 닫힘) |
+# 확장 (빌드 과정 없음 — 폴더를 그대로 로드하거나 zip 으로 묶으면 끝)
+cd extension && zip -r ../classcard-automation-extension.zip . -x 'test/*'
+```
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## Roadmap
 
-- [x] 자동 로그인 기능
-- [x] 단어장 자동 추출 기능
-- [x] 문장 암기/리콜 지원
-- [x] 단어장 전체 자동화 (Ctrl + A)
-- [x] 단어 테스트 자동화 (Ctrl + Alt + G) + 백그라운드 실행
-- [x] 문장 테스트 자동화 (Ctrl + Alt + H) + 백그라운드 실행
-- [x] 단어 매칭 자동화 (Ctrl + Alt + J) + 백그라운드 실행
-- [x] 문장 스크램블 자동화 (Ctrl + Alt + K) + 백그라운드 실행
-- [x] 다계정 동시(병렬) 실행
-- [ ] GUI 인터페이스 추가
-
-See the [open issues](https://github.com/youngmin0/Classcard-Automation/issues) for a full list of proposed features (and known issues).
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Contributing
-
-Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
-
-If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue with the tag "enhancement".
-Don't forget to give the project a star! Thanks again!
-
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-### Top contributors:
-
-<a href="https://github.com/youngmin0/Classcard-Automation/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=youngmin0/Classcard-Automation" alt="contrib.rocks image" />
-</a>
+- [x] 자동 로그인 / 단어장 자동 추출
+- [x] 단어·문장 암기 / 리콜 / 스펠
+- [x] 단어·문장 테스트 (백그라운드 실행)
+- [x] 매칭 / 스크램블 (백그라운드 실행)
+- [x] 문법훈련
+- [x] 전체 자동화 / 한 세트 자동화
+- [x] 다계정
+- [x] 📱 안드로이드 전용 버전
+- [x] 🧩 크롬 확장프로그램 전용 버전
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 
 ## License
 
-Distributed under the Unlicense License. See `LICENSE.txt` for more information.
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-## Contact
-
-youngmin0
-
-Project Link: [https://github.com/youngmin0/Classcard-Automation](https://github.com/youngmin0/Classcard-Automation)
-
-<p align="right">(<a href="#readme-top">back to top</a>)</p>
+Distributed under the Unlicense License.
 
 ## Acknowledgments
 
-* [Img Shields](https://shields.io)
-* [Choose an Open Source License](https://choosealicense.com)
+* 원본 PC(파이썬) 버전: [youngmin0/Classcard-Automation](https://github.com/youngmin0/Classcard-Automation)
 * [Best-README-Template](https://github.com/othneildrew/Best-README-Template)
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
-
-[contributors-shield]: https://img.shields.io/github/contributors/youngmin0/Classcard-Automation.svg?style=for-the-badge
-[contributors-url]: https://github.com/youngmin0/Classcard-Automation/graphs/contributors
-[forks-shield]: https://img.shields.io/github/forks/youngmin0/Classcard-Automation.svg?style=for-the-badge
-[forks-url]: https://github.com/youngmin0/Classcard-Automation/network/members
-[stars-shield]: https://img.shields.io/github/stars/youngmin0/Classcard-Automation.svg?style=for-the-badge
-[stars-url]: https://github.com/youngmin0/Classcard-Automation/stargazers
-[issues-shield]: https://img.shields.io/github/issues/youngmin0/Classcard-Automation.svg?style=for-the-badge
-[issues-url]: https://github.com/youngmin0/Classcard-Automation/issues
-[license-shield]: https://img.shields.io/github/license/youngmin0/Classcard-Automation.svg?style=for-the-badge
-[license-url]: https://github.com/youngmin0/Classcard-Automation/blob/master/LICENSE.txt
-[Selenium-shield]: https://img.shields.io/badge/Selenium-43B02A?style=for-the-badge&logo=selenium&logoColor=white
-[Selenium-url]: https://www.selenium.dev/
-[Pynput-shield]: https://img.shields.io/badge/Pynput-informational?style=for-the-badge&logo=python&logoColor=white
-[Pynput-url]: https://pynput.readthedocs.io/
-[BeautifulSoup-shield]: https://img.shields.io/badge/BeautifulSoup-informational?style=for-the-badge&logo=python&logoColor=white
-[BeautifulSoup-url]: https://www.crummy.com/software/BeautifulSoup/

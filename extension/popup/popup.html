@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
+  <title>클래스카드 자동화</title>
+</head>
+<body>
+  <header class="app-header">
+    <div class="avatar">CC</div>
+    <div class="app-title">클래스카드 자동화</div>
+    <div class="badge" id="versionBadge">v3.10.0</div>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="btnGear" title="고급 설정 접기/펼치기">⚙</button>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" id="tabMain">메인</button>
+    <button class="tab" id="tabLog">LOG</button>
+    <div class="spacer"></div>
+    <span class="status">
+      <span class="dot" id="statusDot">●</span>
+      <span id="statusText">대기 중</span>
+    </span>
+  </nav>
+
+  <!-- =============== 메인 =============== -->
+  <main id="pageMain" class="page columns">
+    <section class="card col-left">
+      <h2>👥 계정 리스트</h2>
+
+      <div class="row gap">
+        <input type="text" id="inputNewId" placeholder="아이디" />
+        <input type="password" id="inputNewPw" placeholder="비밀번호" />
+        <button class="tool square" id="btnAddAccount">+</button>
+      </div>
+
+      <div class="tool-grid">
+        <button class="tool" id="btnImportEnv">⤓ .env 불러오기</button>
+        <button class="tool" id="btnSaveAccounts">⤒ 계정 저장</button>
+        <button class="tool" id="btnOpenTab">🌐 탭 열기</button>
+        <button class="tool" id="btnCloseTab">✕ 탭 닫기</button>
+        <button class="tool" id="btnSelectAll">☑ 전체 선택</button>
+        <button class="tool danger" id="btnDeleteSelected">🗑 선택 삭제</button>
+      </div>
+
+      <div class="summary" id="accountSummary">계정 0 · 실행 0</div>
+      <input type="text" id="inputSearch" class="search" placeholder="검색…" />
+      <div class="account-list" id="accountList"></div>
+
+      <button class="tool wide" id="btnUseActiveTab">↪ 지금 보는 탭 사용</button>
+    </section>
+
+    <section class="col-right">
+      <div class="card">
+        <div class="card-head">
+          <h2>🎯 학습 모드</h2>
+          <span class="hint">한 가지를 선택하세요</span>
+        </div>
+        <div class="mode-grid" id="modeGrid"></div>
+        <p class="help" id="modeHelp"></p>
+      </div>
+
+      <div class="card" id="advancedCard">
+        <h2>⚙ 고급 설정</h2>
+        <div id="advancedList"></div>
+      </div>
+
+      <button class="run-btn" id="btnRun">▶&nbsp;&nbsp;자동화 시작</button>
+    </section>
+  </main>
+
+  <!-- =============== LOG =============== -->
+  <main id="pageLog" class="page hidden">
+    <div class="log-toolbar">
+      <div class="date-box">
+        <span>🗓</span>
+        <select id="logDateSelect"></select>
+      </div>
+      <button class="tool" id="btnSaveLog">💾 저장</button>
+      <button class="tool danger" id="btnClearLog">🗑 지우기</button>
+    </div>
+    <pre class="console" id="logConsole"></pre>
+  </main>
+
+  <!-- =============== .env 다이얼로그 =============== -->
+  <div class="modal hidden" id="envModal">
+    <div class="modal-body">
+      <h3>.env 붙여넣기로 가져오기</h3>
+      <textarea id="envText" placeholder="CLASSCARD_ID=계정1,계정2&#10;CLASSCARD_PW=비번1,비번2"></textarea>
+      <div class="modal-actions">
+        <button class="tool" id="btnEnvCancel">취소</button>
+        <button class="tool primary" id="btnEnvOk">확인</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

@@ -1,0 +1,453 @@
+/**
+ * 문법 모듈의 순수 로직 검증 (확장프로그램판).
+ *
+ * 문법훈련은 이식할 원본 파이썬이 없어 reference.json 기준값이 없다. 대신
+ * 안드로이드판 GrammarLogicTest 와 **같은 표**를 두어, 두 이식본이 같은 보기를
+ * 고르는지 확인한다.
+ *
+ * 실행:  node --test extension/test/grammar.test.mjs
+ */
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+
+import * as N from '../engine/norm.js';
+import { buildLookups } from '../engine/modules/games.js';
+import {
+  pickChoice, lookupAnswer, nextClassAction,
+  nextScrambleIndex, nextPairAttempt, nextGroupPick, fillValues, splitBlanks,
+  splitPicks, nextPickIndex, pickTalkAnswer,
+  FIND_ANSWER_JS, splitAnswers, pickByAnswers,
+} from '../engine/modules/grammar.js';
+
+const choices = (...texts) =>
+  texts.map((t, i) => ({ index: i, raw: t, norm: N.mnorm(t) }));
+
+test('정답을 정확히 알 때 그 보기를 고른다', () => {
+  const c = choices('has been', 'have been', 'had being', 'is been');
+  assert.equal(pickChoice(c, 'have been', new Set()), 1);
+});
+
+test('대소문자·공백 차이는 무시한다', () => {
+  const c = choices('Has Been', 'have  been', 'had being');
+  assert.equal(pickChoice(c, 'HAVE BEEN', new Set()), 1);
+});
+
+test('정답 문장이 보기를 포함하면 그 보기를 고른다', () => {
+  const c = choices('in', 'on', 'at');
+  assert.equal(pickChoice(c, 'at night', new Set()), 2);
+});
+
+test('정답을 모르면 첫 보기를 고른다', () => {
+  const c = choices('a', 'b', 'c');
+  assert.equal(pickChoice(c, null, new Set()), 0);
+});
+
+test('이미 틀린 보기는 건너뛴다', () => {
+  const c = choices('a', 'b', 'c');
+  assert.equal(pickChoice(c, null, new Set([0])), 1);
+  assert.equal(pickChoice(c, null, new Set([0, 1])), 2);
+});
+
+test('보기가 전부 오답으로 표시되면 처음부터 다시 고른다', () => {
+  const c = choices('a', 'b');
+  assert.equal(pickChoice(c, null, new Set([0, 1])), 0);
+});
+
+test('단어장이 가리키는 보기가 이미 오답이면 다른 보기를 고른다', () => {
+  const c = choices('a', 'b', 'c');
+  assert.equal(pickChoice(c, 'c', new Set([2])), 0);
+});
+
+test('보기가 없으면 null', () => {
+  assert.equal(pickChoice([], 'a', new Set()), null);
+});
+
+test('단어장에서 양방향으로 정답을 찾는다', () => {
+  const dict = new Map([['그는 학교에 갔다', 'He went to school']]);
+  const lk = buildLookups(dict);
+
+  assert.equal(lookupAnswer('그는 학교에 갔다', lk), 'He went to school');
+  assert.equal(lookupAnswer('He went to school', lk), '그는 학교에 갔다');
+});
+
+test('지문에 군더더기가 붙어도 포함 관계로 찾는다', () => {
+  const dict = new Map([['나는 배가 고프다', 'I am hungry']]);
+  const lk = buildLookups(dict);
+
+  assert.equal(lookupAnswer('빈칸에 알맞은 것은? I am hungry', lk), '나는 배가 고프다');
+});
+
+test('못 찾으면 null', () => {
+  const dict = new Map([['사과', 'apple']]);
+  const lk = buildLookups(dict);
+
+  assert.equal(lookupAnswer('전혀 다른 문장', lk), null);
+  assert.equal(lookupAnswer('사과', null), null);
+});
+
+// ---------------------------------------------------------------- 클래스 페이지
+
+const unit = (i, name, stages, opts = {}) => ({
+  i, name, locked: !!opts.locked, hasTitle: opts.hasTitle !== false, stages,
+});
+const stage = (key, title, locked = false) => ({ key, title, locked });
+
+test('잠기지 않은 첫 단계를 STAGE_ORDER 순서로 고른다', () => {
+  const units = [unit(0, '강조구문', [
+    stage('0_1', '연습 문제 A'),
+    stage('0_0', '개념 톡'),
+    stage('0_2', '연습 문제 B', true),
+  ])];
+  const act = nextClassAction(units, new Set());
+  assert.equal(act.action, 'stage');
+  assert.equal(act.stage.title, '개념 톡');
+});
+
+test('이미 눌러 본 단계는 건너뛴다', () => {
+  const units = [unit(0, '강조구문', [stage('0_0', '개념 톡'), stage('0_1', '연습 문제 A')])];
+  const act = nextClassAction(units, new Set(['0_0']));
+  assert.equal(act.stage.title, '연습 문제 A');
+});
+
+test('잠긴 유닛은 통째로 건너뛴다', () => {
+  const units = [
+    unit(0, '잠긴 유닛', [stage('0_0', '개념 톡')], { locked: true }),
+    unit(1, '열린 유닛', [stage('1_0', '실전 문제')]),
+  ];
+  const act = nextClassAction(units, new Set());
+  assert.equal(act.unit.name, '열린 유닛');
+  assert.equal(act.stage.title, '실전 문제');
+});
+
+test('단계가 안 보이는 유닛은 먼저 펼친다', () => {
+  const units = [unit(0, '접힌 유닛', [])];
+  const act = nextClassAction(units, new Set());
+  assert.equal(act.action, 'open');
+  assert.equal(act.unit.i, 0);
+});
+
+test('할 일이 없으면 none', () => {
+  const units = [unit(0, '끝난 유닛', [stage('0_0', '개념 톡')])];
+  assert.equal(nextClassAction(units, new Set(['0_0'])).action, 'none');
+  assert.equal(nextClassAction([], new Set()).action, 'none');
+});
+
+test('STAGE_ORDER 에 없는 이름은 뒤로 밀린다', () => {
+  const units = [unit(0, 'u', [stage('0_0', '알 수 없는 단계'), stage('0_1', '서술형 문제')])];
+  assert.equal(nextClassAction(units, new Set()).stage.title, '서술형 문제');
+});
+
+// ---------------------------------------------------------------- 어순 배열
+
+const tile = (i, text, used = false) => ({ index: i, raw: text, norm: N.mnorm(text), used });
+
+test('정답 순서대로 타일을 고른다 (놓은 낱말로 진행을 센다)', () => {
+  const tiles = [tile(0, 'nice'), tile(1, 'You'), tile(2, 'look')];
+  assert.equal(nextScrambleIndex('You look nice', tiles, []), 1);
+  assert.equal(nextScrambleIndex('You look nice', tiles, ['you']), 2);
+  assert.equal(nextScrambleIndex('You look nice', tiles, ['you', 'look']), 0);
+});
+
+test('타일 번호가 바뀌어도 이어서 놓는다', () => {
+  // 사이트는 낱말을 놓을 때마다 남은 타일을 다시 늘어놓아 번호가 0부터 다시 매겨진다
+  const left = [tile(0, 'nice'), tile(1, 'look')];
+  assert.equal(nextScrambleIndex('You look nice', left, ['you']), 1);
+  assert.equal(nextScrambleIndex('You look nice', [tile(0, 'nice')], ['you', 'look']), 0);
+});
+
+test('같은 낱말이 두 번 나오면 한 번씩 놓는다', () => {
+  const tiles = [tile(0, 'the'), tile(1, 'the'), tile(2, 'end')];
+  assert.equal(nextScrambleIndex('the the end', tiles, []), 0);
+  assert.equal(nextScrambleIndex('the the end', [tile(0, 'the'), tile(1, 'end')], ['the']), 0);
+  assert.equal(nextScrambleIndex('the the end', [tile(0, 'end')], ['the', 'the']), 0);
+});
+
+test('문장을 다 만들면 null', () => {
+  const tiles = [tile(0, 'You'), tile(1, 'win')];
+  assert.equal(nextScrambleIndex('You win', tiles, ['you', 'win']), null);
+});
+
+test('타일에 구두점이 붙어 있어도 찾는다', () => {
+  const tiles = [tile(0, 'today.'), tile(1, 'It')];
+  assert.equal(nextScrambleIndex('It is today.', tiles, []), 1);
+});
+
+test('이미 쓴 타일과 정답을 모를 때', () => {
+  const tiles = [tile(0, 'a', true), tile(1, 'b'), tile(2, 'c')];
+  assert.equal(nextScrambleIndex(null, tiles, []), 1);       // 안 쓴 첫 타일
+  assert.equal(nextScrambleIndex(null, tiles, [1]), 2);      // 정답을 모를 땐 번호로 기억한다
+  assert.equal(nextScrambleIndex(null, [tile(0, 'a', true)], []), null);
+});
+
+// ---------------------------------------------------------------- 짝맞추기
+
+const cell = (i, text, done = false) => ({ index: i, raw: text, done });
+
+test('아직 안 맞춘 칸끼리 짝을 시도한다', () => {
+  const L = [cell(0, 'A'), cell(1, 'B')];
+  const R = [cell(0, '가'), cell(1, '나')];
+  assert.deepEqual(nextPairAttempt(L, R, new Set()), { left: 0, right: 0 });
+  assert.deepEqual(nextPairAttempt(L, R, new Set(['0_0'])), { left: 0, right: 1 });
+});
+
+test('맞춘 칸(done)은 건너뛴다', () => {
+  const L = [cell(0, 'A', true), cell(1, 'B')];
+  const R = [cell(0, '가', true), cell(1, '나')];
+  assert.deepEqual(nextPairAttempt(L, R, new Set()), { left: 1, right: 1 });
+  assert.equal(nextPairAttempt(L, R, new Set(['1_1'])), null);
+});
+
+test('짝 번호(data-idx)가 있으면 추측하지 않고 같은 번호끼리 맞춘다', () => {
+  // 사이트 기준: 같은 줄의 왼쪽·오른쪽 data-idx 가 같으면 정답 (gclass_test.js 16)
+  const L = [{ index: 0, raw: 'A', idx: '2', done: false },
+             { index: 1, raw: 'B', idx: '0', done: false }];
+  const R = [{ index: 0, raw: '가', idx: '0', done: false },
+             { index: 1, raw: '나', idx: '2', done: false }];
+  assert.deepEqual(nextPairAttempt(L, R, new Set()), { left: 0, right: 1 });
+});
+
+test('짝 번호가 있어도 이미 맞춘 칸은 넘어간다', () => {
+  const L = [{ index: 0, raw: 'A', idx: '2', done: true },
+             { index: 1, raw: 'B', idx: '0', done: false }];
+  const R = [{ index: 0, raw: '가', idx: '0', done: false },
+             { index: 1, raw: '나', idx: '2', done: true }];
+  assert.deepEqual(nextPairAttempt(L, R, new Set()), { left: 1, right: 0 });
+});
+
+// ---------------------------------------------------------------- 분류형
+
+const row = (i, text, opts, done = false) => ({
+  index: i, text, done,
+  options: opts.map((t, j) => ({ index: j, key: `${i}_${j}`, raw: t, norm: N.mnorm(t) })),
+});
+
+test('아직 안 푼 줄부터 보기를 고른다', () => {
+  const rows = [row(0, 'apple', ['셀 수 있음', '셀 수 없음'], true),
+                row(1, 'water', ['셀 수 있음', '셀 수 없음'])];
+  assert.deepEqual(nextGroupPick(rows, null, new Map()), { row: 1, option: 0 });
+});
+
+test('그 줄에서 틀린 보기는 다시 고르지 않는다', () => {
+  const rows = [row(0, 'water', ['셀 수 있음', '셀 수 없음'])];
+  const wrong = new Map([[0, new Set([0])]]);
+  assert.deepEqual(nextGroupPick(rows, null, wrong), { row: 0, option: 1 });
+});
+
+test('정답 문장에 줄 이름과 보기가 있으면 그것을 고른다', () => {
+  const rows = [row(0, 'water', ['셀 수 있음', '셀 수 없음'])];
+  assert.deepEqual(
+    nextGroupPick(rows, 'water 셀 수 없음, apple 셀 수 있음', new Map()),
+    { row: 0, option: 1 },
+  );
+});
+
+test('풀 줄이 없으면 null', () => {
+  assert.equal(nextGroupPick([row(0, 'a', ['x', 'y'], true)], null, new Map()), null);
+});
+
+test('줄의 data-key 가 있으면 추측하지 않고 그 값의 보기를 고른다', () => {
+  // 사이트 기준: data-key 와 고른 라디오 value 가 같으면 정답 (gclass_test.js 17)
+  const rows = [{
+    index: 0, text: 'water', done: false, key: '1',
+    options: [{ index: 0, key: '0_0', raw: '셀 수 있음', norm: N.mnorm('셀 수 있음'), val: '0' },
+              { index: 1, key: '0_1', raw: '셀 수 없음', norm: N.mnorm('셀 수 없음'), val: '1' }],
+  }];
+  // 정답 문장이 반대로 말해도, 사이트가 쓰는 값이 이긴다
+  assert.deepEqual(nextGroupPick(rows, 'water 셀 수 있음', new Map()), { row: 0, option: 1 });
+});
+
+// ---------------------------------------------------------------- 빈칸 채우기
+
+test('빈칸이 하나면 정답을 통째로 넣는다', () => {
+  assert.deepEqual(fillValues(1, 'It was the man that stole my bag.', ''),
+    ['It was the man that stole my bag.']);
+});
+
+test('빈칸 수와 정답 단어 수가 같으면 하나씩 나눠 넣는다', () => {
+  assert.deepEqual(fillValues(3, 'It is Paul', ''), ['It', 'is', 'Paul']);
+});
+
+test('정답 단어가 더 많으면 마지막 칸에 몰아 넣는다', () => {
+  assert.deepEqual(fillValues(2, 'It is Paul who', ''), ['It', 'is Paul who']);
+});
+
+test('정답을 모르면 화면의 힌트 단어를 순서대로 넣는다', () => {
+  assert.deepEqual(fillValues(3, null, 'the, tallest, student, is, who, Paul'),
+    ['the', 'tallest', 'student']);
+});
+
+test('힌트가 빈칸보다 적으면 남는 칸은 비운다', () => {
+  assert.deepEqual(fillValues(3, null, 'a, b'), ['a', 'b', '']);
+});
+
+test('정답도 힌트도 없으면 빈 목록', () => {
+  assert.deepEqual(fillValues(2, null, ''), []);
+  assert.deepEqual(fillValues(0, 'x', 'y'), []);
+});
+
+// ---------------------------------------------------------------- 개념 톡 정답 고르기
+// 실제 개념 톡('강조구문' 유닛)에 나온 문구를 그대로 쓴다.
+
+test('빈칸: 다음 카드 해설에서 정답 단어를 찾는다', () => {
+  const c = choices('인칭', '동사', '부사구', '동사원형', '주어', '목적어');
+  const 해설 = "이때는 '정말 ~하다'라고 해석해서 동사의 뜻을 강조해 줘요.";
+  assert.equal(pickTalkAnswer(c, 해설), 1);   // 동사
+});
+
+test('객관식: 정답 해설이 인용한 보기를 고른다', () => {
+  const c = choices(
+    '1 나는 정말 많은 고기를 먹었다.',
+    '2 나는 시금치를 정말 싫어한다.',
+    '3 나는 엄청 느리게 달린다.',
+  );
+  const 해설 = "'정말'이라는 말을 붙여서 '싫어한다'는 동사의 의미를 강조하고 있어요.";
+  assert.equal(pickTalkAnswer(c, 해설), 1);   // 2번 보기
+});
+
+test('모든 보기에 공통인 말은 단서로 치지 않는다', () => {
+  // '정말'은 세 보기에 다 있으므로 점수가 되면 안 된다
+  const c = choices('나는 정말 먹었다.', '나는 정말 싫어한다.', '나는 정말 달린다.');
+  assert.equal(pickTalkAnswer(c, "'정말'이라는 말이 붙었어요."), null);
+});
+
+test('단서가 없으면 null', () => {
+  const c = choices('인칭', '동사', '부사구');
+  assert.equal(pickTalkAnswer(c, '잘 하셨어요! 이제 끝입니다.'), null);
+  assert.equal(pickTalkAnswer(c, ''), null);
+  assert.equal(pickTalkAnswer([], '동사'), null);
+});
+
+// ---------------------------------------------------------------- 페이지 정답 찾기
+// 개념 톡은 정답을 화면에 그리지 않는다. 채점을 브라우저가 하므로 정답이 전역 변수에
+// 들어 있고, 그것을 실행 중에 찾아낸다. 아래는 그 스크립트를 가짜 window 로 돌린 것.
+
+const runScan = (win, options, cnt) =>
+  new Function('window', 'Object', FIND_ANSWER_JS(options, cnt))(win, Object);
+
+test('빈칸 번호에 해당하는 자리의 정답을 찾는다', () => {
+  const win = { arr_talk_answer: ['동사', '인칭'] };
+  const opts = ['1동사원형', '2부사구', '3동사', '4인칭'];
+  assert.equal(runScan(win, opts, 0), '동사');
+  assert.equal(runScan(win, opts, 1), '인칭');
+});
+
+test('보기에 붙은 번호는 무시하고 맞춘다', () => {
+  assert.equal(runScan({ ans: ['목적어'] }, ['1주어', '2목적어'], 0), '목적어');
+});
+
+test('중첩된 객체 안에 있어도 찾는다', () => {
+  const win = { quiz: { data: { answers: ['who'] } } };
+  assert.equal(runScan(win, ['which', 'who', 'where'], 0), 'who');
+});
+
+test('보기와 맞는 값이 여럿이면 쓰지 않는다', () => {
+  // 칸 번호가 없고(-1) 정답 배열에 보기 두 개가 다 들어 있으면 확신할 수 없다
+  const win = { pool: ['동사', '인칭'] };
+  assert.equal(runScan(win, ['동사', '인칭'], -1), '');
+});
+
+test('없으면 빈 문자열', () => {
+  assert.equal(runScan({ x: ['전혀다른값'] }, ['동사', '인칭'], 0), '');
+});
+
+test('보기 목록도 전역에 있을 때, 이름이 정답인 자리를 고른다', () => {
+  // 실제 페이지에는 보기 목록과 정답이 함께 전역에 있다.
+  // 그냥 세면 보기가 다 걸리므로, answer/정답 같은 이름이 붙은 자리를 우선한다.
+  const win = {
+    QUIZ: { options: ['which', 'who', 'where'] },
+    quiz_answer_data: { current: { answer: 'who' } },
+  };
+  assert.equal(runScan(win, ['which', 'who', 'where'], -1), 'who');
+});
+
+test('이름이 정답인 자리가 여럿이면 쓰지 않는다', () => {
+  const win = { a: { answer: 'who' }, b: { answer: 'where' } };
+  assert.equal(runScan(win, ['which', 'who', 'where'], -1), '');
+});
+
+// ---------------------------------------------------------------- 사이트 정답으로 고르기
+// 실제 소스 확인 결과, 정답은 arr_answer/arr_card 에 ';' 또는 '|' 로 묶여 온다.
+
+test('정답 문자열을 조각으로 나눈다', () => {
+  assert.deepEqual(splitAnswers('동사;인칭'), ['동사', '인칭']);
+  assert.deepEqual(splitAnswers('who|that'), ['who', 'that']);
+  assert.deepEqual(splitAnswers('do / does'), ['do does']);
+  assert.deepEqual(splitAnswers(''), []);
+});
+
+test('정확히 같은 보기를 먼저 고른다', () => {
+  // '동사' 가 정답인데 '동사원형' 을 고르면 안 된다
+  const c = choices('1동사원형', '2부사구', '3동사', '4인칭');
+  assert.equal(pickByAnswers(c, ['동사'], new Set()), 2);
+  assert.equal(pickByAnswers(c, ['동사원형'], new Set()), 0);
+});
+
+test('정확히 같은 게 없으면 포함 관계로 고른다', () => {
+  const c = choices('in', 'on', 'at');
+  assert.equal(pickByAnswers(c, ['at night'], new Set()), 2);
+});
+
+test('이미 틀린 보기는 빼고 고른다', () => {
+  const c = choices('who', 'that');
+  assert.equal(pickByAnswers(c, ['who'], new Set([0])), null);
+  assert.equal(pickByAnswers(c, ['who', 'that'], new Set([0])), 1);
+});
+
+test('맞는 보기가 없으면 null', () => {
+  const c = choices('a', 'b');
+  assert.equal(pickByAnswers(c, ['zzz'], new Set()), null);
+  assert.equal(pickByAnswers(c, [], new Set()), null);
+});
+
+
+// ---------------------------------------------- 사이트 정답을 빈칸 단위로 나누기
+
+test("';' 는 빈칸, '|' 는 같은 칸의 다른 답", () => {
+  assert.deepEqual(splitBlanks('do;love'), ['do', 'love']);
+  assert.deepEqual(splitBlanks('It;was;a;puppy;that|which'),
+    ['It', 'was', 'a', 'puppy', 'that']);
+  assert.deepEqual(splitBlanks('does look'), ['does look']);
+  assert.deepEqual(splitBlanks(''), []);
+});
+
+test('빈칸 수에 맞춰 사이트 정답을 나눠 넣는다', () => {
+  assert.deepEqual(fillValues(5, 'It;was;a;puppy;that|which', ''),
+    ['It', 'was', 'a', 'puppy', 'that']);
+  assert.deepEqual(fillValues(2, 'do;love', ''), ['do', 'love']);
+  // 한 칸짜리인데 다른 답이 '|' 로 붙어 있으면 첫 번째만 쓴다
+  assert.deepEqual(fillValues(1, 'It was a teacher that Jason became.|It was Jason that became a teacher.', ''),
+    ['It was a teacher that Jason became.']);
+});
+
+
+// ---------------------------------------------- 정답이 여러 개인 객관식 (실전 문제)
+
+const opt = (i, raw, on = false, ans = '') => ({ index: i, raw, norm: N.mnorm(raw), ans, on });
+
+test("객관식 정답은 '|' 로 이어져 있고 그 개수만큼 고른다", () => {
+  assert.deepEqual(splitPicks('I do love it.|She does look nice.'),
+    ['I do love it.', 'She does look nice.']);
+  assert.deepEqual(splitPicks('that'), ['that']);          // 1개짜리는 하나만
+  assert.deepEqual(splitPicks(''), []);
+});
+
+test('정답 2개를 하나씩 골라 나간다', () => {
+  const wanted = ['was', 'were'];
+  const a = [opt(0, 'was'), opt(1, 'were'), opt(2, 'is')];
+  assert.equal(nextPickIndex(a, wanted), 0);
+  const b = [opt(0, 'was', true), opt(1, 'were'), opt(2, 'is')];
+  assert.equal(nextPickIndex(b, wanted), 1);
+  const c = [opt(0, 'was', true), opt(1, 'were', true), opt(2, 'is')];
+  assert.equal(nextPickIndex(c, wanted), null);            // 다 골랐다 -> 제출
+});
+
+test('사이트가 채점에 쓰는 글자로도 보기를 찾는다', () => {
+  const a = [opt(0, '① 보기 하나', false, 'was'), opt(1, '② 보기 둘', false, 'were')];
+  assert.equal(nextPickIndex(a, ['were']), 1);
+});
+
+test('정답 보기가 화면에 없으면 null', () => {
+  const a = [opt(0, 'is'), opt(1, 'are')];
+  assert.equal(nextPickIndex(a, ['was', 'were']), null);
+});

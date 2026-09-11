@@ -1,0 +1,578 @@
+/**
+ * HtmlParser.py / Memorize.py / Recall.py / Spell.py 이식.
+ * (파이썬 원본의 JS 스니펫과 CSS 셀렉터는 문자 그대로 재사용한다)
+ */
+
+import * as N from '../norm.js';
+
+// ============================================================ HtmlParser.py
+
+const STUDY_DATA_RE = /var\s+study_data\s*=\s*(\[[\s\S]*?\]);/;
+
+/** 현재 페이지에서 카드 목록([{front, back}, ...])을 뽑는다. */
+export async function getData(d) {
+  const direct = await d.eval(
+    "return (typeof study_data !== 'undefined' && study_data) ? study_data : null;",
+  );
+  if (Array.isArray(direct) && direct.length) {
+    const cards = toCards(direct);
+    if (cards.length) {
+      d.log(`데이터 추출 완료! 총 ${cards.length}개 카드`);
+      return cards;
+    }
+  }
+
+  const html = await d.evalStringOrNull('return document.documentElement.outerHTML;');
+  if (!html) {
+    d.log('[!] 페이지 HTML을 읽지 못했습니다.', 'error');
+    return null;
+  }
+  const match = STUDY_DATA_RE.exec(html);
+  if (!match) {
+    d.log('[!] study_data를 찾을 수 없습니다. 학습 페이지가 맞는지 확인하세요.', 'error');
+    return null;
+  }
+  try {
+    const cards = toCards(JSON.parse(match[1]));
+    d.log(`데이터 추출 완료! 총 ${cards.length}개 카드`);
+    return cards;
+  } catch (e) {
+    d.log(`[오류] JSON 파싱 실패: ${e.message}`, 'error');
+    return null;
+  }
+}
+
+function toCards(arr) {
+  const out = [];
+  for (const card of arr) {
+    if (!card) continue;
+    out.push({
+      front: String(card.front || '').trim(),
+      back: String(card.back || '').trim(),
+    });
+  }
+  return out;
+}
+
+/** Spell.py 의 `dict_from_cards` — {back: front} 맵. */
+export function dictFromCards(cards) {
+  if (!cards || !cards.length) return null;
+  const dict = new Map();
+  for (const c of cards) dict.set(c.back, c.front);
+  return dict;
+}
+
+// ============================================================ 학습 시작 화면
+
+/**
+ * 학습 페이지는 **시작 화면**으로 열린다 (실제 페이지에서 확인:
+ * `<a class="btn btn-primary btn-block btn-opt-start">리콜 학습 시작 (1구간)</a>`).
+ * 이 버튼을 누르기 전에는 `.CardItem.current` 가 없어서 어떤 모드도 아무것도 할 수 없다.
+ * 시작 화면이면 눌러 주고 true, 이미 학습 중이면 false.
+ */
+export async function startStudyIfNeeded(d, stop) {
+  const need = await d.evalBool(`
+    function vis(el) { return el && el.offsetParent !== null; }
+    if (vis(document.querySelector('.CardItem.current'))) return false;
+    var btns = document.querySelectorAll('.btn-opt-start, .start-opt-body a.btn, .btn-quiz-start');
+    for (var i = 0; i < btns.length; i++) if (vis(btns[i])) return true;
+    return false;`);
+  if (!need) return false;
+
+  d.log('학습 시작 화면입니다 — 시작 버튼을 누릅니다.');
+  await d.clickSmart(`
+    function vis(el) { return el && el.offsetParent !== null; }
+    var btns = document.querySelectorAll('.btn-opt-start, .start-opt-body a.btn, .btn-quiz-start');
+    for (var i = 0; i < btns.length; i++) if (vis(btns[i])) { el = btns[i]; break; }`);
+  await stop.await(1500);
+  return true;
+}
+
+// ============================================================ Memorize.py
+
+/**
+ * 완료 종료 판단: `.btn-study-end-repeat` visible / `.next-repeat-percent` >= 100 /
+ * `#study_end.active` 중 하나.
+ */
+export async function checkStep2SuccessAndStop(d, stop) {
+  const done = await d.evalBool(`
+    var btns = document.querySelectorAll(".btn-study-end-repeat");
+    for (var i = 0; i < btns.length; i++) {
+        if (btns[i].offsetParent !== null) return true;
+    }
+    var ps = document.querySelectorAll(".next-repeat-percent");
+    for (var i = 0; i < ps.length; i++) {
+        if (ps[i].offsetParent !== null && parseInt(ps[i].textContent) >= 100) return true;
+    }
+    return document.querySelectorAll("#study_end.active").length > 0;`);
+  if (!done) return false;
+  await d.exec('var a = document.querySelectorAll("#study_end.active .study-header a"); if (a.length) a[0].click();');
+  await d.exec('var a = document.querySelectorAll(".btn-top-menu a"); if (a.length) a[0].click();');
+  await stop.sleep(500);
+  await d.exec('var a = document.querySelectorAll(".close_o"); if (a.length) a[0].click();');
+  stop.set();
+  return true;
+}
+
+/** total 밀리초 동안 interval 간격으로 종료 체크하며 대기. */
+export async function waitWithCheck(d, stop, total, interval = 200) {
+  let elapsed = 0;
+  while (elapsed < total) {
+    const slice = Math.min(interval, total - elapsed);
+    if (await stop.await(slice)) return true;
+    elapsed += slice;
+    if (await checkStep2SuccessAndStop(d, stop)) return true;
+  }
+  return false;
+}
+
+/** 현재 보이는 카드의 식별자(전환 감지용). data-idx 만 사용한다. */
+async function getCardKey(d) {
+  return d.evalStringOrNull(`
+    var c = document.querySelector('.CardItem.current')
+         || document.querySelector('.CardItem.active')
+         || document.querySelector('.showing');
+    if (!c) return null;
+    return c.getAttribute('data-idx') || c.getAttribute('data-card-idx') || null;`);
+}
+
+async function waitChangeOrStop(d, stop, prevKey, total, interval = 200) {
+  let elapsed = 0;
+  while (elapsed < total) {
+    const slice = Math.min(interval, total - elapsed);
+    if (await stop.await(slice)) return true;
+    elapsed += slice;
+    if (await checkStep2SuccessAndStop(d, stop)) return true;
+    const cur = await getCardKey(d);
+    if (cur !== null && cur !== prevKey) return true;
+  }
+  return false;
+}
+
+/** Memorize.py — 단어 암기 자동화 */
+export async function memorize(d, answerDict, stop) {
+  d.log('[암기] 시작');
+  try {
+    while (!stop.isSet) {
+      if (await checkStep2SuccessAndStop(d, stop)) break;
+      if (await startStudyIfNeeded(d, stop)) continue;
+
+      const prev = await getCardKey(d);
+
+      if (prev === null) {
+        // 카드 식별 불가(페이지 구조 차이) -> 기존 타이머 방식
+        await d.pressSpace();
+        if (await waitWithCheck(d, stop, 600)) break;
+        await d.pressShiftSpace();
+        if (await waitWithCheck(d, stop, 1300)) break;
+        continue;
+      }
+
+      // 카드가 실제로 넘어갈 때까지 SPACE -> SHIFT+SPACE 재시도 (씹힘 대비, 최대 8회)
+      for (let i = 0; i < 8; i++) {
+        await d.pressSpace();
+        if (await waitChangeOrStop(d, stop, prev, 600)) break;
+        await d.pressShiftSpace();
+        if (await waitChangeOrStop(d, stop, prev, 1300)) break;
+      }
+      if (stop.isSet) break;
+    }
+  } catch (e) {
+    if (!stop.isSet) d.log(`[암기] 오류: ${e.message}`, 'error');
+  } finally {
+    d.log('[암기] 종료');
+  }
+}
+
+// ============================================================ Recall.py
+
+/**
+ * 리콜 화면의 실제 동작 (사이트 스크립트 scripts/v2/recall.js 확인 결과):
+ *
+ *  - 카드가 바뀌고 0.8초 뒤 `.CardItem.current .card-cover` 에 `down` 이 붙는다.
+ *    이때부터 보기(정답 후보)를 고를 수 있다. 그 전에 누르면 덮개에 막힌다.
+ *  - 보기 중 **정답에는 `.answer` 클래스**가 붙어 있다(사이트가 data-answer=1 을 함께 넣는다).
+ *  - 보기 클릭 처리(setCardQuestItem)는 `e.originalEvent.isTrusted` 가 false 면 **그냥 무시**한다.
+ *    -> 합성 클릭은 절대 통하지 않는다. 신뢰된 클릭만 받는다.
+ *  - 정답을 고르면 사이트가 1초 뒤 `.btnNextCard` 를 스스로 눌러 다음 카드로 넘어간다.
+ *    (오답이면 넘어가지 않으므로 우리가 눌러 준다)
+ */
+const RECALL_STATE_JS = `
+var card = document.querySelector('.CardItem.current') ||
+           document.querySelector('.CardItem.showing');
+if (!card) return { found: false };
+
+var cover = card.querySelector('.card-cover');
+var down = !!(cover && cover.className.indexOf('down') >= 0);
+
+// 이미 채점된 카드인지 (정답/오답 표시가 붙었거나 카드가 active/deactive 가 된다)
+var cls = ' ' + card.className + ' ';
+var answered = cls.indexOf(' active ') >= 0 || cls.indexOf(' deactive ') >= 0 ||
+    !!card.querySelector('.card-quest-o, .card-quest-x, .show-answer');
+
+var target = card.querySelector('.answer');
+var options = card.querySelectorAll('.cc-table').length;
+
+return {
+    found: true,
+    idx: card.getAttribute('data-idx') || '',
+    down: down,
+    answered: answered,
+    hasAnswer: !!target,
+    options: options
+};`;
+
+const RECALL_ANSWER_LOCATOR_JS = `
+var card = document.querySelector('.CardItem.current') ||
+           document.querySelector('.CardItem.showing');
+if (!card) return null;
+var t = card.querySelector('.answer');
+if (!t) return null;
+t.scrollIntoView({ block: 'center', inline: 'center' });
+var r = t.getBoundingClientRect();
+if (!r.width || !r.height) return null;
+return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: window.innerWidth };`;
+
+async function recallState(d) {
+  const v = await d.eval(RECALL_STATE_JS);
+  return v && v.found ? v : null;
+}
+
+/** Recall.py — 단어 리콜 자동화 */
+export async function recall(d, answerDict, stop) {
+  d.log('[리콜] 시작');
+
+  let lastIdx = null;
+  let sameIdx = 0;
+  let noCard = 0;
+  let warnedTrusted = false;
+
+  try {
+    while (!stop.isSet) {
+      if (await checkStep2SuccessAndStop(d, stop)) break;
+      if (await startStudyIfNeeded(d, stop)) continue;
+
+      const st = await recallState(d);
+      if (!st) {
+        noCard++;
+        if (noCard === 10) d.log('[리콜] 카드를 찾지 못했습니다. 리콜 학습 화면이 맞는지 확인하세요.', 'warn');
+        if (noCard > 60) { d.log('[리콜] 카드가 없어 종료합니다.', 'warn'); break; }
+        if (await stop.await(400)) break;
+        continue;
+      }
+      noCard = 0;
+
+      // 같은 카드에 계속 머물면(정답 클릭이 안 먹는 경우) 다음 카드로 밀어 본다
+      if (st.idx && st.idx === lastIdx) sameIdx++;
+      else { sameIdx = 0; lastIdx = st.idx; }
+
+      // 이미 채점된 카드 -> 다음 카드로
+      if (st.answered) {
+        await d.clickFirstVisible('.btnNextCard');
+        if (await waitWithCheck(d, stop, 800)) break;
+        continue;
+      }
+
+      // 덮개가 아직 내려오지 않았다 (카드 전환 후 0.8초). 내려올 때까지 기다린다.
+      if (!st.down) {
+        if (await waitWithCheck(d, stop, 400)) break;
+        continue;
+      }
+
+      if (!st.hasAnswer) {
+        d.log('[리콜] 이 카드에서 정답 보기를 찾지 못했습니다 — 다음 카드로 넘어갑니다.', 'warn');
+        await d.clickFirstVisible('.btnNextCard');
+        if (await waitWithCheck(d, stop, 800)) break;
+        continue;
+      }
+
+      // 정답 보기를 신뢰된 클릭으로 누른다. (합성 클릭은 사이트가 무시한다)
+      const clicked = await d.trustedClick(RECALL_ANSWER_LOCATOR_JS);
+      if (!clicked && !warnedTrusted) {
+        warnedTrusted = true;
+        d.log(
+          '[리콜] 신뢰된 클릭을 보내지 못했습니다. 리콜은 합성 클릭을 받지 않으므로 ' +
+            '브라우저 상단의 디버깅 안내를 취소하지 마세요.',
+          'error',
+        );
+      }
+
+      // 정답이면 사이트가 1초 뒤 스스로 다음 카드로 넘어간다.
+      if (await waitWithCheck(d, stop, 1800)) break;
+
+      const after = await recallState(d);
+      if (after && after.idx === st.idx && !after.answered && sameIdx >= 3) {
+        // 세 번 눌러도 그대로면 다음 카드로 밀어 진행을 계속한다
+        await d.clickFirstVisible('.btnNextCard');
+        if (await waitWithCheck(d, stop, 800)) break;
+      } else if (after && after.answered) {
+        // 채점됐는데 자동으로 안 넘어가면(오답) 다음 카드를 눌러 준다
+        if (await waitWithCheck(d, stop, 700)) break;
+        const still = await recallState(d);
+        if (still && still.idx === st.idx) await d.clickFirstVisible('.btnNextCard');
+      }
+    }
+  } catch (e) {
+    if (!stop.isSet) d.log(`[리콜] 오류: ${e.message}`, 'error');
+  } finally {
+    d.log('[리콜] 종료');
+  }
+}
+
+// ============================================================ Spell.py
+
+const INPUT_SELECTOR = 'input[name="input_answer"]';
+
+/**
+ * 제시어(prompt)에 해당하는 입력 정답.
+ * 기본은 back(의미) -> front(단어). 단어 제시 모드 대비로 front -> back 역방향도 시도.
+ */
+export function findAnswer(answerDict, prompt) {
+  const p = N.squeeze(prompt);
+  for (const [back, front] of answerDict) {
+    if (p === N.squeeze(back)) return front;
+  }
+  for (const [back, front] of answerDict) {
+    if (p === N.squeeze(front)) return back;
+  }
+  return null;
+}
+
+/**
+ * 지금 카드의 **정답을 화면에서 그대로 읽는다**.
+ *
+ * 사이트 스크립트(scripts/v2/spell.js)가 채점할 때 쓰는 값과 같은 값이다:
+ *   `$('.CardItem.current.showing .card-bottom .spell-answer .spell-content').data('answer')`
+ * jQuery 의 data 저장소에 들어 있어 DOM 속성으로는 안 보이므로 jQuery 로 읽는다.
+ * (실제 페이지에서 확인: 프롬프트 'n.돌봄, 조심, 걱정' -> 정답 'care')
+ */
+async function readSpellAnswer(d) {
+  const v = await d.evalStringOrNull(`
+    if (!window.jQuery) return null;
+    var sels = ['.CardItem.current.showing .card-bottom .spell-answer .spell-content',
+                '.CardItem.current .card-bottom .spell-answer .spell-content',
+                '.CardItem.current.showing .card-top .spell-answer .spell-content'];
+    for (var i = 0; i < sels.length; i++) {
+        var el = jQuery(sels[i]);
+        if (!el.length) continue;
+        var a = el.data('answer');
+        if (a == null) continue;
+        // 사이트도 HTML 을 걷어 내고 비교한다
+        var t = jQuery('<div>').html(String(a)).text().trim();
+        if (t) return t;
+    }
+    return null;`);
+  return v && v.trim() ? v.trim() : null;
+}
+
+async function getActiveCard(d) {
+  const res = await d.eval(`
+    var card = document.querySelector('.CardItem.current');
+    if (!card) return null;
+    var conts = card.querySelectorAll('.spell-answer .spell-content');
+    var prompt = '';
+    for (var i = 0; i < conts.length; i++) {
+        var t = (conts[i].textContent || '').trim();
+        if (t) { prompt = t; break; }
+    }
+    return {idx: card.getAttribute('data-idx'), prompt: prompt};`);
+  if (!res) return { idx: null, prompt: '' };
+  return { idx: res.idx ?? null, prompt: res.prompt || '' };
+}
+
+/** `#study_end.active` 또는 `.btn-study-end-repeat` 가 보이면 완료. */
+async function spellCheckEnd(d, stop) {
+  const done = await d.evalBool(`
+    var btns = document.querySelectorAll(".btn-study-end-repeat");
+    for (var i = 0; i < btns.length; i++) {
+        if (btns[i].offsetParent !== null) return true;
+    }
+    return document.querySelectorAll("#study_end.active").length > 0;`);
+  if (!done) return false;
+  await d.exec('var a = document.querySelectorAll("#study_end.active .study-header a"); if (a.length) a[0].click();');
+  await d.exec('var a = document.querySelectorAll(".btn-top-menu a"); if (a.length) a[0].click();');
+  await stop.sleep(500);
+  await d.exec('var a = document.querySelectorAll(".close_o"); if (a.length) a[0].click();');
+  stop.set();
+  return true;
+}
+
+/**
+ * 스펠 입력창에 답을 써 넣는다.
+ *
+ * 사이트는 입력창의 마지막 keydown 이벤트를 저장해 두고 채점 때 isTrusted 를 본다.
+ * 그래서 **진짜 키 입력**으로 쳐 넣어야 하고, 값만 넣으면 제출이 거부된다.
+ * (빈 문자열은 '모름'으로 그냥 제출하는 경우라 값만 비우면 된다)
+ */
+async function typeActiveInput(d, text) {
+  if (!(await focusActiveInput(d))) return false;
+  await clearActiveInput(d);
+  if (!text) return true;
+  if (await d.typeText(text)) return true;
+  // 신뢰된 입력을 못 보내는 환경 -> 값만 넣어 본다 (사이트가 거부할 수 있다)
+  return fillActiveInput(d, text);
+}
+
+/** 입력창에 포커스를 준다 (없으면 false). */
+async function focusActiveInput(d) {
+  return d.evalBool(`
+    function visibleInput(root) {
+        var els = root.querySelectorAll(${JSON.stringify(INPUT_SELECTOR)});
+        for (var i = 0; i < els.length; i++) {
+            if (els[i].offsetParent !== null) return els[i];
+        }
+        return null;
+    }
+    var cur = document.querySelector('.CardItem.current');
+    var el = cur ? visibleInput(cur) : null;
+    if (!el) el = visibleInput(document);
+    if (!el) return false;
+    el.focus();
+    return true;`);
+}
+
+/** 입력창을 비운다 (값만 지우면 되므로 신뢰된 입력이 필요 없다). */
+async function clearActiveInput(d) {
+  return d.evalBool(`
+    var el = document.activeElement;
+    if (!el || !('value' in el)) return false;
+    var setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, '');
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    return true;`);
+}
+
+async function fillActiveInput(d, text) {
+  return d.evalBool(`
+    function visibleInput(root) {
+        var els = root.querySelectorAll(${JSON.stringify(INPUT_SELECTOR)});
+        for (var i = 0; i < els.length; i++) {
+            if (els[i].offsetParent !== null) return els[i];
+        }
+        return null;
+    }
+    var cur = document.querySelector('.CardItem.current');
+    var el = cur ? visibleInput(cur) : null;
+    if (!el) el = visibleInput(document);
+    if (!el) return false;
+    el.focus();
+    var setter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype, 'value').set;
+    setter.call(el, ${JSON.stringify(text)});
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    el.dispatchEvent(new Event('change', {bubbles: true}));
+    return true;`);
+}
+
+async function hasActiveInput(d) {
+  return d.evalBool(`
+    var els = document.querySelectorAll(${JSON.stringify(INPUT_SELECTOR)});
+    for (var i = 0; i < els.length; i++) {
+        if (els[i].offsetParent !== null) return true;
+    }
+    return false;`);
+}
+
+/** 'changed' | 'done' | 'stopped' | 'stuck' */
+async function waitNextCard(d, stop, prevIdx, timeout = 2500) {
+  let elapsed = 0;
+  while (elapsed < timeout) {
+    if (await stop.await(200)) return 'stopped';
+    elapsed += 200;
+    if (await spellCheckEnd(d, stop)) return 'done';
+    const { idx } = await getActiveCard(d);
+    if (idx !== null && idx !== prevIdx) return 'changed';
+  }
+  return 'stuck';
+}
+
+/** Spell.py — 스펠(타이핑) 자동화 */
+export async function spell(d, answerDict, stop) {
+  d.log('[스펠] 시작');
+
+  let dict = answerDict;
+  if (!dict || dict.size === 0) {
+    // 카드 데이터(study_data)는 **학습이 시작된 뒤** 페이지에 채워진다.
+    // 그래서 시작 화면이면 먼저 시작 버튼을 누르고, 그 다음에 단어장을 읽는다.
+    await startStudyIfNeeded(d, stop);
+    for (let i = 0; i < 10 && !stop.isSet; i++) {
+      const cards = await d.eval(
+        "return (typeof study_data !== 'undefined' && study_data) ? study_data : null;",
+      );
+      if (Array.isArray(cards) && cards.length) {
+        dict = dictFromCards(cards.map((c) => ({
+          front: String((c && c.front) || '').trim(),
+          back: String((c && c.back) || '').trim(),
+        })));
+        if (dict && dict.size) {
+          d.log(`[스펠] 페이지에서 단어장을 읽었습니다 (${dict.size}개)`);
+          break;
+        }
+      }
+      if (await stop.await(500)) return;
+    }
+  }
+  if (!dict || dict.size === 0) {
+    d.log('[스펠] 단어장이 없습니다 — 화면에 실린 정답으로 풉니다.');
+    dict = new Map();
+  }
+  answerDict = dict;
+
+  let loggedSource = false;
+  try {
+    while (!stop.isSet) {
+      if (await spellCheckEnd(d, stop)) break;
+      if (await startStudyIfNeeded(d, stop)) continue;
+
+      const { idx, prompt } = await getActiveCard(d);
+      if (!prompt) {
+        if (await spellCheckEnd(d, stop)) break;
+        if (await stop.await(400)) break;
+        continue;
+      }
+
+      if (!(await hasActiveInput(d))) {
+        if (await stop.await(300)) break;
+        continue;
+      }
+
+      // 1순위: 화면에 실린 정답(사이트가 채점에 쓰는 값), 2순위: 단어장
+      let answer = await readSpellAnswer(d);
+      if (answer) {
+        if (!loggedSource) {
+          loggedSource = true;
+          d.log('[스펠] 화면에서 정답을 읽어 풉니다 (단어장 불필요)');
+        }
+      } else {
+        answer = findAnswer(answerDict, prompt);
+      }
+      if (answer !== null) {
+        if (!(await typeActiveInput(d, answer))) {
+          if (await stop.await(300)) break;
+          continue;
+        }
+        if (await stop.await(150)) break;
+        await d.pressEnter();
+      } else {
+        // 정답을 모르면 빈 입력으로 제출 -> 정답 표시 후 다음으로 (무한루프 방지)
+        d.log(`[스펠] 매칭 실패(스킵): '${prompt}'`, 'warn');
+        await typeActiveInput(d, '');
+        await d.pressEnter();
+      }
+
+      const status = await waitNextCard(d, stop, idx, 2000);
+      if (status === 'stopped' || status === 'done') break;
+      if (status === 'stuck') {
+        await d.blurActiveElement();
+        await d.pressSpace();
+        const again = await waitNextCard(d, stop, idx, 2000);
+        if (again === 'stopped' || again === 'done') break;
+      }
+    }
+  } catch (e) {
+    if (!stop.isSet) d.log(`[스펠] 오류: ${e.message}`, 'error');
+  } finally {
+    d.log('[스펠] 종료');
+  }
+}
