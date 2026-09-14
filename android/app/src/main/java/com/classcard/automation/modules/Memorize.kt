@@ -10,19 +10,36 @@ typealias ModeFn = suspend (Driver, AnswerDict?, StopFlag) -> Unit
 object Memorize {
 
     /**
-     * 완료 종료 판단: `.btn-study-end-repeat` visible / `.next-repeat-percent` >= 100 /
+     * 완료 종료 판단: `.btn-study-end-repeat` / `.next-repeat-percent` >= 100 /
      * `#study_end.active` 중 하나.
+     *
+     * 주의: 학습 페이지는 결과 패널(#study_end)을 처음부터 DOM 에 넣어 둔다. 그 안에
+     * '<span class="next-repeat-percent">200</span>% 도전' 버튼이 있어서, 그냥 찾으면
+     * **학습을 시작하자마자 '끝났다'고 판단해 버린다**(실제 페이지에서 확인).
+     * 그래서 결과 패널 안의 것은 패널이 active 일 때만 인정한다.
      */
     suspend fun checkStep2SuccessAndStop(d: Driver, stop: StopFlag): Boolean {
         val done = d.evalBool(
             """
+            function shown(el) {
+                if (!el) return false;
+                var r = el.getBoundingClientRect();
+                if (!(r.width > 0 && r.height > 0)) return false;
+                var s = window.getComputedStyle(el);
+                return s.display !== "none" && s.visibility !== "hidden";
+            }
+            function endReady(el) {
+                var p = el.closest ? el.closest("#study_end") : null;
+                if (!p) return true;
+                return (" " + p.className + " ").indexOf(" active ") >= 0;
+            }
             var btns = document.querySelectorAll(".btn-study-end-repeat");
             for (var i = 0; i < btns.length; i++) {
-                if (btns[i].offsetParent !== null) return true;
+                if (shown(btns[i]) && endReady(btns[i])) return true;
             }
             var ps = document.querySelectorAll(".next-repeat-percent");
             for (var i = 0; i < ps.length; i++) {
-                if (ps[i].offsetParent !== null && parseInt(ps[i].textContent) >= 100) return true;
+                if (shown(ps[i]) && endReady(ps[i]) && parseInt(ps[i].textContent) >= 100) return true;
             }
             return document.querySelectorAll("#study_end.active").length > 0;
             """
