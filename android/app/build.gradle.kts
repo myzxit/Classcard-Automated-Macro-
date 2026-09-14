@@ -11,8 +11,8 @@ android {
         applicationId = "com.classcard.automation"
         minSdk = 26
         targetSdk = 34
-        versionCode = 21
-        versionName = "3.10.0"
+        versionCode = 22
+        versionName = "3.11.0"
     }
 
     buildFeatures {

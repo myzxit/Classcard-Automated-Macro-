@@ -68,13 +68,22 @@ object Grammar {
     /** 같은 안내 창이 이만큼 연달아 다시 뜨면 그만 누르고 멈춘다. */
     private const val MODAL_REPEAT_LIMIT = 5
 
-    /** 개념 톡 해설 음성을 이만큼(0.7초 단위) 기다려도 안 끝나면 알린다. */
-    private const val TALK_WAIT_LIMIT = 60
+    /** 개념 톡 해설 음성을 끝까지 들려줄지. 끄면 재생 위치를 끝으로 보내 빨리 넘어간다. */
+    var PLAY_TALK_AUDIO = true
 
-    /** 해설 음성을 이만큼(0.7초 단위) 기다린 뒤에는 재생 위치를 끝으로 보낸다. */
+    /**
+     * 개념 톡 해설 음성을 이만큼(0.7초 단위) 기다려도 안 끝나면 알린다.
+     * 해설을 끝까지 들려주므로 긴 카드도 덮을 만큼 넉넉히 둔다(≈84초).
+     */
+    private const val TALK_WAIT_LIMIT = 120
+
+    /** 소리에 손을 대기 전에 이만큼(0.7초 단위) 먼저 지켜본다. */
     private const val TALK_AUDIO_SKIP_AFTER = 3
 
-    /** 소리가 이만큼(0.7초 단위) 기다려도 안 들어오면 '끝났다'고 알려 진행한다. */
+    /**
+     * 재생 위치가 이만큼(0.7초 단위) 안 늘어나면 소리가 멈춘 것으로 본다.
+     * 그때만 '끝났다'고 알려 다음으로 넘어간다. 재생 중이면 절대 건드리지 않는다.
+     */
     private const val TALK_AUDIO_FORCE_AFTER = 8
 
     /** 합성 클릭이 이만큼 무시되면 네이티브(신뢰된) 클릭으로 올린다. */
@@ -1813,25 +1822,58 @@ object Grammar {
         return v.optInt("placed", 0) to v.optBoolean("clicked", false)
     }
 
+    /**
+     * 개념 톡 해설 음성을 사이트가 스스로 끝내게 만든다.
+     *
+     * 기본은 해설을 끝까지 들려주는 것이다. 재생이 진행 중이면 손대지 않는다.
+     * 손대는 경우는 둘뿐이다.
+     *   - 소리가 아예 안 잡힌 화면(자동 재생 차단 등): 스피커를 카드마다 한 번만 누른다.
+     *   - 재생 위치가 멈춰 버린 화면: 마지막 수단으로 '끝났다'고만 알려 다음으로 넘긴다.
+     * PLAY_TALK_AUDIO 를 끄면 예전처럼 재생 위치를 끝으로 보내 빨리 넘어간다.
+     *
+     * @return 'playing' 재생 중(그대로 둔다) · 'seek' 끝으로 보냄
+     *         · 'start' 스피커를 눌러 걸어 줌 · 'force' 끝났다고 알림 · '' 아직
+     */
     private suspend fun skipTalkAudio(
-        d: Driver, allowStart: Boolean, allowForce: Boolean,
+        d: Driver, allowStart: Boolean, allowForce: Boolean, allowSeek: Boolean,
     ): String = d.evalStringOrNull(
         """
         var allowStart = ${if (allowStart) "true" else "false"};
         var allowForce = ${if (allowForce) "true" else "false"};
+        var allowSeek = ${if (allowSeek) "true" else "false"};
         var a = null;
         try { a = window.audio; } catch (e) {}
         if (a && isFinite(a.duration) && a.duration > 0) {
-            // 사이트가 '끝 0.7초 전'에 스스로 멈추고 다음으로 넘어가므로 그 지점으로 보낸다
-            var target = a.duration - 0.6;
-            if (target < 0) target = 0;
-            if (a.currentTime < target) a.currentTime = target;
-            if (a.paused) { try { var p = a.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
-            return 'seek';
+            if (allowSeek) {
+                // '음성 끄기' 설정: 사이트가 '끝 0.7초 전'에 스스로 멈추므로 그 지점으로 보낸다
+                var target = a.duration - 0.6;
+                if (target < 0) target = 0;
+                if (a.currentTime < target) a.currentTime = target;
+                if (a.paused) { try { var p = a.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
+                return 'seek';
+            }
+            // 해설을 끝까지 듣는다. 재생 위치가 늘고 있으면 아무것도 하지 않는다.
+            var prev = -1;
+            try { prev = window.__ccTalkAt; } catch (e) {}
+            if (typeof prev !== 'number') prev = -1;
+            var now = a.currentTime;
+            try { window.__ccTalkAt = now; } catch (e) {}
+            if (prev < 0 || now > prev + 0.2) return 'playing';
+            // 멈춰 있다 -> 자동 재생이 막힌 것일 수 있으니 이어서 재생만 걸어 본다.
+            // (src 를 건드리지 않으므로 처음부터 다시 나지 않는다)
+            // 단, **다 들은 소리에 play() 를 걸면 처음부터 다시 재생된다.** 사이트가 끝 0.7초
+            // 전에 스스로 멈추므로, 끝 근처이거나 ended 면 절대 다시 걸지 않는다.
+            var nearEnd = a.ended || now >= a.duration - 1.2;
+            if (a.paused && !nearEnd) {
+                try { var p2 = a.play(); if (p2 && p2.catch) p2.catch(function () {}); return 'playing'; } catch (e) {}
+            }
+            if (allowForce) {
+                try { a.pause(); a.dispatchEvent(new Event('pause')); return 'force'; } catch (e) {}
+            }
+            return '';
         }
         // 소리가 끝내 안 들어오는 화면(네트워크·자동재생 차단)에서는 마지막 수단으로
         // '끝났다'고만 알려 준다. 사이트의 pause 처리가 다음 단계로 넘겨 준다.
-        // (audio.src 를 건드리지 않으므로 소리가 처음부터 다시 나지 않는다)
         if (allowForce && a) {
             try {
                 a.pause();
@@ -2235,14 +2277,19 @@ object Grammar {
                             if (talkWait == 1) d.log("[문법] 개념 톡 해설 음성이 끝나기를 기다리는 중…")
                             // 잠깐 기다려도 안 끝나면(자동 재생이 막힌 화면 등) 사이트 방식대로 소리를 끝낸다
                             if (talkWait >= TALK_AUDIO_SKIP_AFTER) {
-                                // 재생 위치를 끝으로 보내는 건 몇 번 해도 안전하다(이미 끝이면 아무 일도 안 한다).
-                                // 반대로 '재생 걸기'는 소리를 처음부터 다시 틀기 때문에 카드마다 한 번만 한다.
+                                // 해설이 재생 중이면 손대지 않는다("playing"). 소리가 멈춰 있을 때만
+                                // 이어서 걸어 주고, 그래도 안 움직이면 마지막 수단으로 넘긴다.
+                                // '재생 걸기'는 소리를 처음부터 다시 틀기 때문에 카드마다 한 번만 한다.
                                 val how = skipTalkAudio(
                                     d,
                                     talkAudioStarted != state.sig,
                                     talkWait >= TALK_AUDIO_FORCE_AFTER,   // 끝내 안 들어오면 마지막 수단
+                                    !PLAY_TALK_AUDIO,                     // 음성 끄기 설정일 때만 끝으로 보낸다
                                 )
-                                if (how == "seek" && talkAudioSkipped != state.sig) {
+                                if (how == "playing") {
+                                    // 재생 중인 동안은 마지막 수단을 미룬다
+                                    talkWait = TALK_AUDIO_SKIP_AFTER
+                                } else if (how == "seek" && talkAudioSkipped != state.sig) {
                                     talkAudioSkipped = state.sig
                                     d.log("[문법] 해설 음성을 끝으로 넘겨 다음으로 진행합니다.")
                                 } else if (how == "start") {
