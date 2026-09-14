@@ -1055,6 +1055,9 @@ object Grammar {
             if (l.done || l.idx.isEmpty()) continue
             for (r in right) {
                 if (r.done || r.idx != l.idx) continue
+                // 눌렀는데 사이트가 못 받은 조합은 다시 고르지 않는다.
+                // (안 그러면 같은 짝을 무한히 다시 눌러 그 문제에서 멈춘다)
+                if ("${'$'}{l.index}_${'$'}{r.index}" in failed) continue
                 return l.index to r.index
             }
         }
@@ -1859,16 +1862,20 @@ object Grammar {
             var now = a.currentTime;
             try { window.__ccTalkAt = now; } catch (e) {}
             if (prev < 0 || now > prev + 0.2) return 'playing';
-            // 멈춰 있다 -> 자동 재생이 막힌 것일 수 있으니 이어서 재생만 걸어 본다.
-            // (src 를 건드리지 않으므로 처음부터 다시 나지 않는다)
+            // 단, **다 들은 소리에 play() 를 걸면 처음부터 다시 재생된다.** 사이트가 끝 0.7초
+            // 전에 스스로 멈추므로, 끝 근처이거나 ended 면 절대 다시 걸지 않는다.
+            // 소리가 멈춰 있다. 오래 기다린 뒤라면 **먼저** 마지막 수단으로 넘긴다.
+            // (재생을 걸어 보는 쪽이 먼저 return 해 버리면 마지막 수단에 영영 닿지 못한다)
+            if (allowForce) {
+                try { a.pause(); a.dispatchEvent(new Event('pause')); return 'force'; } catch (e) {}
+            }
+            // 아직 여유가 있으면 이어서 재생만 걸어 본다. 자동 재생이 막힌 WebView 에서는
+            // 이 play() 가 조용히 거부되지만, 'resume' 이라 대기 카운터는 계속 올라간다.
             // 단, **다 들은 소리에 play() 를 걸면 처음부터 다시 재생된다.** 사이트가 끝 0.7초
             // 전에 스스로 멈추므로, 끝 근처이거나 ended 면 절대 다시 걸지 않는다.
             var nearEnd = a.ended || now >= a.duration - 1.2;
             if (a.paused && !nearEnd) {
-                try { var p2 = a.play(); if (p2 && p2.catch) p2.catch(function () {}); return 'playing'; } catch (e) {}
-            }
-            if (allowForce) {
-                try { a.pause(); a.dispatchEvent(new Event('pause')); return 'force'; } catch (e) {}
+                try { var p2 = a.play(); if (p2 && p2.catch) p2.catch(function () {}); return 'resume'; } catch (e) {}
             }
             return '';
         }
@@ -1942,9 +1949,11 @@ object Grammar {
                 } else {
                     // 학습을 건너뛰거나 닫는 버튼은 절대 고르지 않는다
                     if (/생략|취소|나중|닫기|아니/.test(t)) continue;
+                    // 지금까지 푼 것을 날리는 버튼('처음부터 다시 학습' 등)도 절대 고르지 않는다
+                    if (/처음부터|초기화|리셋/.test(t)) continue;
                     if (/학습 ?시작/.test(t)) score = 6;
                     else if (/시작/.test(t)) score = 5;
-                    else if (/재시도|다시/.test(t)) score = 5;   // 소리를 못 받았을 때의 '재시도'
+                    else if (/재시도/.test(t)) score = 5;        // 소리를 못 받았을 때의 '재시도'
                     else if (/계속/.test(t)) score = 4;
                     else if (/확인|예|네/.test(t)) score = 3;
                     else if (b.className.indexOf('btn-ok') >= 0) score = 2;
@@ -2017,6 +2026,7 @@ object Grammar {
         val triedStages = HashSet<String>()
         val modalRetry = HashMap<String, Int>()   // 확인 창을 거친 단계를 다시 눌러 본 횟수
         var talkWait = 0                          // 개념 톡 해설 음성을 기다린 횟수
+        var talkHeld = 0                          // 재생 중이어도 무조건 올라가는 절대 상한 카운터
         var talkAudioSkipped: String? = null      // 소리를 끝으로 넘긴 카드
         var talkAudioStarted: String? = null      // 재생을 걸어 준 카드 (한 번만 — 누르면 처음부터 다시 난다)
         var lastModal: String? = null             // 직전에 누른 안내 창의 글자
@@ -2274,6 +2284,7 @@ object Grammar {
                             state.orders.isEmpty() && state.talkBlanks.isEmpty()
                         ) {
                             talkWait++
+                            talkHeld++          // 재생 중이어도 무조건 올라가는 절대 상한용
                             if (talkWait == 1) d.log("[문법] 개념 톡 해설 음성이 끝나기를 기다리는 중…")
                             // 잠깐 기다려도 안 끝나면(자동 재생이 막힌 화면 등) 사이트 방식대로 소리를 끝낸다
                             if (talkWait >= TALK_AUDIO_SKIP_AFTER) {
@@ -2287,7 +2298,8 @@ object Grammar {
                                     !PLAY_TALK_AUDIO,                     // 음성 끄기 설정일 때만 끝으로 보낸다
                                 )
                                 if (how == "playing") {
-                                    // 재생 중인 동안은 마지막 수단을 미룬다
+                                    // 소리가 실제로 자라는 중일 때만 마지막 수단을 미룬다.
+                                    // ("resume" 은 재생을 걸어만 본 것이라 미루지 않는다)
                                     talkWait = TALK_AUDIO_SKIP_AFTER
                                 } else if (how == "seek" && talkAudioSkipped != state.sig) {
                                     talkAudioSkipped = state.sig
@@ -2300,15 +2312,17 @@ object Grammar {
                                     d.log("[문법] 소리를 받지 못해 해설을 건너뜁니다.")
                                 }
                             }
-                            if (talkWait > TALK_WAIT_LIMIT) {
+                            if (talkHeld > TALK_WAIT_LIMIT || talkWait > TALK_WAIT_LIMIT) {
                                 d.log("[문법] 해설 음성이 끝나지 않습니다 — 소리가 나오는지 확인해 주세요.")
                                 talkWait = 0
+                                talkHeld = 0
                                 talkStuck++
                             }
                             if (stop.await(700)) return@solveTalk 1
                             return@solveTalk 0
                         }
                         talkWait = 0
+                        talkHeld = 0
 
                         // 4) 고를 것이 없으면 '계속하기'(next-btn) 또는 Enter 로 다음 카드
                         if (state.hasNext) {
