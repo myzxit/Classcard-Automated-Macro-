@@ -77,6 +77,9 @@ object Grammar {
      */
     private const val TALK_WAIT_LIMIT = 120
 
+    /** 단계 시작 화면에서 '시작' 을 이만큼 눌러도 안 넘어가면 멈춘다. */
+    private const val START_PRESS_LIMIT = 4
+
     /** 소리에 손을 대기 전에 이만큼(0.7초 단위) 먼저 지켜본다. */
     private const val TALK_AUDIO_SKIP_AFTER = 3
 
@@ -166,7 +169,8 @@ object Grammar {
     }
 
     private data class State(
-        val kind: String,                 // "class" | "end" | "quiz" | "idle" | "login"
+        val kind: String,                 // "class" | "start" | "end" | "quiz" | "idle" | "login"
+        val label: String = "",           // 시작 화면 버튼 글자
         val type: String = "",
         val cardType: String = "",     // 사이트 카드 종류 (data-type)
         val paints: Int = 0,           // 구문 표시형의 낱말 수
@@ -251,8 +255,42 @@ object Grammar {
         // ================================================ 0) 로그인 화면
         // 세션이 끊기면 사이트가 어떤 주소든 로그인 화면으로 돌려보낸다.
         // 이걸 문제 화면으로 착각하면 '아이디/비밀번호 찾기' 같은 링크를 눌러 버린다.
-        if (vis(any('input[name="login_id"], input[name="login_pwd"], #login_id, #login_pwd'))) {
+        // 주의: 로그인 폼이 position:fixed 안에 있으면 offsetParent 가 null 이라
+        // 평소의 vis() 로는 '안 보인다'고 나온다(모달에서 겪은 것과 같은 함정).
+        // 그래서 크기와 스타일로만 판단하고, 사이트가 붙이는 body.login 도 함께 본다.
+        var loginIns = document.querySelectorAll(
+            'input[name="login_id"], input[name="login_pwd"], #login_id, #login_pwd');
+        var onLogin = false;
+        for (var i = 0; i < loginIns.length; i++) {
+            var lr = loginIns[i].getBoundingClientRect();
+            if (!(lr.width > 0 && lr.height > 0)) continue;
+            var ls = window.getComputedStyle(loginIns[i]);
+            if (ls.display !== 'none' && ls.visibility !== 'hidden') { onLogin = true; break; }
+        }
+        if (!onLogin && loginIns.length) {
+            var bodyCls = ' ' + ((document.body && document.body.className) || '') + ' ';
+            if (bodyCls.indexOf(' login ') >= 0) onLogin = true;
+        }
+        if (onLogin) {
             return { kind: 'login' };
+        }
+
+        // ================================================ 0) 단계 시작 화면 (학습 시작 버튼)
+        // 클래스에서 단계를 열면 곧바로 문제가 나오지 않는다. '시작' 버튼 하나만 있는
+        // 시작 화면이 먼저 뜨고, 그 버튼이 쿠키(is_std_start)를 심고 페이지를 다시 연다.
+        // 이걸 안 누르면 카드가 아예 만들어지지 않아, 매크로가 '풀 게 없다'고 보고 끝내 버린다.
+        var startBtn = null;
+        var sbs = document.querySelectorAll('.btn-quiz-start, .btn-opt-start');
+        for (var i = 0; i < sbs.length; i++) if (vis(sbs[i])) { startBtn = sbs[i]; break; }
+        if (startBtn) {
+            // 클래스 페이지에도 비슷한 버튼이 있을 수 있으므로, 단계 목록이 보이면 시작 화면이 아니다.
+            var anyBox = document.querySelectorAll('.unit-set-list .set-box');
+            var boxVisible = false;
+            for (var i = 0; i < anyBox.length; i++) if (vis(anyBox[i])) { boxVisible = true; break; }
+            if (!boxVisible) {
+                startBtn.setAttribute('data-cc-startbtn', '1');
+                return { kind: 'start', label: txt(startBtn).slice(0, 20) };
+            }
         }
 
         // ================================================ 1) 문법 클래스 페이지
@@ -772,6 +810,7 @@ object Grammar {
         val data: JSONObject = d.evalObjectOrNull(READ_STATE_JS) ?: return null
         when (data.optString("kind", "")) {
             "class" -> return State(kind = "class", units = parseUnits(data.optJSONArray("units")))
+            "start" -> return State(kind = "start", label = data.optString("label", ""))
             "end" -> return State(kind = "end")
             "login" -> return State(kind = "login")
         }
@@ -2025,6 +2064,7 @@ object Grammar {
         val lastPick = HashMap<String, Int>()
         val triedStages = HashSet<String>()
         val modalRetry = HashMap<String, Int>()   // 확인 창을 거친 단계를 다시 눌러 본 횟수
+        var startPressed = 0                      // 단계 시작 화면에서 '시작' 을 누른 횟수
         var talkWait = 0                          // 개념 톡 해설 음성을 기다린 횟수
         var talkHeld = 0                          // 재생 중이어도 무조건 올라가는 절대 상한 카운터
         var talkAudioSkipped: String? = null      // 소리를 끝으로 넘긴 카드
@@ -2484,6 +2524,24 @@ object Grammar {
                     }
                     lastModal = null
                     sameModal = 0
+                }
+
+                // ------------------------------------------ 단계 시작 화면
+                // '시작' 을 눌러야 카드가 만들어진다. 안 누르면 풀 게 없다고 보고 끝내 버린다.
+                if (state.kind == "start") {
+                    if (startPressed >= START_PRESS_LIMIT) {
+                        d.log("[문법] 시작 화면에서 더 진행되지 않습니다 — 화면을 확인해 주세요.")
+                        stop.set()
+                        break
+                    }
+                    startPressed++
+                    val lbl = state.label.ifEmpty { "시작" }
+                    d.log("[문법] 단계 시작 화면입니다 — '${'$'}lbl' 을 누릅니다.")
+                    if (!clickTagged(d, "data-cc-startbtn", "1", false)) {
+                        d.clickFirstVisible(".btn-quiz-start, .btn-opt-start")
+                    }
+                    if (stop.await(STEP_DELAY_MS)) break
+                    continue
                 }
 
                 // ------------------------------------------ 문법 클래스 페이지
