@@ -29,6 +29,11 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # 기본값은 'tools platform-tools' 인데, 구글이 SDK 저장소에서 'tools' 를
+          # 없앴다. 그래서 sdkmanager 가 "Failed to find package 'tools'" 로 죽는다.
+          # 러너 이미지에 SDK 는 이미 들어 있으므로 platform-tools 만 맞춰 준다.
+          packages: platform-tools
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
