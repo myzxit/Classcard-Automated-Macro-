@@ -80,6 +80,15 @@ object Grammar {
     /** 단계 시작 화면에서 '시작' 을 이만큼 눌러도 안 넘어가면 멈춘다. */
     private const val START_PRESS_LIMIT = 4
 
+    /**
+     * '재생 중' 인데 재생 위치가 이만큼(0.7초 단위) 안 움직이면 진짜 나오는 게 아니라고 본다.
+     * 이게 없으면 소리를 못 받은 카드에서 영영 기다린다(실측: 129초 동안 1장).
+     */
+    private const val TALK_BUSY_STUCK_LIMIT = 5
+
+    /** 한 번이라도 나온 소리는 이만큼(0.7초 단위 ≈ 8초)까지 참는다. 버퍼링으로 끊지 않기 위해. */
+    private const val TALK_BUSY_STUCK_LIMIT_MOVED = 12
+
     /** 소리에 손을 대기 전에 이만큼(0.7초 단위) 먼저 지켜본다. */
     private const val TALK_AUDIO_SKIP_AFTER = 3
 
@@ -1888,7 +1897,20 @@ object Grammar {
         try { a = window.audio; } catch (e) {}
         if (!a || !isFinite(a.duration) || a.duration <= 0) return false;
         if (a.paused || a.ended) return false;
-        return a.currentTime < a.duration - 0.75;
+        // 사이트가 '끝 0.7초 전'에 스스로 멈춘다. 그 지점까지는 아직 말하는 중이다.
+        if (a.currentTime >= a.duration - 0.75) return false;
+
+        // 재생 중이라고 되어 있어도 **재생 위치가 안 움직이면 진짜 나오는 게 아니다.**
+        // (자동 재생이 막혔거나 소리를 못 받은 화면. 이걸 안 보면 그 카드에서 영영 기다린다)
+        var src = '';
+        try { src = a.currentSrc || a.src || ''; } catch (e) {}
+        var st = null;
+        try { st = window.__ccBusy; } catch (e) {}
+        if (!st || st.src !== src) st = { src: src, at: -1, stuck: 0 };
+        if (a.currentTime > st.at + 0.05) st.stuck = 0; else st.stuck += 1;
+        st.at = a.currentTime;
+        try { window.__ccBusy = st; } catch (e) {}
+        return st.stuck < ${'$'}TALK_BUSY_STUCK_LIMIT;
         """
     )
 
@@ -1917,22 +1939,32 @@ object Grammar {
             try { src = a.currentSrc || a.src || ''; } catch (e) {}
             var st = null;
             try { st = window.__ccTalk; } catch (e) {}
-            if (!st || st.src !== src) st = { src: src, at: -1, moved: false };
+            if (!st || st.src !== src) st = { src: src, at: -1, moved: false, stuck: 0 };
             var now = a.currentTime;
-            if (now > st.at + 0.05) st.moved = true;   // 한 번이라도 소리가 나갔다
+            if (now > st.at + 0.05) { st.moved = true; st.stuck = 0; }  // 소리가 실제로 나가는 중
+            else { st.stuck += 1; }
             st.at = now;
             try { window.__ccTalk = st; } catch (e) {}
 
-            // 1) 재생 중이면 절대 건드리지 않는다.
-            if (!a.paused) return 'playing';
+            // '재생 중' 이라고 되어 있어도 재생 위치가 안 움직이면 진짜 나오는 게 아니다.
+            // (이걸 안 보면 소리를 못 받은 카드에서 영영 기다린다 — 실측: 89초 동안 1장)
+            // 단, 한 번이라도 나온 소리는 더 참는다 — 중간에 잠깐 끊기는 것(버퍼링)을
+            // '멈췄다'고 보고 끊어 버리면 안 된다.
+            var stuckLimit = st.moved ? ${'$'}TALK_BUSY_STUCK_LIMIT_MOVED : ${'$'}TALK_BUSY_STUCK_LIMIT;
+            var stalled = st.stuck >= stuckLimit;
+
+            // 1) 실제로 나오는 중이면 절대 건드리지 않는다.
+            if (!a.paused && !stalled) return 'playing';
 
             // 2) 한 번이라도 나간 소리는 끝까지 듣게 둔다.
             if (st.moved) {
                 var done = a.ended || now >= a.duration - 0.75;
-                if (done && allowForce) {
+                // 다 들었거나, 멈춰 버렸으면 한 번 밀어 준다
+                if ((done || stalled) && allowForce) {
                     try { a.pause(); a.dispatchEvent(new Event('pause')); return 'force'; } catch (e) {}
                 }
-                return done ? 'waitend' : 'playing';
+                if (done) return 'waitend';
+                return stalled ? '' : 'playing';
             }
 
             // 3) 한 번도 소리가 안 나간 카드에서만 넘긴다.
