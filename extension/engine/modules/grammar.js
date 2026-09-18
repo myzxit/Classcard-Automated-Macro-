@@ -60,10 +60,11 @@ const START_PRESS_LIMIT = 4;
 const TALK_AUDIO_SKIP_AFTER = 3;
 
 /**
- * 재생 위치가 이만큼(0.7초 단위) 1초도 안 늘어나면 소리가 멈춘 것으로 본다.
- * 그때만 '끝났다'고 알려 다음으로 넘어간다. 재생 중이면 절대 건드리지 않는다.
+ * 소리가 **한 번도 나오지 않은 채** 이만큼(0.7초 단위) 지나면 그때만 넘긴다.
+ * 느린 망에서 해설이 늦게 시작되는 것을 '죽었다'고 오해해 끊지 않도록 넉넉히 둔다(≈14초).
+ * 한 번이라도 소리가 나간 카드는 여기에 걸리지 않는다 — 끝까지 듣는다.
  */
-const TALK_AUDIO_FORCE_AFTER = 8;
+const TALK_AUDIO_FORCE_AFTER = 20;
 
 /** 합성 클릭이 이만큼 무시되면 신뢰된 클릭(CDP)으로 올린다. */
 const TRUSTED_AFTER = 2;
@@ -1527,15 +1528,34 @@ async function handleModal(d) {
  *   - 반대로 스피커(.talk-audio)를 누르면 audio.src 를 다시 넣고 load() 하므로
  *     **소리가 처음부터 다시 재생된다.** (그래서 누르면 안 된다)
  *
- * 기본은 **해설을 끝까지 들려주는 것**이다. 재생이 진행 중이면 손대지 않는다.
- * 손대는 경우는 둘뿐이다.
- *   - 소리가 아예 안 잡힌 화면(자동 재생 차단 등): 스피커를 카드마다 한 번만 누른다.
- *   - 재생 위치가 멈춰 버린 화면: 마지막 수단으로 '끝났다'고만 알려 다음으로 넘긴다.
+ * 기본은 **해설을 끝까지 들려주는 것**이다. 한 번이라도 소리가 나간 카드는
+ * 끝까지 듣게 두고, 사이트가 알아서 다음으로 넘긴다.
+ * 손대는 경우는 셋뿐이다.
+ *   - 소리가 아예 안 잡힌 화면: 스피커를 카드마다 한 번만 누른다.
+ *   - 한 번도 소리가 안 나간 카드(자동 재생 차단 등): '끝났다'고 알려 넘긴다.
+ *   - 다 듣고도 사이트가 안 넘어갈 때: 한 번 밀어 준다.
  * CONFIG.playTalkAudio 를 끄면 예전처럼 재생 위치를 끝으로 보내 빨리 넘어간다.
  *
- * @returns {Promise<string>} 'playing' 재생 중(그대로 둔다) · 'seek' 끝으로 보냄
- *                            · 'start' 스피커를 눌러 걸어 줌 · 'force' 끝났다고 알림 · '' 아직
+ * @returns {Promise<string>} 'playing' 아직 듣는 중(기다린다) · 'waitend' 다 들었는데
+ *                            사이트가 안 넘어감 · 'seek' 끝으로 보냄 · 'start' 스피커를
+ *                            눌러 걸어 줌 · 'force' 끝났다고 알림 · '' 아직
  */
+/**
+ * 지금 카드의 해설이 **아직 나오는 중**인가.
+ *
+ * 사이트는 끝 0.7초 전에 스스로 멈추므로, 그 지점까지 갔으면 다 들은 것으로 본다.
+ * 멈춰 있으면(자동 재생 차단·로딩 실패) '나오는 중'이 아니다 — 그래야 안 막힌다.
+ */
+async function talkAudioBusy(d) {
+  return d.evalBool(`
+    var a = null;
+    try { a = window.audio; } catch (e) {}
+    if (!a || !isFinite(a.duration) || a.duration <= 0) return false;
+    if (a.paused || a.ended) return false;
+    // 사이트가 '끝 0.7초 전'에 스스로 멈춘다. 그 지점까지는 아직 말하는 중이다.
+    return a.currentTime < a.duration - 0.75;`);
+}
+
 async function skipTalkAudio(d, allowStart, allowForce, allowSeek) {
   const r = await d.eval(`
     var allowStart = ${allowStart ? 'true' : 'false'};
@@ -1552,25 +1572,38 @@ async function skipTalkAudio(d, allowStart, allowForce, allowSeek) {
         if (a.paused) { try { var p = a.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
         return 'seek';
       }
-      // 해설을 끝까지 듣는다. 재생 위치가 늘고 있으면 아무것도 하지 않는다.
-      var prev = -1;
-      try { prev = window.__ccTalkAt; } catch (e) {}
-      if (typeof prev !== 'number') prev = -1;
+      // 해설은 끝까지 듣는다. 이 카드의 소리를 **카드별로** 기억한다.
+      // (전역 하나로 기억하면 새 카드에서 재생 위치가 0 으로 돌아온 것을
+      //  '멈췄다'고 잘못 보고 멀쩡한 해설을 중간에 끊어 버린다)
+      var src = '';
+      try { src = a.currentSrc || a.src || ''; } catch (e) {}
+      var st = null;
+      try { st = window.__ccTalk; } catch (e) {}
+      if (!st || st.src !== src) st = { src: src, at: -1, moved: false };
       var now = a.currentTime;
-      try { window.__ccTalkAt = now; } catch (e) {}
-      if (prev < 0 || now > prev + 0.2) return 'playing';
-      // 소리가 멈춰 있다. 오래 기다린 뒤라면 **먼저** 마지막 수단으로 넘긴다.
-      // (재생을 걸어 보는 쪽이 먼저 return 해 버리면 마지막 수단에 영영 닿지 못한다)
+      if (now > st.at + 0.05) st.moved = true;   // 한 번이라도 소리가 나갔다
+      st.at = now;
+      try { window.__ccTalk = st; } catch (e) {}
+
+      // 1) 재생 중이면 절대 건드리지 않는다.
+      if (!a.paused) return 'playing';
+
+      // 2) 한 번이라도 나간 소리는 끝까지 듣게 둔다.
+      //    사이트가 끝 0.7초 전에 스스로 멈추고 다음으로 넘겨 준다.
+      if (st.moved) {
+        var done = a.ended || now >= a.duration - 0.75;
+        // 다 들었는데도 사이트가 안 넘어갈 때만 한 번 밀어 준다
+        if (done && allowForce) {
+          try { a.pause(); a.dispatchEvent(new Event('pause')); return 'force'; } catch (e) {}
+        }
+        return done ? 'waitend' : 'playing';
+      }
+
+      // 3) 한 번도 소리가 안 나간 카드(자동 재생 차단·네트워크)에서만 넘긴다.
+      //    여기서는 play() 를 걸지 않는다 — 걸었다가 사이트가 src 를 다시 넣으면
+      //    같은 해설이 처음부터 다시 나온다.
       if (allowForce) {
         try { a.pause(); a.dispatchEvent(new Event('pause')); return 'force'; } catch (e) {}
-      }
-      // 아직 여유가 있으면 이어서 재생만 걸어 본다. 자동 재생이 막힌 화면에서는
-      // 이 play() 가 조용히 거부되지만, 'resume' 이라 대기 카운터는 계속 올라간다.
-      // 단, **다 들은 소리에 play() 를 걸면 처음부터 다시 재생된다.** 사이트가 끝 0.7초
-      // 전에 스스로 멈추므로, 끝 근처이거나 ended 면 절대 다시 걸지 않는다.
-      var nearEnd = a.ended || now >= a.duration - 1.2;
-      if (a.paused && !nearEnd) {
-        try { var p2 = a.play(); if (p2 && p2.catch) p2.catch(function () {}); return 'resume'; } catch (e) {}
       }
       return '';
     }
@@ -1805,6 +1838,7 @@ export async function grammar(d, answerDict, stop) {
   let startPressed = 0;           // 단계 시작 화면에서 '시작' 을 누른 횟수
   let talkWait = 0;               // 개념 톡 해설 음성을 기다린 횟수
   let talkHeld = 0;               // 재생 중이어도 무조건 올라가는 절대 상한 카운터
+  let talkHeardLogged = false;    // '해설을 끝까지 듣는 중' 을 카드마다 한 번만 찍는다
   let talkAudioSkipped = null;    // 소리를 끝으로 넘긴 카드
   let talkAudioStarted = null;    // 재생을 걸어 준 카드 (한 번만 — 누르면 처음부터 다시 난다)
   let lastModal = null;           // 직전에 누른 안내 창의 글자
@@ -2046,6 +2080,25 @@ export async function grammar(d, answerDict, stop) {
 
       // ---------------------------------------------- 개념 톡 (설명 카드)
       if (state.kind === 'talk') {
+        // 해설이 아직 나오는 중이면 **아무것도 하지 않는다.**
+        // 빈칸을 채우고 다음으로 넘기면 카드가 바뀌면서 해설이 중간에 끊긴다
+        // (실측: 22초짜리 해설이 14초에서 잘렸다). 사람이 하듯 다 듣고 나서 푼다.
+        if (await talkAudioBusy(d)) {
+          if (!talkHeardLogged) {
+            talkHeardLogged = true;
+            d.log('[문법] 해설을 끝까지 듣는 중…');
+          }
+          talkHeld++;
+          if (talkHeld > TALK_WAIT_LIMIT) {
+            d.log('[문법] 해설이 너무 길어 그대로 진행합니다.');
+            talkHeld = 0;
+          } else {
+            if (await stop.await(700)) break;
+            continue;
+          }
+        }
+        talkHeardLogged = false;
+
         // 개념 톡: 사이트 스크립트대로 '지금 카드(card_idx)' 에서만 조작한다.
         //   type 2 객관식 / type 6 어순 배열 / 빈칸(보기 고르기·직접 입력) / 그 외는 넘기기
         const ans = state.answers || [];
@@ -2223,27 +2276,31 @@ export async function grammar(d, answerDict, stop) {
           if (talkWait === 1) d.log('[문법] 개념 톡 해설 음성이 끝나기를 기다리는 중…');
           // 잠깐 기다려도 안 끝나면(자동 재생이 막힌 화면 등) 사이트 방식대로 소리를 끝낸다
           if (talkWait >= TALK_AUDIO_SKIP_AFTER) {
-            // 해설이 재생 중이면 손대지 않는다('playing'). 소리가 멈춰 있을 때만
-            // 이어서 걸어 주고, 그래도 안 움직이면 마지막 수단으로 넘긴다.
-            // '재생 걸기'는 소리를 처음부터 다시 틀기 때문에 카드마다 한 번만 한다.
+            // 해설이 재생 중이면 손대지 않는다('playing').
+            // '재생 걸기'(스피커)는 소리를 **처음부터 다시** 틀기 때문에 카드마다 한 번만 한다.
+            //
+            // 주의: 여기서 state.sig 로 기억하면 안 된다. sig 에는 '빈칸에 쓴 내용'과
+            // 카드 클래스가 들어 있어 **같은 카드 안에서도 값이 바뀐다.** 그러면
+            // '이미 걸었음' 기억이 풀려 스피커를 또 눌러, 같은 해설이 처음부터 다시
+            // 재생된다. 카드 번호(qid = 'card' + card_idx)로 기억한다.
+            const cardKey = state.qid || state.sig;
             const how = await skipTalkAudio(
               d,
-              talkAudioStarted !== state.sig,
+              talkAudioStarted !== cardKey,
               talkWait >= TALK_AUDIO_FORCE_AFTER,          // 끝내 안 들어오면 마지막 수단
               !CONFIG.playTalkAudio,                       // 음성 끄기 설정일 때만 끝으로 보낸다
             );
             if (how === 'playing') {
-              // 소리가 실제로 자라는 중일 때만 마지막 수단을 미룬다.
-              // ('resume' 은 재생을 걸어만 본 것이라 미루지 않는다 — 안 걸리면 넘어가야 한다)
+              // 아직 듣는 중이면 마지막 수단을 미룬다 ('waitend' 는 미루지 않는다)
               talkWait = TALK_AUDIO_SKIP_AFTER;
-            } else if (how === 'seek' && talkAudioSkipped !== state.sig) {
-              talkAudioSkipped = state.sig;
+            } else if (how === 'seek' && talkAudioSkipped !== cardKey) {
+              talkAudioSkipped = cardKey;
               d.log('[문법] 해설 음성을 끝으로 넘겨 다음으로 진행합니다.');
             } else if (how === 'start') {
-              talkAudioStarted = state.sig;
+              talkAudioStarted = cardKey;
               d.log('[문법] 해설 음성이 재생되지 않아 한 번 걸어 줍니다.');
-            } else if (how === 'force' && talkAudioSkipped !== state.sig) {
-              talkAudioSkipped = state.sig;
+            } else if (how === 'force' && talkAudioSkipped !== cardKey) {
+              talkAudioSkipped = cardKey;
               d.log('[문법] 소리를 받지 못해 해설을 건너뜁니다.');
             }
           }

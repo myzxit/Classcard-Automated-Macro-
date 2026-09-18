@@ -87,7 +87,7 @@ object Grammar {
      * 재생 위치가 이만큼(0.7초 단위) 안 늘어나면 소리가 멈춘 것으로 본다.
      * 그때만 '끝났다'고 알려 다음으로 넘어간다. 재생 중이면 절대 건드리지 않는다.
      */
-    private const val TALK_AUDIO_FORCE_AFTER = 8
+    private const val TALK_AUDIO_FORCE_AFTER = 20
 
     /** 합성 클릭이 이만큼 무시되면 네이티브(신뢰된) 클릭으로 올린다. */
     private const val TRUSTED_AFTER = 2
@@ -1876,6 +1876,22 @@ object Grammar {
      * @return 'playing' 재생 중(그대로 둔다) · 'seek' 끝으로 보냄
      *         · 'start' 스피커를 눌러 걸어 줌 · 'force' 끝났다고 알림 · '' 아직
      */
+    /**
+     * 지금 카드의 해설이 **아직 나오는 중**인가.
+     *
+     * 사이트는 끝 0.7초 전에 스스로 멈추므로, 그 지점까지 갔으면 다 들은 것으로 본다.
+     * 멈춰 있으면(자동 재생 차단·로딩 실패) '나오는 중'이 아니다 — 그래야 안 막힌다.
+     */
+    private suspend fun talkAudioBusy(d: Driver): Boolean = d.evalBool(
+        """
+        var a = null;
+        try { a = window.audio; } catch (e) {}
+        if (!a || !isFinite(a.duration) || a.duration <= 0) return false;
+        if (a.paused || a.ended) return false;
+        return a.currentTime < a.duration - 0.75;
+        """
+    )
+
     private suspend fun skipTalkAudio(
         d: Driver, allowStart: Boolean, allowForce: Boolean, allowSeek: Boolean,
     ): String = d.evalStringOrNull(
@@ -1894,27 +1910,35 @@ object Grammar {
                 if (a.paused) { try { var p = a.play(); if (p && p.catch) p.catch(function () {}); } catch (e) {} }
                 return 'seek';
             }
-            // 해설을 끝까지 듣는다. 재생 위치가 늘고 있으면 아무것도 하지 않는다.
-            var prev = -1;
-            try { prev = window.__ccTalkAt; } catch (e) {}
-            if (typeof prev !== 'number') prev = -1;
+            // 해설은 끝까지 듣는다. 이 카드의 소리를 **카드별로** 기억한다.
+            // (전역 하나로 기억하면 새 카드에서 재생 위치가 0 으로 돌아온 것을
+            //  '멈췄다'고 잘못 보고 멀쩡한 해설을 중간에 끊어 버린다)
+            var src = '';
+            try { src = a.currentSrc || a.src || ''; } catch (e) {}
+            var st = null;
+            try { st = window.__ccTalk; } catch (e) {}
+            if (!st || st.src !== src) st = { src: src, at: -1, moved: false };
             var now = a.currentTime;
-            try { window.__ccTalkAt = now; } catch (e) {}
-            if (prev < 0 || now > prev + 0.2) return 'playing';
-            // 단, **다 들은 소리에 play() 를 걸면 처음부터 다시 재생된다.** 사이트가 끝 0.7초
-            // 전에 스스로 멈추므로, 끝 근처이거나 ended 면 절대 다시 걸지 않는다.
-            // 소리가 멈춰 있다. 오래 기다린 뒤라면 **먼저** 마지막 수단으로 넘긴다.
-            // (재생을 걸어 보는 쪽이 먼저 return 해 버리면 마지막 수단에 영영 닿지 못한다)
+            if (now > st.at + 0.05) st.moved = true;   // 한 번이라도 소리가 나갔다
+            st.at = now;
+            try { window.__ccTalk = st; } catch (e) {}
+
+            // 1) 재생 중이면 절대 건드리지 않는다.
+            if (!a.paused) return 'playing';
+
+            // 2) 한 번이라도 나간 소리는 끝까지 듣게 둔다.
+            if (st.moved) {
+                var done = a.ended || now >= a.duration - 0.75;
+                if (done && allowForce) {
+                    try { a.pause(); a.dispatchEvent(new Event('pause')); return 'force'; } catch (e) {}
+                }
+                return done ? 'waitend' : 'playing';
+            }
+
+            // 3) 한 번도 소리가 안 나간 카드에서만 넘긴다.
+            //    여기서 play() 를 걸면 사이트가 src 를 다시 넣어 같은 해설이 처음부터 다시 난다.
             if (allowForce) {
                 try { a.pause(); a.dispatchEvent(new Event('pause')); return 'force'; } catch (e) {}
-            }
-            // 아직 여유가 있으면 이어서 재생만 걸어 본다. 자동 재생이 막힌 WebView 에서는
-            // 이 play() 가 조용히 거부되지만, 'resume' 이라 대기 카운터는 계속 올라간다.
-            // 단, **다 들은 소리에 play() 를 걸면 처음부터 다시 재생된다.** 사이트가 끝 0.7초
-            // 전에 스스로 멈추므로, 끝 근처이거나 ended 면 절대 다시 걸지 않는다.
-            var nearEnd = a.ended || now >= a.duration - 1.2;
-            if (a.paused && !nearEnd) {
-                try { var p2 = a.play(); if (p2 && p2.catch) p2.catch(function () {}); return 'resume'; } catch (e) {}
             }
             return '';
         }
@@ -2067,6 +2091,7 @@ object Grammar {
         var startPressed = 0                      // 단계 시작 화면에서 '시작' 을 누른 횟수
         var talkWait = 0                          // 개념 톡 해설 음성을 기다린 횟수
         var talkHeld = 0                          // 재생 중이어도 무조건 올라가는 절대 상한 카운터
+        var talkHeardLogged = false               // '해설을 끝까지 듣는 중' 을 카드마다 한 번만 찍는다
         var talkAudioSkipped: String? = null      // 소리를 끝으로 넘긴 카드
         var talkAudioStarted: String? = null      // 재생을 걸어 준 카드 (한 번만 — 누르면 처음부터 다시 난다)
         var lastModal: String? = null             // 직전에 누른 안내 창의 글자
@@ -2149,6 +2174,25 @@ object Grammar {
         // 지역 람다라서 위의 값들(stgNo, talkStuck …)을 그대로 쓰고 고칠 수 있다.
         //   0 = 루프를 계속, 1 = 매크로를 멈춤
         val solveTalk: suspend (State) -> Int = solveTalk@{ state ->
+                        // 해설이 아직 나오는 중이면 **아무것도 하지 않는다.**
+                        // 빈칸을 채우고 다음으로 넘기면 카드가 바뀌며 해설이 중간에 끊긴다.
+                        // 사람이 하듯 다 듣고 나서 푼다.
+                        if (talkAudioBusy(d)) {
+                            if (!talkHeardLogged) {
+                                talkHeardLogged = true
+                                d.log("[문법] 해설을 끝까지 듣는 중…")
+                            }
+                            talkHeld++
+                            if (talkHeld > TALK_WAIT_LIMIT) {
+                                d.log("[문법] 해설이 너무 길어 그대로 진행합니다.")
+                                talkHeld = 0
+                            } else {
+                                if (stop.await(700)) return@solveTalk 1
+                                return@solveTalk 0
+                            }
+                        }
+                        talkHeardLogged = false
+
                         // 개념 톡: 사이트 스크립트대로 '지금 카드(card_idx)' 에서만 조작한다.
                         val ans = state.answers
                         val talkKey = state.qid
@@ -2329,26 +2373,31 @@ object Grammar {
                             // 잠깐 기다려도 안 끝나면(자동 재생이 막힌 화면 등) 사이트 방식대로 소리를 끝낸다
                             if (talkWait >= TALK_AUDIO_SKIP_AFTER) {
                                 // 해설이 재생 중이면 손대지 않는다("playing"). 소리가 멈춰 있을 때만
-                                // 이어서 걸어 주고, 그래도 안 움직이면 마지막 수단으로 넘긴다.
-                                // '재생 걸기'는 소리를 처음부터 다시 틀기 때문에 카드마다 한 번만 한다.
+                                // '재생 걸기'(스피커)는 소리를 **처음부터 다시** 틀기 때문에
+                                // 카드마다 한 번만 한다.
+                                //
+                                // 주의: state.sig 로 기억하면 안 된다. sig 에는 '빈칸에 쓴 내용'과
+                                // 카드 클래스가 들어 있어 **같은 카드 안에서도 값이 바뀐다.** 그러면
+                                // '이미 걸었음' 기억이 풀려 스피커를 또 눌러, 같은 해설이 처음부터
+                                // 다시 재생된다. 카드 번호(qid = 'card' + card_idx)로 기억한다.
+                                val cardKey = state.qid.ifEmpty { state.sig }
                                 val how = skipTalkAudio(
                                     d,
-                                    talkAudioStarted != state.sig,
+                                    talkAudioStarted != cardKey,
                                     talkWait >= TALK_AUDIO_FORCE_AFTER,   // 끝내 안 들어오면 마지막 수단
                                     !PLAY_TALK_AUDIO,                     // 음성 끄기 설정일 때만 끝으로 보낸다
                                 )
                                 if (how == "playing") {
-                                    // 소리가 실제로 자라는 중일 때만 마지막 수단을 미룬다.
-                                    // ("resume" 은 재생을 걸어만 본 것이라 미루지 않는다)
+                                    // 아직 듣는 중이면 마지막 수단을 미룬다 ("waitend" 는 미루지 않는다)
                                     talkWait = TALK_AUDIO_SKIP_AFTER
-                                } else if (how == "seek" && talkAudioSkipped != state.sig) {
-                                    talkAudioSkipped = state.sig
+                                } else if (how == "seek" && talkAudioSkipped != cardKey) {
+                                    talkAudioSkipped = cardKey
                                     d.log("[문법] 해설 음성을 끝으로 넘겨 다음으로 진행합니다.")
                                 } else if (how == "start") {
-                                    talkAudioStarted = state.sig
+                                    talkAudioStarted = cardKey
                                     d.log("[문법] 해설 음성이 재생되지 않아 한 번 걸어 줍니다.")
-                                } else if (how == "force" && talkAudioSkipped != state.sig) {
-                                    talkAudioSkipped = state.sig
+                                } else if (how == "force" && talkAudioSkipped != cardKey) {
+                                    talkAudioSkipped = cardKey
                                     d.log("[문법] 소리를 받지 못해 해설을 건너뜁니다.")
                                 }
                             }
