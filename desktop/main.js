@@ -13,6 +13,7 @@ import { app, BrowserWindow, ipcMain, session, protocol, net, shell } from 'elec
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tmpdir } from 'node:os';
 
 import { ElectronDriver, StopFlag } from './driver.js';
 import * as Basic from './app/engine/modules/basic.js';
@@ -25,6 +26,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const PKG = JSON.parse(readFileSync(join(HERE, 'package.json'), 'utf8'));
 const LOGIN_URL = 'https://www.classcard.net/Login';
 const MAX_LOG_LINES = 3000;
+
+// 모의 검증 모드는 사용자의 저장 파일(계정·설정·로그)을 건드리면 안 된다 → 별도 폴더를 쓴다.
+if (process.env.CC_SMOKE_MOCK) app.setPath('userData', join(tmpdir(), 'classcard-automation-smoke'));
 
 // 사이트에는 보통 크롬처럼 보이게 한다. Electron 기본 UA 에는 앱 이름(한글)과 'Electron/..' 이 붙는데,
 // 한글이 든 UA 는 헤더 규격(ISO-8859-1)에 어긋나 일부 경로에서 요청 자체가 깨진다.
@@ -145,7 +149,11 @@ function createControlWindow() {
     },
   });
   controlWin.loadFile(join(HERE, 'app/ui/popup.html'));
-  controlWin.on('closed', () => { controlWin = null; });
+  // 조작 창을 닫으면 앱을 끝낸다 (계정 창만 남으면 다시 열 방법이 없다). 맥은 독에서 다시 연다.
+  controlWin.on('closed', () => {
+    controlWin = null;
+    if (process.platform !== 'darwin') app.quit();
+  });
   // 검증용: CC_UI_SHOT=<png 경로> 면 조작 창을 찍고 끝낸다
   if (process.env.CC_UI_SHOT) {
     controlWin.webContents.on('console-message', (e) => {
@@ -191,6 +199,16 @@ function createAccountWindow(account) {
     return { action: 'deny' };
   });
   win.on('focus', () => { lastFocusedAccountWin = win; });
+  // 창이 닫히면 그 창을 쓰던 세션을 전부 정리한다 ('현재 창 사용'으로 다른 계정이 같은 창을 잡았어도).
+  win.on('closed', () => {
+    for (const [id, s] of sessions) {
+      if (s.win === win) {
+        s.stop?.set();
+        sessions.delete(id);
+      }
+    }
+    notifyState();
+  });
   return win;
 }
 
@@ -199,7 +217,7 @@ const winAlive = (win) => !!win && !win.isDestroyed();
 // ------------------------------------------------------------------ 세션
 
 function sessionSummary() {
-  return Array.from(sessions.values()).map((s) => ({
+  return Array.from(sessions.values()).filter((s) => winAlive(s.win)).map((s) => ({
     id: s.account.id, state: s.state, detail: s.detail, tabId: s.win.id,
   }));
 }
@@ -227,14 +245,6 @@ async function openWindowForAccount(account, { forceLogin }) {
     const driver = new ElectronDriver(win, `[${account.id}]`, log);
     s = { account, win, driver, state: 'opening', detail: '창 여는 중', running: false, stop: null };
     sessions.set(account.id, s);
-    win.on('closed', () => {
-      const cur = sessions.get(account.id);
-      if (cur && cur.win === win) {
-        cur.stop?.set();
-        sessions.delete(account.id);
-        notifyState();
-      }
-    });
     notifyState();
     await driver.loadUrl(process.env.CC_SMOKE_MOCK ? 'https://www.classcard.net/Main' : LOGIN_URL);
   }
@@ -398,8 +408,10 @@ async function startRun(modeId, accountIds) {
     const runOne = async (account, i) => {
       if (currentRun.stopped) return;
       if (i > 0 && settings.accountGapSec > 0) {
-        log(`계정 간격 ${settings.accountGapSec}초 대기…`);
-        await new Promise((r) => setTimeout(r, settings.accountGapSec * 1000));
+        // 순차: 앞 계정이 끝난 뒤 간격만큼. 동시: i번째 계정은 i×간격 뒤에 출발해 서로 겹치지 않게.
+        const wait = settings.sequential !== false ? settings.accountGapSec : settings.accountGapSec * i;
+        log(`[${account.id}] 계정 간격 ${wait}초 대기…`);
+        await new Promise((r) => setTimeout(r, wait * 1000));
       }
       const s = await openWindowForAccount(account, { forceLogin: false });
       if (currentRun.stopped) return;
@@ -533,9 +545,12 @@ async function runSmoke() {
   let stat = null;
   while (Date.now() < deadline) {
     stat = await s.driver.eval(`
-      var d = document.getElementById('done');
-      if (!d || getComputedStyle(d).display === 'none') return null;
       var st = document.getElementById('stat');
+      var d = document.getElementById('done');
+      // 모의 화면은 두 가지 방식으로 '끝'을 알린다: #done 이 보이거나, #stat 에 data-done="1" 이 붙는다
+      var doneA = d && getComputedStyle(d).display !== 'none';
+      var doneB = st && st.getAttribute('data-done') === '1';
+      if (!doneA && !doneB) return null;
       return st ? st.textContent : 'done';`);
     if (stat) break;
     await new Promise((r) => setTimeout(r, 500));

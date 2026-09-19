@@ -39,6 +39,9 @@ export const CONFIG = {
   idleGiveUp: 30,        // 문제도 버튼도 못 찾은 채 이만큼 반복하면(≈12초) 종료
   driveClassPage: true,  // 클래스 페이지에서 유닛/단계를 스스로 눌러 진행할지
   reviewWrong: true,     // 오답이 있으면 '누적오답복습'을 먼저 다시 학습할지
+  // 'Scramble' 은 순위를 다투는 드래그 게임(GrammarScramble)이고 유닛 완료에 필요하지 않다
+  // (실측: 다른 단계가 모두 100점이면 클래스 페이지가 '다음 유닛으로 이동'을 띄운다). 건너뛴다.
+  skipScramble: true,
   // 개념 톡 해설 음성을 끝까지 들려줄지. 끄면 재생 위치를 끝으로 보내 빨리 넘어간다.
   playTalkAudio: true,
   loadSettleMs: 600,     // 화면의 항목이 다 로드됐는지 확인할 때 두 번 재는 간격
@@ -55,6 +58,18 @@ const TALK_WAIT_LIMIT = 120;
 
 /** 단계 시작 화면에서 '시작' 을 이만큼 눌러도 안 넘어가면 멈춘다. */
 const START_PRESS_LIMIT = 4;
+/** 클래스에서 단계를 누른 뒤 그 화면이 뜰 때까지 기다리는 최대 시간(ms). 느린 망에서 20초 넘게 걸린다(실측). */
+const CLASS_OPEN_WAIT_MS = 30000;
+/** 단계 시작 화면에서 '시작/계속' 을 누른 뒤 문제 화면이 뜰 때까지 기다리는 최대 시간(ms). */
+const START_WAIT_MS = 40000;
+/** 채점 결과 화면에서 버튼을 눌러도 화면이 안 바뀌면 이 횟수 뒤 클래스 페이지로 돌아간다. */
+const RESULT_PRESS_LIMIT = 4;
+/** 화면을 이 횟수(×0.4초) 연속으로 못 읽으면 읽기 스크립트를 직접 돌려 오류를 로그에 남긴다. */
+const NULL_STREAK_WARN = 25;
+/** '다음' 을 눌러도 화면이 그대로일 때: 이 횟수에 Enter, 이 횟수에 신뢰된 클릭, 이 횟수를 넘으면 막힌 것으로. */
+const NEXT_STUCK_ENTER = 8;
+const NEXT_STUCK_TRUSTED = 16;
+const NEXT_STUCK_GIVEUP = 40;
 
 /**
  * '재생 중' 인데 재생 위치가 이만큼(0.7초 단위) 안 움직이면 진짜 나오는 게 아니라고 본다.
@@ -85,6 +100,9 @@ export const STAGE_ORDER = [
 ];
 
 const NEXT_SELECTORS = [
+  // 'N 연속 정답!' 축하 화면(.continue-5-layer.active)이 문제를 덮는다. 이 '다음문제' 를 먼저 눌러야
+  // 뒤의 채점 버튼이 살아난다 (실측: 5문제 연속 정답 뒤 여기서 말없이 멈춰 있었다).
+  '.continue-5-layer.active .btn-next-card2',
   // 문법 문제 화면의 '채점하기' (실제 마크업: .btn.btn-gclass.btn-next-card)
   '.flip-card.showing .btn-next-card', '.btn-next-card',
   '.flip-card.showing .default-btn-body .btn-gclass',
@@ -177,6 +195,29 @@ if (startBtn) {
     }
 }
 
+// ================================================ 0.5) 채점 결과 화면 (제출 뒤)
+// 제출하면 아래쪽 .test-layer.bottom 이 나타나고(.hidden 이 빠진다) .msg 에 점수·안내,
+// .btn-next-step 에 '오답체크' / '2차 학습진행' / '오답체크 완료' / '학습완료' 가 붙는다.
+// 이 버튼을 눌러야 단계가 끝난다 (실측: 95점을 받고도 여기서 10분 넘게 말없이 서 있었다).
+// 이 층은 position:fixed 라 offsetParent 가 null → 크기와 스타일로 보이는지 본다.
+var rl = document.querySelector('.test-layer.bottom');
+if (rl && (' ' + rl.className + ' ').indexOf(' hidden ') < 0) {
+    var rr = rl.getBoundingClientRect();
+    var rs = window.getComputedStyle(rl);
+    if (rr.width > 0 && rr.height > 0 && rs.display !== 'none' && rs.visibility !== 'hidden') {
+        var rb = null;
+        var rbs = rl.querySelectorAll('.btn-next-step, .btn-concept-next-step');
+        for (var i = 0; i < rbs.length; i++) {
+            var br = rbs[i].getBoundingClientRect();
+            if (br.width > 0 && br.height > 0) { rb = rbs[i]; break; }
+        }
+        if (rb) {
+            rb.setAttribute('data-cc-resultbtn', '1');
+            return { kind: 'result', label: txt(rb).slice(0, 30), msg: txt(rl.querySelector('.msg')).slice(0, 80) };
+        }
+    }
+}
+
 // ================================================ 1) 문법 클래스 페이지
 // 화면에 보이는 유닛만 센다. 문제 화면으로 넘어가도 클래스 페이지가 DOM 에
 // 숨은 채 남아 있는 경우가 있어, 보이지 않으면 클래스 페이지로 보지 않는다.
@@ -198,10 +239,19 @@ if (unitItems.length) {
             // 페이지를 다시 열어도 변하지 않는 키 (자리 번호를 쓰면 잠금이 풀릴 때 어긋난다)
             var skey = uname + '|' + stitle;
             b.setAttribute('data-cc-stage', skey);
+            // 끝난 단계: 점수(.text-gclass '100점')가 보이고 '학습 시작' 버튼이 없다.
+            // (실제 클래스 페이지에서 확인 — 진행 중은 .ing + .set-box-start, 잠김은 .lock)
+            var scoreEl = b.querySelector('.text-gclass');
+            var scoreTxt = txt(scoreEl);
+            var hasStart = !!b.querySelector('.set-box-start');
+            // (템플릿 문자열 안이라 \\d 를 쓰면 백슬래시가 사라진다 — 문자 클래스로 쓴다)
+            var isDone = !hasStart && /[0-9]+ *점/.test(scoreTxt);
             stages.push({
                 key: skey,
                 title: stitle,
                 locked: b.className.indexOf('lock') >= 0,
+                done: isDone,
+                score: scoreTxt,
                 visible: vis(b)
             });
         }
@@ -210,12 +260,28 @@ if (unitItems.length) {
             i: i,
             name: uname,
             locked: u.className.indexOf('lock') >= 0,
+            // 학생 화면은 '지금 학습 중인 유닛' 하나만 펼쳐진다(.unit-item.active). 지난 유닛은 접힌 채
+            // 리포트만 보이고 제목을 눌러도 펼쳐지지 않는다(실측). 그래서 active 가 아니면 펼치려 하지 않는다.
+            active: (' ' + u.className + ' ').indexOf(' active ') >= 0,
             open: !!(title && title.getAttribute('data-open') === '1'),
             hasTitle: !!title,
             stages: stages
         });
     }
-    return { kind: 'class', units: units };
+    // 지금 유닛의 단계를 다 마치면 사이트가 '다음 유닛으로 이동'(.move-next) 버튼을 띄운다.
+    // 이걸 눌러야(확인 창 → 서버 반영 → 새로 열림) 다음 유닛이 열린다.
+    var mv = null;
+    var mvs = document.querySelectorAll('.unit-list .move-next, .unit-list .btn-show-clinic-result, .move-next.btn-show-clinic-result');
+    for (var i = 0; i < mvs.length; i++) {
+        var mr = mvs[i].getBoundingClientRect();
+        if (mr.width > 0 && mr.height > 0) { mv = mvs[i]; break; }
+    }
+    if (mv) mv.setAttribute('data-cc-movenext', '1');
+    var activeName = '';
+    for (var i = 0; i < units.length; i++) if (units[i].active) { activeName = units[i].name; break; }
+    // 모든 유닛을 마치면 '마지막 유닛의 학습을 완료하였습니다' 안내가 뜬다 (선생님이 새 세트를 지정해야 한다)
+    var classDone = ((document.body && document.body.textContent) || '').indexOf('마지막 유닛의 학습을 완료') >= 0;
+    return { kind: 'class', units: units, moveNext: !!mv, activeName: activeName, classDone: classDone };
 }
 
 // ================================================ 2) 개념 톡 (grammarTalk)
@@ -230,7 +296,13 @@ if (unitItems.length) {
 //   - 다음으로 넘어가는 버튼은 .next-btn ('계속하기 (Enter)'), Enter(keyup) 도 같은 동작.
 //   - 클릭 처리에 isTrusted 검사는 없다(합성 클릭도 받는다).
 var talkCards = document.querySelectorAll('.talk-card');
-if (talkCards.length) {
+// 문제 화면(연습·실전)에도 개념 톡 복습 패널의 .talk-card 가 숨은 채 수십 장 들어 있다(실측 35장).
+// 그걸 개념 톡으로 읽으면 문제 대신 Enter 를 눌러 '제출할까요?' 창만 띄우다 끝난다.
+// 개념 톡 페이지에는 전역 arr_card 가 있고 문제 페이지에는 없다 — 그것으로 가른다.
+var talkPage = false;
+try { talkPage = (typeof arr_card !== 'undefined' && arr_card && arr_card.length > 0); } catch (e) {}
+if (!talkPage && talkCards.length && !document.querySelector('.flip-card')) talkPage = true;
+if (talkCards.length && talkPage) {
     var ci = -1;
     try { if (typeof card_idx !== 'undefined' && card_idx !== null) ci = Number(card_idx); } catch (e) {}
     if (!(ci >= 0 && ci < talkCards.length)) {
@@ -338,6 +410,16 @@ if (talkCards.length) {
             waiting: ccls.indexOf(' wait ') >= 0
         };
     }
+}
+
+// ================================================ 2.7) Scramble 게임 화면 (GrammarScramble)
+// 순위판과 '게임 시작!'(.btn-rank-start) 이 있는 별도 게임. 문제 화면이 아니므로 풀려 하면 안 된다.
+// (클래스 페이지에도 순위 모달이 숨어 있어 버튼 존재만으로 판단하면 안 된다 — 주소 또는 보이는 버튼으로)
+var rankBtn = document.querySelector('.btn-rank-start');
+var rankVisible = false;
+if (rankBtn) { var rkr = rankBtn.getBoundingClientRect(); rankVisible = rkr.width > 0 && rkr.height > 0; }
+if (rankVisible || location.pathname.indexOf('/GrammarScramble/') >= 0) {
+    return { kind: 'scramble' };
 }
 
 // ================================================ 3) 종료 화면
@@ -661,7 +743,7 @@ async function readState(d) {
   // 화면 종류가 정해진 것들은 그대로 넘긴다.
   // ('start'/'login' 을 빠뜨리면 시작 화면·로그인 화면을 문제 화면으로 잘못 읽는다)
   if (data.kind === 'class' || data.kind === 'start' || data.kind === 'login'
-      || data.kind === 'end' || data.kind === 'idle') return data;
+      || data.kind === 'result' || data.kind === 'scramble' || data.kind === 'end' || data.kind === 'idle') return data;
   if (data.kind === 'talk') {
     const conv = (arr) => (arr || [])
       .filter((c) => c && (c.text || '').trim())
@@ -1313,17 +1395,22 @@ export function lookupAnswer(question, lookups) {
  * 클래스 페이지에서 다음에 눌러야 할 단계를 고른다.
  * 잠기지 않고, 아직 시도하지 않은 것 중 STAGE_ORDER 순서가 가장 앞선 것.
  *
+ * 이미 끝난 단계(점수가 표시된 것, `done`)는 다시 열지 않는다.
+ *
  * @param {{i:number,name:string,locked:boolean,open:boolean,stages:object[]}[]} units
  * @param {Set<string>} tried  이미 눌러 본 단계 key
  * @returns {{action:'open'|'stage'|'none', unit?:object, stage?:object}}
  */
-export function nextClassAction(units, tried, prefer) {
+export function nextClassAction(units, tried, prefer, skipScramble = CONFIG.skipScramble, moveNext = false) {
   for (const u of units || []) {
     if (u.locked) continue;
-    const open = (u.stages || []).filter((s) => !s.locked && !tried.has(s.key));
+    // 잠긴 것, 이미 끝난 것(점수가 붙은 것), 눌러 본 것, (설정에 따라) Scramble 게임은 제외
+    const open = (u.stages || []).filter((s) => !s.locked && !s.done && !tried.has(s.key)
+      && !(skipScramble && /scramble/i.test(s.title)));
     if (!open.length) {
       // 아직 펼치지 않은 유닛이면 펼쳐서 단계를 확인한다.
-      if (!(u.stages || []).length && u.hasTitle && !tried.has('open_' + u.i)) {
+      // (지난 유닛(active 아님)은 펼쳐지지 않으므로 건너뛴다 — 지금 유닛이거나 active 표시가 없는 화면만)
+      if (!(u.stages || []).length && u.hasTitle && u.active !== false && !tried.has('open_' + u.i)) {
         return { action: 'open', unit: u };
       }
       continue;
@@ -1341,6 +1428,8 @@ export function nextClassAction(units, tried, prefer) {
     });
     return { action: 'stage', unit: u, stage: open[0] };
   }
+  // 지금 유닛의 단계를 모두 마쳤고 '다음 유닛으로 이동' 버튼이 있으면 그걸 누른다 (한 유닛에 한 번)
+  if (moveNext && !tried.has('movenext')) return { action: 'next' };
   return { action: 'none' };
 }
 
@@ -1413,6 +1502,55 @@ async function pageDict(d) {
     if (front && back) dict.set(back, front);
   }
   return dict.size ? dict : null;
+}
+
+/**
+ * 클래스 페이지에서 단계를 누른 뒤, 그 단계 화면으로 실제로 넘어갈 때까지 기다린다.
+ * 주소가 바뀌거나 화면 종류가 'class' 가 아니게 되면 true. 시간 안에 안 바뀌면 false.
+ */
+async function waitLeaveClass(d, stop, classUrl, maxMs) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    if (await stop.await(500)) return false;
+    const url = (await d.currentUrl()) || '';
+    if (classUrl && url && url !== classUrl) return true;
+    const st = await readState(d);
+    if (st && st.kind !== 'class') return true;
+  }
+  return false;
+}
+
+/**
+ * 단계 시작 화면에서 버튼을 누른 뒤, 시작 화면이 아닌 화면(문제·개념 톡)이 뜰 때까지 기다린다.
+ * 페이지가 다시 열리는 동안(eval 이 null) 도 계속 기다린다. 시간 안에 안 바뀌면 false.
+ */
+async function waitStartLeave(d, stop, maxMs) {
+  return waitKindLeave(d, stop, 'start', maxMs);
+}
+
+/** 접힌 유닛의 제목을 누른 뒤, 그 유닛의 단계 칸이 나타날 때까지 기다린다. */
+async function waitUnitStages(d, stop, unitIndex, maxMs) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    if (await stop.await(500)) return false;
+    const st = await readState(d);
+    if (!st) continue;
+    if (st.kind !== 'class') return true;               // 페이지가 바뀌었으면 그쪽에서 처리한다
+    const u = (st.units || []).find((x) => x.i === unitIndex);
+    if (u && (u.stages || []).length) return true;
+  }
+  return false;
+}
+
+/** 화면 종류가 `kind` 가 아니게 될 때까지 기다린다 (시작 화면·채점 결과 화면에서 버튼을 누른 뒤). */
+async function waitKindLeave(d, stop, kind, maxMs) {
+  const deadline = Date.now() + maxMs;
+  while (Date.now() < deadline) {
+    if (await stop.await(500)) return false;
+    const st = await readState(d);
+    if (st && st.kind !== kind) return true;
+  }
+  return false;
 }
 
 async function clickTagged(d, attr, value, trusted) {
@@ -1510,6 +1648,7 @@ async function handleModal(d) {
             // 지금까지 푼 것을 날리는 버튼('처음부터 다시 학습' 등)도 절대 고르지 않는다
             if (/처음부터|초기화|리셋/.test(t)) continue;
             if (/학습 ?시작/.test(t)) score = 6;
+            else if (/다음 유닛/.test(t)) score = 6;   // '다음 유닛으로 이동' 확인 창
             else if (/시작/.test(t)) score = 5;
             else if (/재시도/.test(t)) score = 5;        // 소리를 못 받았을 때의 '재시도'
             else if (/계속/.test(t)) score = 4;
@@ -1756,7 +1895,8 @@ async function applySyntaxMarking(d, raw) {
         if (input) {
           var setter = Object.getOwnPropertyDescriptor(
             window.HTMLInputElement.prototype, 'value').set;
-          setter.call(input, idxs);
+          // 'is|was' 처럼 대체 정답이 여럿이면 첫 번째를 쓴다 (사이트는 그중 하나면 정답 처리)
+          setter.call(input, idxs.split('|')[0].trim());
           input.dispatchEvent(new Event('input', { bubbles: true }));
           input.dispatchEvent(new Event('change', { bubbles: true }));
           wrote++;
@@ -1866,6 +2006,8 @@ export async function grammar(d, answerDict, stop) {
   const triedStages = new Set();
   const modalRetry = new Map();   // 확인 창을 거친 단계를 다시 눌러 본 횟수
   let startPressed = 0;           // 단계 시작 화면에서 '시작' 을 누른 횟수
+  let resultPressed = 0;          // 채점 결과 화면에서 버튼을 누른 횟수
+  let nullStreak = 0;             // 화면을 연속으로 못 읽은 횟수
   let talkWait = 0;               // 개념 톡 해설 음성을 기다린 횟수
   let talkHeld = 0;               // 재생 중이어도 무조건 올라가는 절대 상한 카운터
   let talkHeardLogged = false;    // '해설을 끝까지 듣는 중' 을 카드마다 한 번만 찍는다
@@ -1879,6 +2021,8 @@ export async function grammar(d, answerDict, stop) {
   let lastGroupPick = null;
   let lastQid = '';
   let idleStreak = 0;
+  let lastNextSig = '';   // '다음' 을 누른 직후의 화면 표식 (같은 화면이 이어지는지 본다)
+  let nextStuck = 0;      // '다음' 을 눌렀는데 화면이 그대로인 연속 횟수
   let ignoredClicks = 0;
   let talkStuck = 0;      // 개념 톡에서 Enter 가 먹히지 않은 연속 횟수
   let checkedScreen = '';  // 정답 데이터를 확인한 화면 (단계가 바뀌면 다시 확인한다)
@@ -1947,9 +2091,20 @@ export async function grammar(d, answerDict, stop) {
     while (!stop.isSet) {
       const state = await readState(d);
       if (!state) {
+        // 화면을 계속 못 읽으면(페이지 전환 중이 아니라 읽기 스크립트 자체가 깨졌을 때) 말없이 돌기만 한다.
+        // (실측: 읽기 스크립트의 문법 오류 하나로 12분 동안 아무 로그도 없이 서 있었다) 원인을 한 번 찍는다.
+        nullStreak++;
+        if (nullStreak === NULL_STREAK_WARN) {
+          const err = await d.eval(
+            `try { new Function(${JSON.stringify(READ_STATE_JS)})(); return null; }` +
+            ' catch (e) { return String((e && e.message) || e); }',
+          );
+          d.log(`[문법] 화면을 읽지 못하고 있습니다 (${err ? '읽기 스크립트 오류: ' + String(err).slice(0, 80) : '페이지 응답 없음'}) — 계속 시도합니다.`);
+        }
         if (await stop.await(400)) break;
         continue;
       }
+      nullStreak = 0;
 
       // ---------------------------------------------- 로그인 화면(세션 끊김)
       if (state.kind === 'login') {
@@ -1979,6 +2134,25 @@ export async function grammar(d, answerDict, stop) {
         sameModal = 0;
       }
 
+      // ---------------------------------------------- 채점 결과 화면 (제출 뒤)
+      // '오답체크'/'2차 학습진행'/'학습완료' 를 눌러야 단계가 마무리된다. 누르면 페이지가 다시 열린다.
+      if (state.kind === 'result') {
+        resultPressed++;
+        if (resultPressed > RESULT_PRESS_LIMIT) {
+          if (await backToClass('채점 결과 화면에서 더 진행되지 않습니다')) { resultPressed = 0; continue; }
+          d.log('[문법] 채점 결과 화면에서 더 진행되지 않습니다 — 화면을 확인해 주세요.');
+          stop.set();
+          break;
+        }
+        d.log(`[문법] ⑫ 채점 결과: ${state.msg || '(안내 없음)'} — '${state.label || '다음'}' 을 누릅니다.`);
+        await clickTagged(d, 'data-cc-resultbtn', 1, false);
+        const moved = await waitKindLeave(d, stop, 'result', START_WAIT_MS);
+        if (stop.isSet) break;
+        if (moved) resultPressed = 0;
+        else if (await stop.await(CONFIG.stepDelayMs)) break;
+        continue;
+      }
+
       // ---------------------------------------------- 단계 시작 화면
       // '시작' 을 눌러야 카드가 만들어진다. 안 누르면 풀 게 없다고 보고 끝내 버린다.
       if (state.kind === 'start') {
@@ -1992,7 +2166,12 @@ export async function grammar(d, answerDict, stop) {
         if (!(await clickTagged(d, 'data-cc-startbtn', 1, false))) {
           await d.clickFirstVisible('.btn-quiz-start, .btn-opt-start');
         }
-        if (await stop.await(CONFIG.stepDelayMs)) break;
+        // 시작 버튼은 서버에 저장된 진도를 받아 온 뒤 페이지를 다시 연다. 느린 망에서는 30초 넘게 걸리는데
+        // (실측: '계속' 을 누른 뒤 37초), 그 전에 다시 누르고 4번째에 포기하면 안 된다. 화면이 바뀔 때까지 기다린다.
+        const moved = await waitStartLeave(d, stop, START_WAIT_MS);
+        if (stop.isSet) break;
+        if (moved) startPressed = 0;
+        else if (await stop.await(CONFIG.stepDelayMs)) break;
         continue;
       }
 
@@ -2006,15 +2185,59 @@ export async function grammar(d, answerDict, stop) {
         }
         // ⑬ 직전 단계에서 틀린 게 있으면 '누적오답복습'(틀린 문제만 다시 학습)을 먼저 한다.
         const prefer = (CONFIG.reviewWrong && wrongLastStage) ? '누적오답복습' : null;
-        const act = nextClassAction(state.units, triedStages, prefer);
+        const act = nextClassAction(state.units, triedStages, prefer, CONFIG.skipScramble, !!state.moveNext);
         if (act.action === 'none') {
+          if (state.classDone) d.log('[문법] 이 클래스의 모든 유닛을 마쳤습니다 — 선생님이 새 세트를 지정해야 다음 학습이 열립니다.');
           d.log('[문법] 남은 단계가 없습니다 -> 종료');
           stop.set();
           break;
         }
+        if (act.action === 'next') {
+          // 지금 유닛을 마쳤다. '다음 유닛으로 이동' → 확인 창('다음 유닛으로 이동') → 서버 반영 → 페이지가 새로 열린다.
+          triedStages.add('movenext');
+          const wasActive = state.activeName || '';
+          d.log(`[문법] 유닛 '${wasActive}' 의 단계를 모두 마쳤습니다 — '다음 유닛으로 이동' 을 누릅니다.`);
+          await clickTagged(d, 'data-cc-movenext', 1, false);
+          if (await stop.await(1500)) break;
+          const picked = await handleModal(d);
+          if (picked) {
+            const pmsg = picked.split('\u0001')[1] || '';
+            d.log(`[문법] 확인 창("${pmsg.slice(0, 34)}")의 '${picked.split('\u0001')[0]}' 를 눌렀습니다.`);
+            if (/대기를 지정|진도변경을 요청/.test(pmsg)) {
+              d.log('[문법] 선생님이 다음 유닛을 열어 주어야 합니다 — 여기서 마칩니다.');
+              stop.set();
+              break;
+            }
+          }
+          // 새 유닛이 열릴 때까지 기다린다 (같은 주소로 다시 열리므로 활성 유닛 이름이 바뀌는지 본다)
+          const deadline = Date.now() + START_WAIT_MS;
+          let changed = false;
+          while (Date.now() < deadline) {
+            if (await stop.await(500)) break;
+            const st = await readState(d);
+            if (st && st.kind === 'class' && (st.activeName || '') !== wasActive) { changed = true; break; }
+            if (st && st.kind !== 'class') { changed = true; break; }
+          }
+          if (stop.isSet) break;
+          if (changed) {
+            triedStages.clear();     // 새 유닛: 단계 기록을 새로 시작한다
+            d.log('[문법] 다음 유닛이 열렸습니다.');
+          } else {
+            d.log('[문법] 다음 유닛이 열리지 않았습니다 — 화면을 확인해 주세요.');
+          }
+          continue;
+        }
         if (act.action === 'open') {
+          // 접힌 유닛은 제목을 눌러야 단계 목록을 서버에서 받아 온다(data-load=0). 받아 오는 데 몇 초가 걸리므로
+          // 단계가 나타날 때까지 기다린다. 안 기다리면 다음 유닛으로 넘어가 버리고(아코디언이라 앞 유닛은 접힌다)
+          // 결국 '남은 단계 없음'으로 끝난다(실측: 유닛 10개를 3초 간격으로 훑고 종료).
           triedStages.add('open_' + act.unit.i);
+          d.log(`[문법] 유닛 '${act.unit.name}' 을 펼칩니다.`);
           await d.clickFirstVisible(`[data-cc-unit="${act.unit.i}"] .unit-title`);
+          const shown = await waitUnitStages(d, stop, act.unit.i, CLASS_OPEN_WAIT_MS);
+          if (stop.isSet) break;
+          if (!shown) d.log(`[문법] 유닛 '${act.unit.name}' 에는 단계가 없습니다 — 다음 유닛으로.`);
+          continue;
         } else {
           triedStages.add(act.stage.key);
           checkedScreen = '';        // 새 단계 -> 정답 데이터를 다시 확인한다
@@ -2037,6 +2260,12 @@ export async function grammar(d, answerDict, stop) {
             const again = (modalRetry.get(act.stage.key) || 0) + 1;
             modalRetry.set(act.stage.key, again);
             if (again <= 2) triedStages.delete(act.stage.key);
+          } else {
+            // 단계 화면이 뜰 때까지 기다린다. 망이 느리면 새 페이지가 몇십 초 뒤에 오는데,
+            // 그 전에 클래스 페이지를 다시 읽으면 '남은 단계 없음'으로 잘못 끝낸다(실측).
+            const left = await waitLeaveClass(d, stop, classUrl, CLASS_OPEN_WAIT_MS);
+            if (stop.isSet) break;
+            if (!left) d.log(`[문법] '${act.stage.title}' 화면이 열리지 않아 다음 단계로 넘어갑니다.`);
           }
         }
         if (await stop.await(CONFIG.stepDelayMs)) break;
@@ -2379,6 +2608,13 @@ export async function grammar(d, answerDict, stop) {
         continue;
       }
 
+      if (state.kind === 'scramble') {
+        if (await backToClass('Scramble 은 순위 게임이라 자동화하지 않습니다')) continue;
+        d.log('[문법] Scramble 게임 화면입니다 — 자동화하지 않습니다. 종료');
+        stop.set();
+        break;
+      }
+
       if (state.kind === 'end') {
         if (await backToClass('한 단계를 마쳤습니다')) continue;
         d.log('[문법] 종료 화면 감지 -> 끝');
@@ -2400,6 +2636,20 @@ export async function grammar(d, answerDict, stop) {
       if (state.kind === 'idle' || !hasWork) {
         if ((state.next || state.kind === 'idle') && (await d.evalBool(CLICK_NEXT_JS))) {
           idleStreak = 0;
+          // '다음' 을 눌렀는데 화면이 그대로면 말없이 무한히 누르게 된다. 같은 화면이 이어지면
+          // Enter → 신뢰된 클릭 순으로 다른 방법을 써 보고, 그래도 안 되면 막힌 것으로 센다.
+          const sig = state.sig || state.qid || state.kind;
+          if (sig === lastNextSig) nextStuck++; else { nextStuck = 0; lastNextSig = sig; }
+          if (nextStuck === NEXT_STUCK_ENTER) {
+            d.log('[문법] 다음 버튼을 눌러도 화면이 바뀌지 않습니다 — Enter 를 보냅니다.');
+            await d.pressEnter();
+          } else if (nextStuck === NEXT_STUCK_TRUSTED) {
+            d.log('[문법] 여전히 그대로입니다 — 다음 버튼을 신뢰된 클릭으로 누릅니다.');
+            await d.clickFirstVisible(NEXT_SELECTORS.join(','));
+          } else if (nextStuck > NEXT_STUCK_GIVEUP) {
+            idleStreak = NEXT_STUCK_GIVEUP;   // 아래의 '더 풀 문제가 없다' 처리로 넘긴다
+            nextStuck = 0;
+          }
         } else {
           idleStreak++;
           if (idleStreak === 15) {

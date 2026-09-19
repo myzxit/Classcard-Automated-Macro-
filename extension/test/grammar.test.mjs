@@ -91,7 +91,33 @@ test('못 찾으면 null', () => {
 const unit = (i, name, stages, opts = {}) => ({
   i, name, locked: !!opts.locked, hasTitle: opts.hasTitle !== false, stages,
 });
-const stage = (key, title, locked = false) => ({ key, title, locked });
+const stage = (key, title, locked = false, done = false) => ({ key, title, locked, done });
+
+test('점수가 붙은(끝난) 단계는 건너뛰고 다음 단계를 연다 — 실제 클래스 페이지의 상태', () => {
+  // 개념 톡 100점(끝남) · 연습 문제 A 학습 시작 · 나머지 잠김
+  const units = [unit(0, '부정구문', [
+    stage('0_0', '개념 톡', false, true),
+    stage('0_1', '연습 문제 A'),
+    stage('0_2', '연습 문제 B', true),
+    stage('0_3', '서술형 문제', true),
+  ])];
+  const act = nextClassAction(units, new Set());
+  assert.equal(act.action, 'stage');
+  assert.equal(act.stage.title, '연습 문제 A');
+  // Scramble 게임은 건너뛴다 (유닛 완료에 필요 없는 순위 게임)
+  const withScr = [unit(0, '부정구문', [stage('0_0', '개념 톡', false, true), stage('0_9', 'Scramble')])];
+  assert.equal(nextClassAction(withScr, new Set()).action, 'none');
+  assert.equal(nextClassAction(withScr, new Set(), null, false).stage.title, 'Scramble');
+  // 지난 유닛(active 아님)은 펼치려 하지 않고, 지금 유닛을 다 마쳤으면 '다음 유닛으로 이동' 을 고른다
+  const past = { ...unit(0, '지난 유닛', []), active: false };
+  const cur = { ...unit(1, '지금 유닛', [stage('1_0', '개념 톡', false, true)]), active: true };
+  assert.equal(nextClassAction([past, cur], new Set(), null, true, true).action, 'next');
+  assert.equal(nextClassAction([past, cur], new Set(['movenext']), null, true, true).action, 'none');
+  assert.equal(nextClassAction([past, cur], new Set(), null, true, false).action, 'none');
+  // 끝난 단계밖에 없으면 할 일이 없다
+  const only = [unit(0, '부정구문', [stage('0_0', '개념 톡', false, true)])];
+  assert.equal(nextClassAction(only, new Set()).action, 'none');
+});
 
 test('잠기지 않은 첫 단계를 STAGE_ORDER 순서로 고른다', () => {
   const units = [unit(0, '강조구문', [

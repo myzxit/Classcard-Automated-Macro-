@@ -107,8 +107,37 @@ class GrammarLogicTest {
         locked: Boolean = false, hasTitle: Boolean = true,
     ) = Grammar.UnitRow(i, name, locked, hasTitle, stages)
 
-    private fun stage(key: String, title: String, locked: Boolean = false) =
-        Grammar.Stage(key, title, locked)
+    private fun stage(key: String, title: String, locked: Boolean = false, done: Boolean = false) =
+        Grammar.Stage(key, title, locked, done)
+
+    @JUnitTest
+    fun classSkipsFinishedStages() {
+        // 실제 클래스 페이지의 상태: 개념 톡 100점(끝남) · 연습 문제 A 학습 시작 · 나머지 잠김
+        val units = listOf(
+            unit(
+                0, "부정구문",
+                listOf(
+                    stage("0_0", "개념 톡", done = true),
+                    stage("0_1", "연습 문제 A"),
+                    stage("0_2", "연습 문제 B", locked = true),
+                ),
+            )
+        )
+        val act = Grammar.nextClassAction(units, emptySet()) as Grammar.ClassAction.Start
+        assertEquals("연습 문제 A", act.stage.title)
+        val only = listOf(unit(0, "부정구문", listOf(stage("0_0", "개념 톡", done = true))))
+        assertTrue(Grammar.nextClassAction(only, emptySet()) is Grammar.ClassAction.None)
+        // 지난 유닛(active 아님)은 펼치려 하지 않고, 지금 유닛을 다 마쳤으면 '다음 유닛으로 이동' 을 고른다
+        val past = Grammar.UnitRow(0, "지난 유닛", false, true, emptyList(), active = false)
+        val cur = Grammar.UnitRow(1, "지금 유닛", false, true, listOf(stage("1_0", "개념 톡", done = true)), active = true)
+        assertTrue(Grammar.nextClassAction(listOf(past, cur), emptySet(), null, true, true) is Grammar.ClassAction.Next)
+        assertTrue(Grammar.nextClassAction(listOf(past, cur), setOf("movenext"), null, true, true) is Grammar.ClassAction.None)
+        assertTrue(Grammar.nextClassAction(listOf(past, cur), emptySet(), null, true, false) is Grammar.ClassAction.None)
+        // Scramble 게임은 건너뛴다 (유닛 완료에 필요 없는 순위 게임)
+        val withScr = listOf(unit(0, "부정구문", listOf(stage("0_0", "개념 톡", done = true), stage("0_9", "Scramble"))))
+        assertTrue(Grammar.nextClassAction(withScr, emptySet()) is Grammar.ClassAction.None)
+        assertEquals("Scramble", (Grammar.nextClassAction(withScr, emptySet(), null, false) as Grammar.ClassAction.Start).stage.title)
+    }
 
     @JUnitTest
     fun classPicksFirstStageInOrder() {
