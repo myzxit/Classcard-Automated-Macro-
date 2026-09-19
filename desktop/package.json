@@ -1,0 +1,51 @@
+{
+  "name": "classcard-automation-desktop",
+  "productName": "클래스카드 자동화",
+  "version": "3.15.1",
+  "description": "클래스카드 자동화 — PC(윈도우) 버전. 크롬 확장·안드로이드 앱과 같은 엔진.",
+  "private": true,
+  "type": "module",
+  "main": "main.js",
+  "author": "myzxit",
+  "license": "MIT",
+  "scripts": {
+    "sync": "node sync.mjs",
+    "start": "node sync.mjs && electron .",
+    "smoke": "node sync.mjs && node test/smoke.mjs",
+    "dist:win": "node sync.mjs && electron-builder --win --publish never"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "build": {
+    "appId": "net.classcard.automation",
+    "productName": "classcard-automation",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "driver.js",
+      "preload-ui.cjs",
+      "app/**/*",
+      "package.json"
+    ],
+    "win": {
+      "icon": "build/icon.png",
+      "target": [
+        "portable",
+        "nsis"
+      ]
+    },
+    "portable": {
+      "artifactName": "classcard-automation-portable.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "classcard-automation-setup.exe",
+      "shortcutName": "클래스카드 자동화"
+    }
+  }
+}

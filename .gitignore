@@ -1,3 +1,6 @@
 .env
 __pycache__/
 .json
+# PC(exe) 버전의 npm 파일은 예외 (위의 .json 규칙 때문에 따로 허용)
+!desktop/package.json
+!desktop/package-lock.json

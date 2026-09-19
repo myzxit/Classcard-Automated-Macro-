@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+  <!-- 이세계 낮 하늘 — 직접 그린 오리지널 배경 (떠 있는 섬 · 구름 · 무지개 폭포). 특정 작품의 장면이 아닙니다. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8ec9ff"/>
+      <stop offset="0.55" stop-color="#cfe9ff"/>
+      <stop offset="1" stop-color="#ffe2ec"/>
+    </linearGradient>
+    <radialGradient id="sun" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.3" stop-color="#fff7cf"/>
+      <stop offset="0.6" stop-color="#ffe58a" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#ffe58a" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="island" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8c6a4a"/>
+      <stop offset="1" stop-color="#4b3527"/>
+    </linearGradient>
+    <linearGradient id="grass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8ee38a"/>
+      <stop offset="1" stop-color="#3fae5f"/>
+    </linearGradient>
+    <linearGradient id="fall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.95"/>
+      <stop offset="1" stop-color="#bfe9ff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="hill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#a5e6b0"/>
+      <stop offset="1" stop-color="#6cc48a"/>
+    </linearGradient>
+    <filter id="blur14"><feGaussianBlur stdDeviation="14"/></filter>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#sky)"/>
+  <circle cx="1240" cy="190" r="260" fill="url(#sun)"/>
+  <circle cx="1240" cy="190" r="70" fill="#fff9d6"/>
+
+  <!-- 구름 -->
+  <g fill="#ffffff" opacity="0.95">
+    <g>
+      <animateTransform attributeName="transform" type="translate" values="0 0; 40 0; 0 0" dur="30s" repeatCount="indefinite"/>
+      <ellipse cx="260" cy="200" rx="120" ry="40"/><ellipse cx="320" cy="180" rx="80" ry="50"/><ellipse cx="200" cy="185" rx="70" ry="45"/>
+    </g>
+    <g>
+      <animateTransform attributeName="transform" type="translate" values="0 0; -50 0; 0 0" dur="38s" repeatCount="indefinite"/>
+      <ellipse cx="900" cy="130" rx="150" ry="42"/><ellipse cx="960" cy="105" rx="90" ry="55"/><ellipse cx="840" cy="115" rx="80" ry="45"/>
+    </g>
+    <g opacity="0.8">
+      <ellipse cx="1450" cy="420" rx="110" ry="30"/><ellipse cx="1500" cy="405" rx="70" ry="38"/>
+    </g>
+  </g>
+
+  <!-- 무지개 -->
+  <g fill="none" stroke-width="12" opacity="0.35">
+    <path d="M300 900 A 520 520 0 0 1 1340 900" stroke="#ff8a8a"/>
+    <path d="M312 900 A 508 508 0 0 1 1328 900" stroke="#ffd27a"/>
+    <path d="M324 900 A 496 496 0 0 1 1316 900" stroke="#a6f28a"/>
+    <path d="M336 900 A 484 484 0 0 1 1304 900" stroke="#8ad4ff"/>
+    <path d="M348 900 A 472 472 0 0 1 1292 900" stroke="#c9a6ff"/>
+  </g>
+
+  <!-- 떠 있는 섬 (뒤) -->
+  <g opacity="0.9">
+    <animateTransform attributeName="transform" type="translate" values="0 0; 0 -10; 0 0" dur="9s" repeatCount="indefinite"/>
+    <path d="M240 420 q80 -30 180 0 l20 12 -30 60 q-60 40 -110 60 l-40 -60 -50 -40z" fill="url(#island)"/>
+    <path d="M240 420 q80 -30 180 0 l20 12 q-110 40 -240 10z" fill="url(#grass)"/>
+    <path d="M400 440 l0 90" stroke="url(#fall)" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="300" cy="395" r="22" fill="#4fb46a"/><rect x="297" y="400" width="6" height="20" fill="#6b4a2f"/>
+  </g>
+
+  <!-- 떠 있는 섬 (앞) -->
+  <g>
+    <animateTransform attributeName="transform" type="translate" values="0 0; 0 -16; 0 0" dur="12s" repeatCount="indefinite"/>
+    <path d="M560 560 q140 -60 320 0 l40 20 -60 110 q-100 70 -200 90 l-70 -100 -80 -80z" fill="url(#island)"/>
+    <path d="M560 560 q140 -60 320 0 l40 20 q-190 70 -420 10z" fill="url(#grass)"/>
+    <path d="M840 580 l0 150" stroke="url(#fall)" stroke-width="16" stroke-linecap="round"/>
+    <circle cx="620" cy="520" r="34" fill="#4fb46a"/><rect x="615" y="530" width="10" height="34" fill="#6b4a2f"/>
+    <circle cx="680" cy="535" r="24" fill="#67c97e"/><rect x="677" y="545" width="7" height="24" fill="#6b4a2f"/>
+    <!-- 작은 집 -->
+    <rect x="730" y="530" width="40" height="30" fill="#f5e6c8"/>
+    <path d="M724 532 l26 -22 26 22z" fill="#e0665f"/>
+    <rect x="746" y="544" width="10" height="16" fill="#8a5a3a"/>
+  </g>
+
+  <!-- 언덕 -->
+  <path d="M0 1000 L0 880 Q 300 800 600 870 T 1200 850 T 1600 880 L 1600 1000 Z" fill="url(#hill)"/>
+  <path d="M0 1000 L0 930 Q 400 880 800 940 T 1600 930 L 1600 1000 Z" fill="#5fbf7e" opacity="0.9"/>
+  <!-- 꽃 -->
+  <g fill="#ff9ecb">
+    <circle cx="150" cy="905" r="5"/><circle cx="420" cy="890" r="4"/><circle cx="980" cy="915" r="5"/><circle cx="1350" cy="900" r="4"/>
+  </g>
+  <g fill="#fff3a1">
+    <circle cx="260" cy="920" r="4"/><circle cx="700" cy="905" r="4"/><circle cx="1180" cy="925" r="5"/>
+  </g>
+</svg>
