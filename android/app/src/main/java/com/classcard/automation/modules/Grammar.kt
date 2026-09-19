@@ -97,7 +97,7 @@ object Grammar {
     /** 다음/채점 버튼들 (확장의 NEXT_SELECTORS 와 같은 순서). 'N 연속 정답' 축하 화면의 버튼이 맨 앞. */
     private const val NEXT_SELECTOR_CSS = ".continue-5-layer.active .btn-next-card2, .flip-card.showing .btn-next-card, .btn-next-card, " +
         ".flip-card.showing .default-btn-body .btn-gclass, .study-bottom .btn-next-box .btn-gclass, .study-bottom .btn-next-box a, " +
-        ".btn-next-box .btn-gclass, .btnNextCard, .btn-condition-next, .btn-next, .btn-continue, .btn-quiz-start, .btn-opt-start
+        ".btn-next-box .btn-gclass, .btnNextCard, .btn-condition-next, .btn-next, .btn-continue, .btn-quiz-start, .btn-opt-start"
 
     /**
      * '재생 중' 인데 재생 위치가 이만큼(0.7초 단위) 안 움직이면 진짜 나오는 게 아니라고 본다.
