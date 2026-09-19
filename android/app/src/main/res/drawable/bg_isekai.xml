@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 이세계 낮 하늘 배경 (직접 그린 오리지널 그림). 밤 모드는 drawable-night/bg_isekai.xml -->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@drawable/bg_isekai_day"
+    android:gravity="fill" />

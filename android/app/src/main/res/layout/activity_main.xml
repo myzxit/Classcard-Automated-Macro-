@@ -1,10 +1,43 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!--
+  '이세계 학습 길드' 테마: 맨 뒤에 배경 그림(bg_isekai)과 캐릭터(유메·푸딩)를 깔고,
+  그 위에 반투명 카드들을 올린다. 그림은 이 프로젝트를 위해 직접 그린 오리지널이다.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
     android:background="@color/bg">
+
+    <ImageView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:contentDescription="@null"
+        android:scaleType="centerCrop"
+        android:src="@drawable/bg_isekai" />
+
+    <ImageView
+        android:layout_width="150dp"
+        android:layout_height="205dp"
+        android:layout_gravity="bottom|end"
+        android:layout_marginEnd="6dp"
+        android:layout_marginBottom="66dp"
+        android:contentDescription="@null"
+        android:src="@drawable/chara_mage" />
+
+    <ImageView
+        android:layout_width="64dp"
+        android:layout_height="54dp"
+        android:layout_gravity="bottom|start"
+        android:layout_marginStart="14dp"
+        android:layout_marginBottom="4dp"
+        android:contentDescription="@null"
+        android:src="@drawable/chara_slime" />
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical">
 
     <!-- ================= 헤더 ================= -->
     <LinearLayout
@@ -18,15 +51,13 @@
         android:paddingTop="12dp"
         android:paddingBottom="12dp">
 
-        <TextView
-            android:layout_width="30dp"
-            android:layout_height="30dp"
-            android:background="@drawable/avatar_bg"
-            android:gravity="center"
-            android:text="@string/app_initials"
-            android:textColor="#FFFFFFFF"
-            android:textSize="12sp"
-            android:textStyle="bold" />
+        <ImageView
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_launcher_fg"
+            android:scaleType="centerCrop"
+            android:background="@drawable/avatar_bg" />
 
         <TextView
             android:layout_width="wrap_content"
@@ -544,3 +575,4 @@
         </LinearLayout>
     </FrameLayout>
 </LinearLayout>
+</FrameLayout>

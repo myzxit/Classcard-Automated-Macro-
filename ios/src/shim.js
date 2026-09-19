@@ -225,7 +225,8 @@ const panel = document.createElement('div');
 panel.id = 'cc-ios-panel';
 panel.innerHTML = `
 <div class="cc-head">
-  <span class="cc-title">클래스카드 자동화</span>
+  <svg class="cc-mascot" viewBox="0 0 120 100" aria-hidden="true"><path d="M12 82q0-58 48-60 48 2 48 60-10 14-48 14-38 0-48-14z" fill="#5fe3d0"/><ellipse cx="44" cy="62" rx="5" ry="7" fill="#1b3d3a"/><ellipse cx="76" cy="62" rx="5" ry="7" fill="#1b3d3a"/><circle cx="42" cy="59" r="1.8" fill="#fff"/><circle cx="74" cy="59" r="1.8" fill="#fff"/><path d="M56 74q4 5 8 0" stroke="#1b3d3a" stroke-width="1.8" fill="none"/><path d="M46 26l6-12 8 10 8-10 6 12z" fill="#ffd86b"/></svg>
+  <span class="cc-title">클래스카드 자동화<small>✦ 이세계 학습 길드 · 아이폰</small></span>
   <span class="cc-ver"></span>
   <button class="cc-x" type="button" aria-label="닫기">✕</button>
 </div>
@@ -241,51 +242,58 @@ const style = document.createElement('style');
 style.textContent = `
 #cc-ios-panel {
   position: fixed; left: 8px; right: 8px; bottom: 8px; z-index: 2147483647;
-  background: #1b1c20; color: #f2f2f4; border-radius: 14px;
+  background: linear-gradient(160deg, rgba(20,16,56,.96), rgba(59,31,110,.96));
+  color: #efe9ff; border-radius: 16px; border: 1px solid rgba(190,160,255,.28);
   font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
-  box-shadow: 0 6px 28px rgba(0,0,0,.45); overflow: hidden;
+  box-shadow: 0 10px 34px rgba(10,5,40,.55); overflow: hidden;
   padding-bottom: env(safe-area-inset-bottom);
 }
-#cc-ios-panel.cc-min .cc-modes, #cc-ios-panel.cc-min .cc-log, #cc-ios-panel.cc-min .cc-bar { display: none; }
+#cc-ios-panel.cc-min .cc-modes, #cc-ios-panel.cc-min .cc-log, #cc-ios-panel.cc-min .cc-bar,
+#cc-ios-panel.cc-min .cc-more { display: none; }
 #cc-ios-panel .cc-head {
-  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
-  background: #26272d; font-weight: 600;
+  display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+  background: linear-gradient(90deg, rgba(59,42,138,.9), rgba(139,92,246,.5)); font-weight: 700;
 }
+#cc-ios-panel .cc-mascot { width: 28px; height: 24px; flex: 0 0 28px; }
 #cc-ios-panel .cc-title { flex: 1; }
-#cc-ios-panel .cc-ver { opacity: .55; font-weight: 400; font-size: 11px; }
+#cc-ios-panel .cc-title small { display: block; font-weight: 400; font-size: 10px; opacity: .75; }
+#cc-ios-panel .cc-ver { opacity: .6; font-weight: 400; font-size: 11px; }
 #cc-ios-panel .cc-x {
-  background: none; border: 0; color: #f2f2f4; font-size: 16px; padding: 2px 4px;
+  background: none; border: 0; color: #efe9ff; font-size: 16px; padding: 2px 4px;
 }
 #cc-ios-panel .cc-modes {
   display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; padding: 10px;
 }
 #cc-ios-panel .cc-modes button {
-  appearance: none; border: 1px solid #3a3b42; background: #2c2d33; color: #f2f2f4;
-  border-radius: 9px; padding: 11px 8px; font-size: 13px; text-align: left;
+  appearance: none; border: 1px solid rgba(190,160,255,.25); background: rgba(44,36,96,.7); color: #efe9ff;
+  border-radius: 11px; padding: 11px 8px; font-size: 13px; text-align: left;
   min-height: 44px;
 }
 #cc-ios-panel .cc-modes button:disabled { opacity: .38; }
-#cc-ios-panel .cc-modes button.cc-on { background: #3d6fd6; border-color: #3d6fd6; }
+#cc-ios-panel .cc-modes button.cc-on {
+  background: linear-gradient(135deg, #8b5cf6, #ec4899); border-color: #a78bfa;
+  box-shadow: 0 6px 18px rgba(139,92,246,.5);
+}
 #cc-ios-panel .cc-bar {
   display: flex; align-items: center; gap: 10px; padding: 0 10px 8px;
 }
 #cc-ios-panel .cc-stop {
-  appearance: none; border: 0; background: #b3413f; color: #fff;
-  border-radius: 8px; padding: 9px 14px; font-size: 13px; min-height: 40px;
+  appearance: none; border: 0; background: linear-gradient(90deg, #e11d48, #f97316); color: #fff;
+  border-radius: 9px; padding: 9px 14px; font-size: 13px; min-height: 40px; font-weight: 700;
 }
-#cc-ios-panel .cc-state { opacity: .75; }
+#cc-ios-panel .cc-state { opacity: .8; }
 #cc-ios-panel .cc-more { padding: 0 10px 8px; font-size: 12px; opacity: .8; }
 #cc-ios-panel .cc-more summary { padding: 6px 2px; cursor: pointer; }
 #cc-ios-panel .cc-locked {
   display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; padding-top: 4px;
 }
 #cc-ios-panel .cc-locked button {
-  appearance: none; border: 1px dashed #4a4b53; background: transparent; color: inherit;
-  border-radius: 8px; padding: 8px; font-size: 12px; text-align: left; opacity: .5;
+  appearance: none; border: 1px dashed rgba(190,160,255,.35); background: transparent; color: inherit;
+  border-radius: 9px; padding: 8px; font-size: 12px; text-align: left; opacity: .5;
 }
 #cc-ios-panel .cc-log {
   max-height: 22vh; overflow-y: auto; padding: 8px 12px 12px;
-  border-top: 1px solid #303138; font-size: 12px;
+  border-top: 1px solid rgba(190,160,255,.2); font-size: 12px; background: rgba(8,6,26,.55);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap; word-break: break-word;
 }
@@ -293,12 +301,15 @@ style.textContent = `
 #cc-ios-panel .cc-log div.error { color: #ff8e8a; }
 #cc-ios-panel .cc-log div.success { color: #8fe08a; }
 @media (prefers-color-scheme: light) {
-  #cc-ios-panel { background: #fbfbfd; color: #17181c; box-shadow: 0 6px 28px rgba(0,0,0,.22); }
-  #cc-ios-panel .cc-head { background: #eceef3; }
-  #cc-ios-panel .cc-x { color: #17181c; }
-  #cc-ios-panel .cc-modes button { background: #fff; border-color: #d3d5dd; color: #17181c; }
-  #cc-ios-panel .cc-modes button.cc-on { background: #3d6fd6; border-color: #3d6fd6; color: #fff; }
-  #cc-ios-panel .cc-log { border-top-color: #e2e4ea; }
+  #cc-ios-panel {
+    background: linear-gradient(160deg, rgba(255,255,255,.97), rgba(233,221,255,.97)); color: #2a1d5e;
+    border-color: rgba(124,92,230,.25); box-shadow: 0 8px 28px rgba(60,30,120,.25);
+  }
+  #cc-ios-panel .cc-head { background: linear-gradient(90deg, rgba(233,221,255,.9), rgba(255,226,236,.9)); }
+  #cc-ios-panel .cc-x { color: #2a1d5e; }
+  #cc-ios-panel .cc-modes button { background: rgba(255,255,255,.85); border-color: rgba(124,92,230,.22); color: #2a1d5e; }
+  #cc-ios-panel .cc-modes button.cc-on { color: #fff; }
+  #cc-ios-panel .cc-log { border-top-color: rgba(124,92,230,.2); background: rgba(29,22,80,.92); color: #e5e7eb; }
 }`;
 
 document.documentElement.appendChild(style);

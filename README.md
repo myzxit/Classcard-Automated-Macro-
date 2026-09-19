@@ -9,7 +9,9 @@
   <p align="center">
     클래스카드(Classcard)의 암기 · 리콜 · 스펠 · 매칭 · 스크램블 · 테스트 학습을 자동화합니다.
     <br />
-    <b>📱 안드로이드 앱</b> 과 <b>🧩 크롬 확장프로그램</b> 두 가지로 쓸 수 있고, <b>기능은 완전히 같습니다.</b>
+    <b>📱 안드로이드 앱</b> · <b>🧩 크롬 확장프로그램</b> · <b>💻 PC(윈도우 exe)</b> · <b>🍎 아이폰(북마클릿)</b> 으로 쓸 수 있고, <b>엔진은 하나라 기능이 같습니다.</b>
+    <br />
+    ✦ <i>이세계 학습 길드</i> 테마 — 직접 그린 오리지널 캐릭터 <b>유메</b>(견습 마법사)와 <b>푸딩</b>(슬라임)이 화면을 지킵니다.
   </p>
 </div>
 
@@ -21,6 +23,8 @@
 |---|---|---|
 | 📱 **안드로이드** | [classcard-automation.apk](https://github.com/myzxit/Classcard-Automated-Macro-/releases/download/apk-latest/classcard-automation.apk) | 폰 브라우저로 링크를 열면 바로 받아집니다 |
 | 🧩 **크롬 확장** | [classcard-automation-extension.zip](https://github.com/myzxit/Classcard-Automated-Macro-/releases/download/apk-latest/classcard-automation-extension.zip) | 압축을 풀고 개발자 모드로 로드 |
+| 💻 **PC (윈도우)** | [classcard-automation-portable.exe](https://github.com/myzxit/Classcard-Automated-Macro-/releases/download/apk-latest/classcard-automation-portable.exe) | 받아서 바로 실행 (설치판: [setup.exe](https://github.com/myzxit/Classcard-Automated-Macro-/releases/download/apk-latest/classcard-automation-setup.exe)) |
+| 🍎 **아이폰** | [ios/README.md](ios/README.md) | 사파리 북마크 하나로 실행 (일부 모드는 iOS 제약으로 불가) |
 
 코드가 바뀔 때마다 같은 주소에 최신 빌드가 자동으로 올라갑니다.
 
@@ -113,6 +117,18 @@
 > **화면이 작게 보이는 건 정상입니다.** 클래스카드는 화면이 좁으면 모바일 레이아웃으로 바뀌는데,
 > 그러면 스크램블 타일이 잘려 자동화가 깨집니다. 그래서 앱이 **데스크톱 화면(가로 1280px)** 을
 > 강제로 유지하고 축소해 보여 줍니다. 손가락으로 확대/스크롤하면 됩니다.
+
+<p align="right">(<a href="#readme-top">back to top</a>)</p>
+
+## 💻 PC(윈도우) 설치
+
+1. 위 표의 **portable exe** 를 받아 실행합니다. 설치가 필요 없습니다.
+2. SmartScreen 의 "확인되지 않은 앱" 경고는 **추가 정보 → 실행** (개인 빌드라 서명 인증서가 없습니다)
+3. 조작 창은 크롬 확장 팝업과 같습니다. 계정 등록 → **🌐 탭 열기** → 계정마다 클래스카드 창이 열립니다
+4. 그 창에서 학습 화면으로 간 뒤 **학습 모드** 선택 → **▶ 자동화 시작**
+
+PC 버전은 계정마다 쿠키가 분리돼 있어 여러 계정을 **동시에** 돌릴 수 있습니다
+(고급 설정의 *다계정 순차 실행* 을 끄면 됩니다). 자세한 것은 [desktop/README.md](desktop/README.md).
 
 <p align="right">(<a href="#readme-top">back to top</a>)</p>
 

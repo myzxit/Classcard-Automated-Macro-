@@ -3,6 +3,11 @@
  * 실제 자동화는 background.js 에서 돌고, 여기서는 상태를 보여주고 명령만 보낸다.
  */
 
+// PC(exe) 버전은 Electron 창에 이 화면을 그대로 띄우고, preload 가 `ccBridge` 로 chrome.runtime 을 흉내 낸다.
+// (Electron 렌더러에는 자체 `window.chrome` 이 있어 그 이름으로는 덮어쓸 수 없다.)
+// 확장에서는 ccBridge 가 없으므로 진짜 chrome 을 쓴다. 모듈 스코프라 이 파일 전체가 이 이름을 본다.
+const chrome = globalThis.ccBridge || globalThis.chrome;
+
 const MODES = [
   { id: 'auto_all', label: '⚡ 전체 자동화', help: '단어장 목록 페이지에서 맨 아래 set부터 순서대로 전 과정을 자동 수행합니다.' },
   { id: 'one_set', label: '◎ 한 세트 자동화', help: '셋홈(set 상세) 페이지를 열어둔 상태에서 그 한 세트만 전 과정을 수행합니다.' },
@@ -21,9 +26,10 @@ const MODES = [
 
 const SETTINGS = [
   {
-    key: 'darkMode', title: '화면 테마', sub: '다크 / 화이트 중에서 고르세요',
-    type: 'choice', labelOn: '🌙 다크', labelOff: '☀ 화이트',
+    key: 'darkMode', title: '화면 테마', sub: '밤하늘(다크) / 낮 하늘(화이트)',
+    type: 'choice', labelOn: '🌙 밤', labelOff: '☀ 낮',
   },
+  { key: 'animeTheme', title: '이세계 테마', sub: '배경 그림과 캐릭터(유메·푸딩) 표시. 끄면 단색 화면', type: 'toggle' },
   { key: 'autoLogin', title: '자동 로그인', sub: '저장된 ID/PW로 탭을 열 때 바로 로그인', type: 'toggle' },
   { key: 'keepTab', title: '자동화 후 탭 유지', sub: '끄면 자동화가 끝날 때 탭을 닫음', type: 'toggle' },
   { key: 'sequential', title: '다계정 순차 실행', sub: '크롬은 쿠키를 공유하므로 계정을 하나씩 실행 (끌 수 없음)', type: 'toggle', disabled: true, fixed: true },
@@ -31,6 +37,19 @@ const SETTINGS = [
   { key: 'startDelaySec', title: '시작 지연시간 (초)', sub: '시작 버튼을 누른 뒤 대기할 시간', type: 'number' },
   { key: 'accountGapSec', title: '계정별 실행 간격 (초)', sub: '다계정 순차 실행 시 간격', type: 'number' },
 ];
+
+/**
+ * PC(exe) 버전은 이 화면을 Electron 창에 그대로 띄운다 (desktop/preload-ui.cjs 가 chrome.runtime 을 흉내 낸다).
+ * 그때는 창 크기에 맞춰 늘어나야 하고, 계정마다 쿠키가 분리돼 있어 '동시 실행'도 고를 수 있다.
+ */
+const IS_DESKTOP = !!(chrome && chrome.runtime && chrome.runtime.ccDesktop);
+if (IS_DESKTOP) {
+  document.documentElement.dataset.platform = 'desktop';
+  const seq = SETTINGS.find((s) => s.key === 'sequential');
+  seq.disabled = false;
+  seq.fixed = undefined;
+  seq.sub = '끄면 계정들을 동시에 실행 (PC 버전은 계정마다 쿠키가 분리됨)';
+}
 
 let state = {
   accounts: [],
@@ -57,7 +76,7 @@ async function init() {
 
   state = await send({ type: 'getState' });
   currentLogDate = state.today;
-  applyTheme(state.settings.darkMode !== false);
+  applyTheme();
 
   buildSettings();
   renderAccounts();
@@ -71,9 +90,12 @@ function send(message) {
   return chrome.runtime.sendMessage(message);
 }
 
-/** 다크/라이트 전환 — CSS 변수만 갈아 끼우면 전체가 따라온다. */
-function applyTheme(dark) {
+/** 밤/낮 · 이세계 테마 전환 — CSS 변수만 갈아 끼우면 전체가 따라온다. */
+function applyTheme() {
+  const dark = state.settings.darkMode !== false;
+  const anime = state.settings.animeTheme !== false;
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.documentElement.setAttribute('data-anime', anime ? 'on' : 'off');
 }
 
 function bindEvents() {
@@ -184,7 +206,7 @@ function renderAccounts() {
 
     row.append(check, grow, chip);
     row.addEventListener('click', () => {
-      if (session) chrome.tabs.update(session.tabId, { active: true });
+      if (session && chrome.tabs) chrome.tabs.update(session.tabId, { active: true });
     });
     list.appendChild(row);
   }
@@ -353,7 +375,7 @@ function buildSettings() {
         state.settings[spec.key] = on;
         send({ type: 'setSettings', patch: { [spec.key]: on } });
         paint(on);
-        if (spec.key === 'darkMode') applyTheme(on);
+        applyTheme();
       };
       btnOn.addEventListener('click', pick(true));
       btnOff.addEventListener('click', pick(false));
@@ -372,7 +394,7 @@ function buildSettings() {
       input.addEventListener('change', () => {
         send({ type: 'setSettings', patch: { [spec.key]: input.checked } });
         state.settings[spec.key] = input.checked;
-        if (spec.key === 'darkMode') applyTheme(input.checked);
+        applyTheme();
       });
       const slider = document.createElement('span');
       slider.className = 'slider';

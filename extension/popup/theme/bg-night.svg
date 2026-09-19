@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+  <!-- 이세계 밤하늘 — 직접 그린 오리지널 배경 (쌍둥이 달 · 떠 있는 섬 · 마법진). 특정 작품의 캐릭터/장면이 아닙니다. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b0a2a"/>
+      <stop offset="0.45" stop-color="#1d1650"/>
+      <stop offset="0.8" stop-color="#3b1f6e"/>
+      <stop offset="1" stop-color="#6b2d7a"/>
+    </linearGradient>
+    <radialGradient id="moon" cx="0.4" cy="0.4" r="0.7">
+      <stop offset="0" stop-color="#fff8e1"/>
+      <stop offset="0.7" stop-color="#ffe9a8"/>
+      <stop offset="1" stop-color="#f6c76a"/>
+    </radialGradient>
+    <radialGradient id="moonGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.35" stop-color="#ffe9a8" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ffe9a8" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="moon2" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#ffd6f2"/>
+      <stop offset="1" stop-color="#e58ad0"/>
+    </radialGradient>
+    <linearGradient id="aurora" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4ef0c8" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#7ef2ff" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#c77dff" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="island" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3a2d6b"/>
+      <stop offset="0.5" stop-color="#26194f"/>
+      <stop offset="1" stop-color="#140c33"/>
+    </linearGradient>
+    <linearGradient id="grass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7c5cff"/>
+      <stop offset="1" stop-color="#4c34b8"/>
+    </linearGradient>
+    <linearGradient id="fall" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#bfe9ff" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#bfe9ff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="circle" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.6" stop-color="#c77dff" stop-opacity="0"/>
+      <stop offset="0.85" stop-color="#c77dff" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#c77dff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="ground" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a1856"/>
+      <stop offset="1" stop-color="#0d0722"/>
+    </linearGradient>
+    <filter id="blur8"><feGaussianBlur stdDeviation="8"/></filter>
+    <filter id="blur20"><feGaussianBlur stdDeviation="20"/></filter>
+  </defs>
+
+  <rect width="1600" height="1000" fill="url(#sky)"/>
+
+  <!-- 오로라 -->
+  <path d="M-50 260 C 300 120, 700 380, 1100 180 S 1500 260, 1700 120 L 1700 420 C 1300 520, 900 300, 500 480 S 100 420, -50 520 Z"
+        fill="url(#aurora)" filter="url(#blur20)"/>
+
+  <!-- 별 -->
+  <g fill="#ffffff">
+    <circle cx="120" cy="90" r="2"/><circle cx="260" cy="180" r="1.4"/><circle cx="410" cy="60" r="2.2"/>
+    <circle cx="560" cy="140" r="1.2"/><circle cx="690" cy="40" r="1.8"/><circle cx="880" cy="120" r="1.5"/>
+    <circle cx="1010" cy="70" r="2.4"/><circle cx="1180" cy="200" r="1.3"/><circle cx="1330" cy="90" r="1.9"/>
+    <circle cx="1480" cy="160" r="1.4"/><circle cx="1560" cy="40" r="2"/><circle cx="60" cy="330" r="1.5"/>
+    <circle cx="340" cy="300" r="1.1"/><circle cx="760" cy="260" r="1.6"/><circle cx="1240" cy="330" r="1.2"/>
+    <circle cx="1420" cy="280" r="1.7"/><circle cx="950" cy="320" r="1.1"/><circle cx="200" cy="450" r="1.3"/>
+    <circle cx="1100" cy="430" r="1.4"/><circle cx="1500" cy="470" r="1.1"/>
+  </g>
+  <!-- 반짝이는 큰 별 -->
+  <g fill="#fff6c8">
+    <path d="M300 120 l4 12 12 4 -12 4 -4 12 -4 -12 -12 -4 12 -4z">
+      <animate attributeName="opacity" values="1;0.2;1" dur="3.2s" repeatCount="indefinite"/>
+    </path>
+    <path d="M1250 60 l5 14 14 5 -14 5 -5 14 -5 -14 -14 -5 14 -5z">
+      <animate attributeName="opacity" values="0.3;1;0.3" dur="4.1s" repeatCount="indefinite"/>
+    </path>
+    <path d="M820 200 l3 9 9 3 -9 3 -3 9 -3 -9 -9 -3 9 -3z">
+      <animate attributeName="opacity" values="0.6;0.1;0.6" dur="2.6s" repeatCount="indefinite"/>
+    </path>
+    <path d="M1550 300 l3 10 10 3 -10 3 -3 10 -3 -10 -10 -3 10 -3z">
+      <animate attributeName="opacity" values="0.2;1;0.2" dur="3.7s" repeatCount="indefinite"/>
+    </path>
+  </g>
+
+  <!-- 쌍둥이 달 -->
+  <circle cx="1180" cy="230" r="230" fill="url(#moonGlow)"/>
+  <circle cx="1180" cy="230" r="120" fill="url(#moon)"/>
+  <g fill="#e8c77d" opacity="0.35">
+    <circle cx="1140" cy="200" r="16"/><circle cx="1215" cy="270" r="22"/><circle cx="1225" cy="190" r="9"/>
+  </g>
+  <circle cx="1000" cy="360" r="70" fill="url(#moonGlow)"/>
+  <circle cx="1000" cy="360" r="34" fill="url(#moon2)"/>
+
+  <!-- 먼 성 실루엣 -->
+  <g fill="#120b33" opacity="0.9">
+    <path d="M1320 640 l0 -120 20 -30 20 30 0 120z M1360 640 l0 -170 15 -25 15 25 0 170z M1390 640 l0 -110 18 -28 18 28 0 110z M1290 640 l0 -80 14 -20 14 20 0 80z"/>
+    <rect x="1280" y="640" width="150" height="40"/>
+  </g>
+  <g fill="#ffd86b" opacity="0.8">
+    <rect x="1372" y="520" width="4" height="6"/><rect x="1372" y="560" width="4" height="6"/>
+    <rect x="1336" y="580" width="4" height="6"/><rect x="1404" y="590" width="4" height="6"/>
+  </g>
+
+  <!-- 떠 있는 섬 (뒤) -->
+  <g opacity="0.85">
+    <animateTransform attributeName="transform" type="translate" values="0 0; 0 -10; 0 0" dur="9s" repeatCount="indefinite"/>
+    <path d="M240 420 q80 -30 180 0 l20 12 -30 60 q-60 40 -110 60 l-40 -60 -50 -40z" fill="url(#island)"/>
+    <path d="M240 420 q80 -30 180 0 l20 12 q-110 40 -240 10z" fill="url(#grass)"/>
+    <path d="M400 440 l0 90" stroke="url(#fall)" stroke-width="10" stroke-linecap="round"/>
+    <path d="M300 405 l0 -40 8 -14 8 14 0 40z" fill="#1c1240"/>
+  </g>
+
+  <!-- 떠 있는 섬 (앞, 큰 것) -->
+  <g>
+    <animateTransform attributeName="transform" type="translate" values="0 0; 0 -16; 0 0" dur="12s" repeatCount="indefinite"/>
+    <path d="M560 560 q140 -60 320 0 l40 20 -60 110 q-100 70 -200 90 l-70 -100 -80 -80z" fill="url(#island)"/>
+    <path d="M560 560 q140 -60 320 0 l40 20 q-190 70 -420 10z" fill="url(#grass)"/>
+    <path d="M840 580 l0 150" stroke="url(#fall)" stroke-width="16" stroke-linecap="round"/>
+    <path d="M600 555 l0 -70 10 -20 10 20 0 70z M660 545 l0 -50 8 -16 8 16 0 50z" fill="#1c1240"/>
+    <!-- 작은 등불 -->
+    <circle cx="700" cy="545" r="6" fill="#ffd86b">
+      <animate attributeName="opacity" values="1;0.5;1" dur="2s" repeatCount="indefinite"/>
+    </circle>
+  </g>
+
+  <!-- 마법진 -->
+  <g transform="translate(800 900)">
+    <ellipse rx="520" ry="150" fill="url(#circle)"/>
+    <g fill="none" stroke="#d9a8ff" stroke-opacity="0.55" stroke-width="2">
+      <ellipse rx="400" ry="115"/>
+      <ellipse rx="330" ry="95" stroke-dasharray="10 8"/>
+      <ellipse rx="250" ry="72"/>
+      <path d="M-250 0 L 0 -72 L 250 0 L 0 72 Z"/>
+      <path d="M-217 -36 L 217 -36 L 0 62 Z"/>
+      <animateTransform attributeName="transform" type="rotate" values="0;360" dur="60s" repeatCount="indefinite"/>
+    </g>
+  </g>
+
+  <!-- 땅 -->
+  <path d="M0 1000 L0 900 Q 400 860 800 900 T 1600 900 L 1600 1000 Z" fill="url(#ground)" opacity="0.9"/>
+</svg>
