@@ -1,0 +1,202 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>클래스 테스트 (모의)</title>
+<!--
+  클래스 테스트(문장 테스트) 화면 /ClassTest/{class}/{set} 의 규칙을 그대로 흉내 낸다
+  (scripts/v2/class_test_sentence.js 에서 확인):
+   - 문제마다 .flip-card 안에 test_question[] 과 `.answer.hidden` / `.answer_dp.hidden` 이 실려 오고,
+     페이지 스크립트가 DOM 준비 시점에 읽어 obj_answer 에 담은 뒤 **그 요소를 지운다**.
+     (그래서 매크로는 preload 가 지워지기 전에 챙겨 둔 window.__cc_test_answers 를 쓴다)
+   - 제시문은 .front-hidden(숨김) 과 .quest-direction .para_item3 에 있다. .flip-card-front 는 없다.
+   - 낱말 타일은 .test-sentence-words 안의 <a> 인데 **클래스 이름이 페이지마다 난수**다(cheat_scramble_class).
+   - 타일 click 은 isTrusted 가 아니면 버린다.
+   - 한 번에 7개까지만 보여 주고, 그 묶음을 다 놓으면 800ms 뒤 다음 묶음을 그린다.
+   - 틀리면 <e> 를 넣고 타일을 disabled 로 만든 뒤 900ms 뒤 다시 그린다(시간 차감).
+   - 다 놓으면 changeCard() 로 다음 문제. 마지막이면 결과 화면.
+   - 이전 응시가 남아 있으면 시작 전에 확인 모달이 두 번 뜬다(#confirmModal .btn-ok = '응시' -> '새로 시작').
+     이 모달이 떠 있는 동안 '테스트 시작' 버튼은 눌러도 아무 일도 일어나지 않는다.
+-->
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .wrap{max-width:900px;margin:24px auto;background:#fff;border-radius:12px;padding:22px;min-height:400px}
+ .flip-card{display:none}.flip-card.showing{display:block}
+ .hidden{display:none}
+ .quest-direction{font-size:17px;margin-bottom:10px}
+ .test-sentence-input{min-height:28px;color:#0f766e;font-weight:600;margin:12px 0;border-bottom:2px solid #cbd5e1}
+ .test-sentence-input span{margin-right:6px}
+ .test-sentence-input e{margin-right:6px;color:#dc2626;font-style:normal}
+ .test-sentence-words a{display:inline-block;margin:4px;padding:8px 12px;border:1px solid #94a3b8;border-radius:8px;cursor:pointer}
+ .test-sentence-words a.clicked{opacity:.35}
+ .test-sentence-words a.disabled{pointer-events:none;opacity:.5}
+ #quizEnd{display:none;text-align:center;padding:30px}#quizEnd.on{display:block}
+ #confirmModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9}
+ #confirmModal .modal-content{background:#fff;margin:140px auto;width:420px;padding:22px;border-radius:12px;text-align:center}
+ #confirmModal .btn{display:inline-block;padding:8px 18px;border-radius:8px;background:#7c3aed;color:#fff;margin:12px 6px 0;cursor:pointer}
+ #confirmModal .btn-cancel{background:#fff;color:#7c3aed;border:1px solid #7c3aed}
+ .btn-quiz-start{display:inline-block;padding:10px 22px;border-radius:9px;background:#7c3aed;color:#fff;margin-bottom:12px}
+ #testForm{display:none}#testForm.on{display:block}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="wrap">
+  <a class="btn-quiz-start" id="quizStart" href="#">테스트 시작</a>
+  <form id="testForm"><div id="cards"></div></form>
+</div>
+<div id="confirmModal"><div class="modal-content">
+  <div id="confirmMsg"></div>
+  <a class="btn btn-primary shadow outline btn-cancel" href="#">취소</a>
+  <a class="btn btn-primary shadow btn-ok" href="#">응시</a>
+</div></div>
+<div id="quizEnd"><a class="btn-go-result" href="#">결과 보기</a>
+  <a href="https://www.classcard.net/set/30378310/1994042" id="exit">나가기</a></div>
+<div id="done"><h2>🎉 클래스 테스트 완료</h2><p id="stat"></p></div>
+<script>
+// 사이트처럼 낱말 타일 클래스 이름을 난수로 만든다 (base64 흉내)
+var cheat_scramble_class = 'c' + btoa('scramble' + Math.floor(Math.random() * 1e9)).replace(/[^A-Za-z0-9]/g, '');
+var QUESTIONS = [
+  { qid: '9001', ko: '무엇이 일어나고 있는지 확실하지 않은 상태 (혼란)',
+    en: 'a state of not being certain about what is happening, what you should do, what something means, etc' },
+  { qid: '9002', ko: '합쳐지거나 연합되거나 연결되다 (연결하다, 이어지다)', en: 'to become joined or united or linked' },
+  { qid: '9003', ko: '신중하게 생각하다 (여기다)', en: 'to think carefully' },
+  { qid: '9004', ko: '공공건물이나 탈것의 출구 (출구)', en: 'a way out of a public building or vehicle' },
+];
+function esc(s) { return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+document.getElementById('cards').innerHTML = QUESTIONS.map(function (q, i) {
+  return '<div class="flip-card' + (i === 0 ? ' showing flip' : '') + '" data-qoption="5">' +
+    '<input type="hidden" name="test_question[]" value="' + q.qid + '">' +
+    '<input type="hidden" class="user_answer" name="user_answer[]" value="">' +
+    '<input type="hidden" class="subjective_yn" name="subjective_yn[]" value="1">' +
+    '<div class="answer hidden">' + esc(q.en) + '</div>' +
+    '<div class="answer_dp hidden">' + esc(q.en) + '</div>' +
+    '<div class="front-hidden hidden">' + esc(q.ko) + '</div>' +
+    '<div class="quest-direction"><div><div class="col font-medium">제한시간 안에 어순배열 하세요.</div></div>' +
+      '<div class="text-666"><span class="para_item3 active" data-idx="0">' + esc(q.ko) + '</span></div></div>' +
+    '<div class="test-sentence-input"></div>' +
+    '<div class="test-sentence-words"></div>' +
+  '</div>';
+}).join('');
+
+// ---- 사이트와 같은 순서: DOM 준비 시점에 .answer.hidden 을 읽어 obj_answer 에 담고 **지운다**
+var obj_answer = {};
+var readAnswersAt = 0;
+function buildObjAnswer() {
+  [].forEach.call(document.querySelectorAll('#testForm .flip-card'), function (card) {
+    var qid = card.querySelector('[name="test_question[]"]').value;
+    var a = card.querySelector('.answer.hidden');
+    if (a) { obj_answer['q' + qid] = a.textContent.trim(); a.remove(); }
+    var dp = card.querySelector('.answer_dp.hidden');
+    if (dp) dp.remove();
+  });
+  readAnswersAt = Date.now();
+}
+
+function fy(a) { for (var i = a.length - 1; i > 0; i--) { var j = (i * 7 + 3) % (i + 1); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+function words(s) { return s.replace(/\s+/g, ' ').trim().split(' '); }
+
+var cur = 0, results = [], synthetic = 0, wrongClicks = 0, timer = null;
+function card() { return document.querySelector('.flip-card.showing'); }
+function answerArr(c) { return words(obj_answer['q' + c.querySelector('[name="test_question[]"]').value] || ''); }
+
+// 실제 setSentenceBottom: current_sentence_idx 부터 7개까지만 제시
+function setSentenceBottom(c, fromIdx) {
+  var arr = answerArr(c);
+  var input = c.querySelector('.test-sentence-input');
+  var placed = input.querySelectorAll('span').length;
+  var start = typeof fromIdx === 'number' ? fromIdx : placed;
+  var limit = Math.min(arr.length, start + 7);
+  var bottom = [];
+  for (var i = start; i < limit; i++) bottom.push(arr[i].replace(/[!?,.;]+$/g, '').trim() || arr[i].trim());
+  fy(bottom);
+  var box = c.querySelector('.test-sentence-words');
+  box.innerHTML = '';
+  bottom.forEach(function (w, idx) {
+    var a = document.createElement('a');
+    a.className = cheat_scramble_class + ' animated';
+    a.setAttribute('data-idx', String(idx));
+    a.textContent = w;
+    a.addEventListener('click', function (e) {
+      if (!e.isTrusted) { synthetic++; e.preventDefault(); return false; }   // 합성 클릭은 버린다
+      if (a.classList.contains('clicked') || a.classList.contains('disabled')) return;
+      var arr2 = answerArr(c);
+      var n = input.querySelectorAll('span').length;
+      if (n >= arr2.length) { changeCard(); return; }
+      var want = arr2[n].replace(/[!?,.;]+$/g, '').trim() || arr2[n].trim();
+      if (w === want) {
+        var sp = document.createElement('span'); sp.textContent = arr2[n]; input.appendChild(sp);
+        a.classList.add('clicked', 'correct');
+        if (box.querySelectorAll('a:not(.clicked)').length === 0) {
+          clearTimeout(timer);
+          timer = setTimeout(function () {
+            if (input.querySelectorAll('span').length >= arr2.length) changeCard();
+            else setSentenceBottom(c);
+          }, 800);
+        }
+      } else {
+        wrongClicks++;
+        var er = document.createElement('e'); er.textContent = w; input.appendChild(er);
+        [].forEach.call(box.querySelectorAll('a'), function (x) { x.classList.add('disabled'); });
+        a.classList.add('wrong');
+        clearTimeout(timer);
+        timer = setTimeout(function () { setSentenceBottom(c, input.querySelectorAll('span').length); }, 900);
+      }
+    });
+    box.appendChild(a);
+  });
+}
+function changeCard() {
+  var c = card();
+  if (!c) return;
+  var arr = answerArr(c);
+  var got = [].map.call(c.querySelectorAll('.test-sentence-input span'), function (s) { return s.textContent; }).join(' ');
+  results.push(got === arr.join(' ') ? '정답' : ('오답(' + got + ')'));
+  c.classList.remove('showing', 'flip');
+  cur++;
+  var cards = document.querySelectorAll('.flip-card');
+  if (cur >= cards.length) {
+    document.querySelector('.wrap').style.display = 'none';
+    document.getElementById('quizEnd').classList.add('on');
+    var ok = results.filter(function (r) { return r === '정답'; }).length;
+    document.getElementById('stat').textContent =
+      ok + '/' + results.length + '문항 정답 · 오클릭 ' + wrongClicks + '회 · 무시된 합성 클릭 ' + synthetic +
+      '회 · 확인 모달 ' + (confirmStep >= 1 ? '통과' : '못 넘김') + ' · 헛클릭 ' + startBlocked + '회';
+    document.getElementById('done').style.display = 'block';
+    return;
+  }
+  cards[cur].classList.add('showing', 'flip');
+  setSentenceBottom(cards[cur]);
+}
+// ---- 이전 응시가 남아 있는 상태: 확인 모달 2단계를 거쳐야 테스트가 시작된다
+var confirmStep = 0, startedAt = 0, startBlocked = 0;
+var $modal = document.getElementById('confirmModal');
+function showConfirm(msg, okText) {
+  document.getElementById('confirmMsg').textContent = msg;
+  $modal.querySelector('.btn-ok').textContent = okText;
+  $modal.style.display = 'block';
+}
+function startTest() {
+  $modal.style.display = 'none';
+  document.getElementById('quizStart').style.display = 'none';
+  document.getElementById('testForm').classList.add('on');
+  startedAt = Date.now();
+  setSentenceBottom(card());
+}
+$modal.querySelector('.btn-ok').addEventListener('click', function (e) {
+  e.preventDefault();
+  $modal.style.display = 'none';
+  if (confirmStep === 0) {
+    confirmStep = 1;
+    // 사이트처럼 600ms 뒤 두 번째 확인이 뜬다
+    setTimeout(function () { showConfirm('테스트를 다시 시작하면 기존 테스트는 무효화됩니다. 새로 시작할까요?', '새로 시작'); }, 600);
+  } else {
+    startTest();
+  }
+});
+$modal.querySelector('.btn-cancel').addEventListener('click', function (e) { e.preventDefault(); $modal.style.display = 'none'; });
+// 모달이 떠 있는 동안 시작 버튼은 아무 일도 하지 않는다 (실제와 같다)
+document.getElementById('quizStart').addEventListener('click', function (e) {
+  e.preventDefault();
+  if ($modal.style.display === 'block') { startBlocked++; return; }
+  if (!startedAt) showConfirm('2026-09-22 00:31:31에 시작한 테스트가 진행 중입니다. 테스트에 새로 응시하시겠습니까?', '응시');
+});
+document.addEventListener('DOMContentLoaded', function () {
+  buildObjAnswer();               // 사이트와 같은 시점에 정답을 읽고 지운다
+  showConfirm('2026-09-22 00:31:31에 시작한 테스트가 진행 중입니다. 테스트에 새로 응시하시겠습니까?', '응시');
+});
+</script></body></html>

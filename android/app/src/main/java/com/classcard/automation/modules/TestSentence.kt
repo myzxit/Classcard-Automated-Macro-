@@ -77,6 +77,55 @@ object TestSentence {
         }
     }
 
+    /**
+     * 클래스 테스트가 문제마다 싣고 바로 지우는 정답 (`.answer.hidden`) — preload 가 지워지기 전에 챙겨 둔 것.
+     * 문제 id 로 바로 찾으므로 제시문 매칭이 필요 없다(= 항상 100점).
+     */
+
+    /**
+     * 테스트 화면의 확인 모달을 처리한다 (확장 games.js 의 handleTestModals 와 같다).
+     *
+     * 클래스 테스트는 이전 응시가 남아 있으면 showConfirm 으로 두 번 묻는다
+     * (scripts/v2/class_test_sentence.js 의 checkOnTest -> checkOnTestReConfirm):
+     *   1) "…에 시작한 테스트가 진행 중입니다. 테스트에 새로 응시하시겠습니까?"  [취소][응시]
+     *   2) "테스트를 다시 시작하면 기존 테스트는 무효화됩니다. 새로 시작할까요?" [취소][새로 시작]
+     * 이 모달이 떠 있는 동안 '테스트 시작' 버튼은 가려져 있어, 처리하지 않으면 시작 버튼만 계속 누르게 된다.
+     */
+    internal suspend fun handleTestModals(d: Driver): Boolean = d.clickSmart(
+        """
+        var sels = ['#confirmModal .btn-ok', '#alertModal .btn-ok', '#alertModal2 .btn-ok',
+                    '.modal-content .btn-ok'];
+        for (var i = 0; i < sels.length && !el; i++) {
+            var btns = document.querySelectorAll(sels[i]);
+            for (var j = 0; j < btns.length; j++) {
+                if (btns[j].offsetParent !== null && !btns[j].classList.contains('close-pos')) { el = btns[j]; break; }
+            }
+        }
+        """
+    )
+
+    /** 확인 모달이 떠 있는지 (떠 있으면 시작 버튼을 눌러도 소용없다). */
+    internal suspend fun testModalOpen(d: Driver): Boolean = d.evalBool(
+        """
+        var ids = ['#confirmModal', '#alertModal', '#alertModal2'];
+        for (var i = 0; i < ids.length; i++) {
+            var m = document.querySelector(ids[i]);
+            if (m && window.getComputedStyle(m).display === 'block') return true;
+        }
+        return false;
+        """
+    )
+
+    private suspend fun pageTestAnswers(d: Driver): Map<String, String> {
+        val obj = d.evalObjectOrNull("return window.__cc_test_answers || null;") ?: return emptyMap()
+        val out = LinkedHashMap<String, String>()
+        for (k in obj.keys()) {
+            val v = obj.optString(k, "").trim()
+            if (v.isNotEmpty()) out[k] = v
+        }
+        return out
+    }
+
     /** 정답 후보 영어 문장 — 페이지가 로그한 정답(preload 캡처) + 지금까지 모은 카드 목록. */
     private suspend fun answerCandidates(d: Driver, maps: Maps): List<String> {
         val out = ArrayList<String>()
@@ -183,6 +232,9 @@ object TestSentence {
         ".test-sentence-words .btn-sentence-word",
         ".sentence-tab-box .btn-sentence-word",
         ".test-sentence-words .btn",
+        // 클래스 테스트(/ClassTest)는 낱말 타일의 클래스 이름을 페이지마다 난수로 바꾼다
+        // (scripts/v2/class_test_sentence.js 의 cheat_scramble_class). 그래서 이름 대신 자리로 찾는다.
+        ".test-sentence-words a",
     )
     private val PLACED_SELECTORS = listOf(
         ".test-sentence-input span",
@@ -222,6 +274,8 @@ object TestSentence {
         var prompt = '';
         var pSel = ['.flip-card-front .front-hidden', '.flip-card-front .cc-table',
                     '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body',
+                    // 클래스 테스트: 제시문은 카드 바로 아래 .front-hidden(숨김) 과 .quest-direction .para_item3 에 있다
+                    '.front-hidden', '.quest-direction .para_item3', '.para_item3',
                     '.test-sentence-mean', '.sentence-mean', '.quest-back', '.q-body', '.question'];
         for (var i = 0; i < pSel.length && !prompt; i++) {
             var el = card.querySelector(pSel[i]);
@@ -560,6 +614,11 @@ object TestSentence {
             }
 
             var dumpedEmptyPrompt = false
+            // 클래스 테스트는 문제마다 정답을 싣고 바로 지운다 — preload 가 챙겨 둔 것을 쓴다 (문제 id 로 바로 찾음)
+            var testAnswers = pageTestAnswers(d)
+            if (testAnswers.isNotEmpty()) {
+                d.log("[문장 테스트] 페이지 정답 ${testAnswers.size}개를 확보했습니다 (문제별 정답 — 100점)")
+            }
             val total = countTotal(d)
             val wrongIdx = Test.planWrongIndices(total, TARGET_SCORE)
             if (DEBUG && total != null) {
@@ -576,6 +635,11 @@ object TestSentence {
             try {
                 while (!stop.isSet) {
                     if (checkEndAndStop(d, stop)) break
+                    if (testModalOpen(d)) {
+                        if (handleTestModals(d)) d.log("[문장 테스트] 확인 모달을 눌렀습니다 (이전 응시 이어받기/새로 시작)")
+                        if (stop.await(900)) break
+                        continue
+                    }
                     if (Memorize.startStudyIfNeeded(d, stop)) continue
 
                     val q = readCard(d)
@@ -623,7 +687,13 @@ object TestSentence {
                     }
 
                     // 뒷면(단어 배열) -> 정답 조회 후 클릭
-                    var english = matchEnglish(q.prompt, maps)
+                    // 1순위: 그 문제의 정답 그대로 (클래스 테스트)
+                    var english: String? = if (q.qid.isNotEmpty()) testAnswers["q" + q.qid] else null
+                    if (english == null && testAnswers.isEmpty()) {
+                        testAnswers = pageTestAnswers(d)          // 늦게 실린 경우 한 번 더
+                        if (q.qid.isNotEmpty()) english = testAnswers["q" + q.qid]
+                    }
+                    if (english == null) english = matchEnglish(q.prompt, maps)
                     if (english == null) {
                         // 화면이 바뀌어 카드 목록이 새로 실렸을 수 있다 — 한 번 다시 읽어 본다.
                         val fresh = pageCards(d)

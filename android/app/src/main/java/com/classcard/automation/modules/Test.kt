@@ -275,6 +275,11 @@ object Test {
             try {
                 while (!stop.isSet) {
                     if (checkEndAndStop(d, stop)) break
+                    if (TestSentence.testModalOpen(d)) {
+                        if (TestSentence.handleTestModals(d)) d.log("[테스트] 확인 모달을 눌렀습니다 (이전 응시 이어받기/새로 시작)")
+                        if (stop.await(900)) break
+                        continue
+                    }
                     if (Memorize.startStudyIfNeeded(d, stop)) continue
 
                     val q = readQuestion(d)

@@ -942,6 +942,12 @@ async function startStudyIfNeeded(d, stop) {
   const need = await d.evalBool(`
     function vis(el) { return el && el.offsetParent !== null; }
     if (vis(document.querySelector('.CardItem.current'))) return false;
+    // 확인 모달이 떠 있으면 시작 버튼은 가려져 있다 — 눌러도 소용없으니 기다린다
+    var ids = ['#confirmModal', '#alertModal', '#alertModal2'];
+    for (var m = 0; m < ids.length; m++) {
+        var mo = document.querySelector(ids[m]);
+        if (mo && window.getComputedStyle(mo).display === 'block') return false;
+    }
     var btns = document.querySelectorAll('.btn-opt-start, .start-opt-body a.btn, .btn-quiz-start');
     for (var i = 0; i < btns.length; i++) if (vis(btns[i])) return true;
     return false;`);
@@ -1730,6 +1736,11 @@ async function test(d, answerDict, stop) {
   try {
     while (!stop.isSet) {
       if (await testCheckEndAndStop(d, stop)) break;
+      if (await testModalOpen(d)) {
+        if (await handleTestModals(d)) d.log('[테스트] 확인 모달을 눌렀습니다 (이전 응시 이어받기/새로 시작)');
+        if (await stop.await(900)) break;
+        continue;
+      }
       if (await startStudyIfNeeded(d, stop)) continue;
 
       const q = await readQuestion(d);
@@ -1825,6 +1836,15 @@ async function pageCards(d) {
 }
 
 /**
+ * 클래스 테스트가 문제마다 싣고 바로 지우는 정답 (`.answer.hidden`) — preload 가 지워지기 전에 챙겨 둔 것.
+ * 문제 id 로 바로 찾으므로 제시문 매칭이 필요 없다(= 항상 100점).
+ */
+async function pageTestAnswers(d) {
+  const obj = await d.eval('return window.__cc_test_answers || null;');
+  return obj && typeof obj === 'object' ? obj : null;
+}
+
+/**
  * 정답 후보 영어 문장들 — 페이지가 로그한 정답(preload 캡처) + 지금까지 모은 카드 목록.
  */
 async function answerCandidates(d, maps) {
@@ -1912,6 +1932,9 @@ const WORD_SELECTORS = [
   '.test-sentence-words .btn-sentence-word',
   '.sentence-tab-box .btn-sentence-word',
   '.test-sentence-words .btn',
+  // 클래스 테스트(/ClassTest)는 낱말 타일의 클래스 이름을 페이지마다 난수로 바꾼다
+  // (scripts/v2/class_test_sentence.js 의 cheat_scramble_class). 그래서 이름 대신 자리로 찾는다.
+  '.test-sentence-words a',
 ];
 const PLACED_SELECTORS = [
   '.test-sentence-input span',
@@ -1949,6 +1972,8 @@ var flipped = card.classList.contains('flip') || words > 0;
 var prompt = '';
 var pSel = ['.flip-card-front .front-hidden', '.flip-card-front .cc-table',
             '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body',
+            // 클래스 테스트: 제시문은 카드 바로 아래 .front-hidden(숨김) 과 .quest-direction .para_item3 에 있다
+            '.front-hidden', '.quest-direction .para_item3', '.para_item3',
             '.test-sentence-mean', '.sentence-mean', '.quest-back', '.q-body', '.question'];
 for (var i = 0; i < pSel.length && !prompt; i++) {
     var el = card.querySelector(pSel[i]);
@@ -2263,6 +2288,40 @@ async function clickSentence(d, english, makeWrong, stop) {
   return true;
 }
 
+
+/**
+ * 테스트 화면의 확인 모달을 처리한다.
+ *
+ * 클래스 테스트는 이전 응시가 남아 있으면 `showConfirm` 으로 두 번 묻는다
+ * (scripts/v2/class_test_sentence.js 의 checkOnTest -> checkOnTestReConfirm):
+ *   1) "…에 시작한 테스트가 진행 중입니다. 테스트에 새로 응시하시겠습니까?"  [취소][응시]
+ *   2) "테스트를 다시 시작하면 기존 테스트는 무효화됩니다. 새로 시작할까요?" [취소][새로 시작]
+ * 이 모달이 떠 있는 동안 '테스트 시작' 버튼은 가려져 있어, 처리하지 않으면 시작 버튼만 계속 누르게 된다.
+ * @returns {Promise<boolean>} 모달을 눌렀으면 true
+ */
+async function handleTestModals(d) {
+  return d.clickSmart(`
+    var sels = ['#confirmModal .btn-ok', '#alertModal .btn-ok', '#alertModal2 .btn-ok',
+                '.modal-content .btn-ok'];
+    for (var i = 0; i < sels.length && !el; i++) {
+        var btns = document.querySelectorAll(sels[i]);
+        for (var j = 0; j < btns.length; j++) {
+            if (btns[j].offsetParent !== null && !btns[j].classList.contains('close-pos')) { el = btns[j]; break; }
+        }
+    }`);
+}
+
+/** 확인 모달이 떠 있는지 (떠 있으면 시작 버튼을 눌러도 소용없다). */
+async function testModalOpen(d) {
+  return d.evalBool(`
+    var ids = ['#confirmModal', '#alertModal', '#alertModal2'];
+    for (var i = 0; i < ids.length; i++) {
+        var m = document.querySelector(ids[i]);
+        if (m && window.getComputedStyle(m).display === 'block') return true;
+    }
+    return false;`);
+}
+
 /** TestSentence.py — 문장 어순 배열 테스트 자동 풀이 */
 async function testSentence(d, answerDict, stop) {
   d.log('[문장 테스트] 시작');
@@ -2283,6 +2342,12 @@ async function testSentence(d, answerDict, stop) {
     d.log('[문장 테스트] 카드 목록·단어장이 없습니다 — 페이지가 남기는 정답으로 풉니다.', 'warn');
   }
 
+  // 클래스 테스트는 문제마다 정답을 싣고 바로 지운다 — preload 가 챙겨 둔 것을 쓴다 (문제 id 로 바로 찾음)
+  let testAnswers = await pageTestAnswers(d);
+  if (testAnswers && Object.keys(testAnswers).length) {
+    d.log(`[문장 테스트] 페이지 정답 ${Object.keys(testAnswers).length}개를 확보했습니다 (문제별 정답 — 100점)`);
+  }
+
   const total = await countTotal(d);
   const wrongIdx = planWrongIndices(total, CONFIG.testSentenceTargetScore);
 
@@ -2296,6 +2361,11 @@ async function testSentence(d, answerDict, stop) {
   try {
     while (!stop.isSet) {
       if (await testSentenceCheckEndAndStop(d, stop)) break;
+      if (await testModalOpen(d)) {
+        if (await handleTestModals(d)) d.log('[문장 테스트] 확인 모달을 눌렀습니다 (이전 응시 이어받기/새로 시작)');
+        if (await stop.await(900)) break;
+        continue;
+      }
       if (await startStudyIfNeeded(d, stop)) continue;
 
       const q = await readCard(d);
@@ -2340,7 +2410,13 @@ async function testSentence(d, answerDict, stop) {
         continue;
       }
 
-      let english = matchEnglish(q.prompt, maps);
+      // 1순위: 그 문제의 정답 그대로 (클래스 테스트)
+      let english = (testAnswers && q.qid && testAnswers['q' + q.qid]) || null;
+      if (!english && testAnswers === null) {
+        testAnswers = await pageTestAnswers(d);          // 늦게 실린 경우 한 번 더
+        english = (testAnswers && q.qid && testAnswers['q' + q.qid]) || null;
+      }
+      if (!english) english = matchEnglish(q.prompt, maps);
       if (!english) {
         // 화면이 바뀌어 카드 목록이 새로 실렸을 수 있다 — 한 번 다시 읽어 본다.
         const fresh = await pageCards(d);
@@ -2840,7 +2916,7 @@ function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-  return { CONFIG, planWrongIndices, buildLookups, solve, testCheckEndAndStop, test, buildMaps, pickByTileBag, matchEnglish, testSentenceCheckEndAndStop, planChunks, testSentence, findPair, isSetHome, returnToSetHome, gameCheckEndAndStop, matching, alignIndex, findNextIndex, scramble };
+  return { CONFIG, planWrongIndices, buildLookups, solve, testCheckEndAndStop, test, buildMaps, pickByTileBag, matchEnglish, testSentenceCheckEndAndStop, planChunks, handleTestModals, testSentence, findPair, isSetHome, returnToSetHome, gameCheckEndAndStop, matching, alignIndex, findNextIndex, scramble };
 })();
 
 // ======================================================== extension/engine/modules/sentence.js

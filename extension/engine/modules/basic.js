@@ -121,6 +121,12 @@ export async function startStudyIfNeeded(d, stop) {
   const need = await d.evalBool(`
     function vis(el) { return el && el.offsetParent !== null; }
     if (vis(document.querySelector('.CardItem.current'))) return false;
+    // 확인 모달이 떠 있으면 시작 버튼은 가려져 있다 — 눌러도 소용없으니 기다린다
+    var ids = ['#confirmModal', '#alertModal', '#alertModal2'];
+    for (var m = 0; m < ids.length; m++) {
+        var mo = document.querySelector(ids[m]);
+        if (mo && window.getComputedStyle(mo).display === 'block') return false;
+    }
     var btns = document.querySelectorAll('.btn-opt-start, .start-opt-body a.btn, .btn-quiz-start');
     for (var i = 0; i < btns.length; i++) if (vis(btns[i])) return true;
     return false;`);

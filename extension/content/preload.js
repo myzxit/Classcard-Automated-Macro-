@@ -89,3 +89,33 @@
     document.addEventListener('DOMContentLoaded', function () { setTimeout(function () { mo.disconnect(); }, 3000); });
   } catch (e) {}
 })();
+
+/* ------------------------------------------- 4) 클래스 테스트 정답(.answer.hidden) 보관 */
+// 클래스 테스트(문장 테스트) 화면(/ClassTest/…, scripts/v2/class_test_sentence.js)은 문제마다
+// `.answer.hidden` 에 정답을 싣고, 페이지 스크립트가 읽자마자 지운 뒤 closure 안 obj_answer 로만 쓴다.
+// 그래서 지워지기 전에 우리가 먼저 읽어 window.__cc_test_answers 에 둔다 (문제 id 별).
+(function () {
+  try {
+    if (window.__ccTestAnswerHook) return;
+    window.__ccTestAnswerHook = true;
+    window.__cc_test_answers = {};
+    function txt(el) { return el ? (el.textContent || '').replace(/[ \t\r\n]+/g, ' ').trim() : ''; }
+    function grab() {
+      var cards = document.querySelectorAll('.flip-card');
+      var got = 0;
+      for (var i = 0; i < cards.length; i++) {
+        var qi = cards[i].querySelector('[name="test_question[]"]');
+        if (!qi || !qi.value) continue;
+        var key = 'q' + qi.value;
+        if (window.__cc_test_answers[key]) { got++; continue; }
+        var a = txt(cards[i].querySelector('.answer.hidden')) || txt(cards[i].querySelector('.answer_dp.hidden'));
+        if (a) { window.__cc_test_answers[key] = a; got++; }
+      }
+      return got > 0 && got === cards.length;
+    }
+    document.addEventListener('DOMContentLoaded', grab, true);
+    var mo = new MutationObserver(function () { if (grab()) mo.disconnect(); });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    document.addEventListener('DOMContentLoaded', function () { setTimeout(function () { grab(); mo.disconnect(); }, 3000); });
+  } catch (e) {}
+})();
