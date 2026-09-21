@@ -36,6 +36,35 @@ class Session(
 
     var answerDict: AnswerDict? = null
 
+    /** 지금(또는 마지막으로) 돌린 모드 id — 진행 위치 저장·이어하기용 */
+    @Volatile
+    var modeId: String = ""
+
+    /** 마지막 진행률 (모듈이 driver.progress 로 알려 준 값) */
+    @Volatile
+    var progress: Driver.Progress? = null
+
+    /** 진행률이 바뀔 때 (화면 갱신·진행 위치 저장) */
+    var onProgressChanged: (() -> Unit)? = null
+
+    val isPaused: Boolean get() = isRunning && (stop?.isPaused == true)
+
+    fun pause(): Boolean {
+        val f = stop ?: return false
+        if (!isRunning || f.isPaused) return false
+        f.pause(); log("일시정지 — 재개를 누를 때까지 멈춥니다."); onStateChanged?.invoke(); return true
+    }
+
+    fun resume(): Boolean {
+        val f = stop ?: return false
+        if (!isRunning || !f.isPaused) return false
+        f.resume(); log("재개합니다."); onStateChanged?.invoke(); return true
+    }
+
+    init {
+        driver.onProgress = { p -> progress = p; onProgressChanged?.invoke() }
+    }
+
     var state: SessionState = SessionState.OFF
         private set
 
@@ -73,6 +102,7 @@ class Session(
         scope: CoroutineScope,
         label: String,
         onFinished: (() -> Unit)? = null,
+        modeId: String = "",
         block: suspend (StopFlag) -> Unit,
     ): Boolean {
         if (isRunning) {
@@ -81,6 +111,9 @@ class Session(
         }
         val flag = StopFlag()
         stop = flag
+        if (modeId.isNotEmpty()) this.modeId = modeId
+        progress = null
+        driver.progressState = null
         setState(SessionState.RUNNING, label)
         job = scope.launch {
             var failed = false

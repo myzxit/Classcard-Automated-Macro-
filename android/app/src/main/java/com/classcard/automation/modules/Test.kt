@@ -309,6 +309,7 @@ object Test {
 
                     // 6개 보기 활성 -> 답 선택
                     answeredCount++
+                    d.progress(answeredCount, total ?: 0, answeredCount - wrongIdx.size, wrongIdx.size, maxOf(0, (total ?: 0) - answeredCount), "테스트")
                     val makeWrong = answeredCount in wrongIdx
                     val allNums = q.options.map { it.num }
 

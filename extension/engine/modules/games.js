@@ -264,6 +264,7 @@ export async function test(d, answerDict, stop) {
       }
 
       answeredCount++;
+      d.progress({ current: answeredCount, total, ok: answeredCount - wrongIdx.size, fail: wrongIdx.size, skipped: Math.max(0, total - answeredCount), label: '테스트' });
       const makeWrong = wrongIdx.has(answeredCount);
       const allNums = q.options.map((o) => o.num);
 
@@ -349,12 +350,35 @@ async function answerCandidates(d, maps) {
 async function pickByTiles(d, candidates) {
   if (!candidates || !candidates.length) return null;
   const tiles = await listButtons(d);
-  const bag = (arr) => arr.map((t) => N.normEn(String(t).replace(/\*$/, ''))).filter(Boolean).sort().join('|');
-  const want = bag(tiles);
-  if (!want) return null;
+  return pickByTileBag(tiles, candidates);
+}
+
+/**
+ * 타일 낱말 묶음과 정확히 같은 후보를 먼저, 없으면 (타일이 여러 낱말 묶음이거나 기호가 다를 때) 낱말 집합이
+ * 가장 비슷한 후보를 고른다 — 후보끼리 구분이 안 될 만큼 비슷하면 고르지 않는다.
+ */
+export function pickByTileBag(tiles, candidates) {
+  const words = (arr) => [].concat(...arr.map((t) => N.parseEnglishWords(String(t).replace(/\*$/, ''))))
+    .map((w) => N.normEn(w)).filter(Boolean);
+  const tileWords = words(tiles);
+  if (!tileWords.length) return null;
+  const want = tileWords.slice().sort().join('|');
   for (const cand of candidates) {
-    if (bag(N.parseEnglishWords(cand)) === want) return cand;
+    if (words([cand]).sort().join('|') === want) return cand;
   }
+  const setA = new Set(tileWords);
+  let best = null, bestScore = 0, second = 0;
+  for (const cand of candidates) {
+    const cw = words([cand]);
+    if (!cw.length) continue;
+    const setB = new Set(cw);
+    let inter = 0;
+    for (const w of setA) if (setB.has(w)) inter += 1;
+    const score = inter / Math.max(setA.size, setB.size);
+    if (score > bestScore) { second = bestScore; bestScore = score; best = cand; }
+    else if (score > second) second = score;
+  }
+  if (best && bestScore >= 0.75 && bestScore > second) return best;
   return null;
 }
 
@@ -430,10 +454,32 @@ var flipped = card.classList.contains('flip') || words > 0;
 
 var prompt = '';
 var pSel = ['.flip-card-front .front-hidden', '.flip-card-front .cc-table',
-            '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body'];
+            '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body',
+            '.test-sentence-mean', '.sentence-mean', '.quest-back', '.q-body', '.question'];
 for (var i = 0; i < pSel.length && !prompt; i++) {
     var el = card.querySelector(pSel[i]);
-    if (el) prompt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+    if (el) prompt = (el.textContent || '').replace(/[ \\t\\r\\n]+/g, ' ').trim();
+}
+if (!prompt) {
+    // 화면 구조가 바뀌어 위 자리에 없으면: 카드 안의 글 중 낱말 버튼·놓인 낱말·버튼 글을 뺀 나머지에서
+    // 한글이 든 줄을 제시문으로 본다 (제시문은 항상 우리말 뜻이다)
+    var skip = [];
+    for (var a = 0; a < WORD_SEL.length; a++) skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll(WORD_SEL[a])));
+    for (var b = 0; b < PLACED_SEL.length; b++) skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll(PLACED_SEL[b])));
+    skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll('a.btn, button, .btn, script, style')));
+    var lines = [];
+    var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+    var node;
+    while ((node = walker.nextNode())) {
+        var t = (node.nodeValue || '').replace(/[ \\t\\r\\n]+/g, ' ').trim();
+        if (!t || !/[가-힣]/.test(t)) continue;
+        var p = node.parentElement, skipped = false;
+        for (var k = 0; k < skip.length && !skipped; k++) if (skip[k] === p || skip[k].contains(p)) skipped = true;
+        if (skipped) continue;
+        if (p && p.offsetParent === null && !card.classList.contains('flip')) continue;
+        lines.push(t);
+    }
+    prompt = lines.join(' ').trim();
 }
 
 return { found: true, qid: qid, flipped: flipped, prompt: prompt,
@@ -647,8 +693,51 @@ async function clickToken(d, token, stop) {
 }
 
 /** 영어 문장을 어순대로 클릭. makeWrong 이면 마지막 두 토큰을 바꿔 클릭. */
+/**
+ * 타일이 낱말 하나가 아니라 여러 낱말 묶음("in righteousness")일 때, 문장 어순대로 어떤 타일을 눌러야 하는지 계획한다.
+ * 각 자리에서 가장 긴 묶음부터 맞춰 본다. 맞는 타일이 없는 자리는 낱말 하나(기존 방식)로 둔다.
+ */
+export function planChunks(tokens, tileTexts) {
+  const words = (t) => N.parseEnglishWords(t).map((w) => N.normEn(w)).filter(Boolean);
+  const tiles = tileTexts.map((t) => ({ text: t, words: words(t), used: false }));
+  const toks = tokens.map((t) => N.normEn(t));
+  const plan = [];
+  let pos = 0;
+  while (pos < tokens.length) {
+    if (!toks[pos]) { pos += 1; continue; }            // 순수 구두점
+    let best = null;
+    for (const tile of tiles) {
+      if (tile.used || !tile.words.length) continue;
+      const n = tile.words.length;
+      if (best && n <= best.words.length) continue;
+      let ok = true, k = pos, m = 0;
+      while (m < n && k < tokens.length) {
+        if (!toks[k]) { k += 1; continue; }
+        if (toks[k] !== tile.words[m]) { ok = false; break; }
+        k += 1; m += 1;
+      }
+      if (ok && m === n) best = tile;
+    }
+    if (best) {
+      best.used = true;
+      plan.push(best.text);
+      let m = 0;
+      while (m < best.words.length && pos < tokens.length) { if (toks[pos]) m += 1; pos += 1; }
+    } else {
+      plan.push(tokens[pos]);
+      pos += 1;
+    }
+  }
+  return plan;
+}
+
 async function clickSentence(d, english, makeWrong, stop) {
-  const tokens = N.parseEnglishWords(english);
+  let tokens = N.parseEnglishWords(english);
+  // 타일이 여러 낱말 묶음이면 묶음 단위로 누른다
+  const tileTexts = (await listButtons(d)).filter((t) => !/\*$/.test(t));
+  if (tileTexts.some((t) => N.parseEnglishWords(t).length > 1)) {
+    tokens = planChunks(tokens, tileTexts);
+  }
 
   const order = tokens.map((_, i) => i);
   if (makeWrong && order.length >= 2) {
@@ -705,6 +794,7 @@ export async function testSentence(d, answerDict, stop) {
 
   const flipAttempts = new Map();
   const answeredQids = new Set();
+  let dumpedEmptyPrompt = false;
   let answeredCount = 0;
   let lastQid = null;
   let noProgress = 0;
@@ -773,12 +863,18 @@ export async function testSentence(d, answerDict, stop) {
       }
       if (!english) {
         d.log(`[문장 테스트] 매칭 실패(건너뜀): '${q.prompt}'`, 'warn');
+        if (!q.prompt && !dumpedEmptyPrompt) {
+          dumpedEmptyPrompt = true;
+          const dump = await d.eval(DUMP_CARD_JS);
+          d.log('[문장 테스트] 제시문을 읽지 못했습니다. 화면 구조: ' + JSON.stringify(dump).slice(0, 400), 'warn');
+        }
         answeredQids.add(q.qid);
         if (await stop.await(300)) break;
         continue;
       }
 
       answeredCount++;
+      d.progress({ current: answeredCount, total, ok: answeredCount - wrongIdx.size, fail: wrongIdx.size, skipped: Math.max(0, total - answeredCount), label: '테스트' });
       const makeWrong = wrongIdx.has(answeredCount);
 
       const ok = await clickSentence(d, english, makeWrong, stop);

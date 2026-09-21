@@ -88,6 +88,7 @@ object Recall {
 
         try {
             while (!stop.isSet) {
+                Memorize.reportCardProgress(d, "리콜")
                 if (checkStep2SuccessAndStop(d, stop)) break
                 if (Memorize.startStudyIfNeeded(d, stop)) continue
 

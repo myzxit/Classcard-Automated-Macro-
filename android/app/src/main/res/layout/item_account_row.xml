@@ -44,7 +44,25 @@
             android:maxLines="1"
             android:textColor="@color/text_secondary"
             android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/accountPw"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:fontFamily="monospace"
+            android:maxLines="1"
+            android:textColor="@color/text_tertiary"
+            android:textSize="10sp" />
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/accountEye"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:padding="4dp"
+        android:text="👁"
+        android:textSize="14sp" />
 
     <TextView
         android:id="@+id/accountChip"

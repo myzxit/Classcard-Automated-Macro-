@@ -265,8 +265,8 @@ object AutoAll {
         // 문장 set 은 문장 테스트(패스 90점), 단어 set 은 단어 테스트
         val testPass = if (sentenceMode) SENTENCE_TEST_PASS_SCORE else TEST_PASS_SCORE
 
-        // 스펠은 단어 set + 선생님이 '필수'로 지정한 경우에만 (자율이면 건너뜀)
-        val spellRequired = !sentenceMode && isSpellRequired(d)
+        // 스펠은 선생님이 '필수'로 지정한 경우에만 (단어 세트는 단어 스펠, 문장 세트는 문장 스펠)
+        val spellRequired = isSpellRequired(d)
 
         val memorizeDone = isModeCompleted(d, MEMORIZE_BTN_SELECTOR)
         val recallDone = isModeCompleted(d, RECALL_BTN_SELECTOR)
@@ -311,6 +311,7 @@ object AutoAll {
         )
         // 리콜 다음, 테스트 전: 문장 set 은 스크램블, 단어 set 은 (필수면)스펠 -> 매칭
         if (sentenceMode) {
+            if (spellRequired) modeSteps.add(ModeStep("스펠", SPELL_BTN_SELECTOR, SpellSentence.run))
             modeSteps.add(ModeStep("스크램블", MATCH_BTN_SELECTOR, Scramble.run))
         } else {
             if (spellRequired) modeSteps.add(ModeStep("스펠", SPELL_BTN_SELECTOR, Spell.run))
@@ -475,6 +476,7 @@ object AutoAll {
                     // 상세 페이지의 매칭/스크램블 버튼 텍스트로 확정 (이름보다 확실)
                     sentenceMode = sentenceMode || isSentenceSetDetail(d)
                     d.log("[전체] [${if (sentenceMode) "문장" else "단어"}] ${target.name}")
+                    d.progress(processedIdx.size + 1, sets.size, processedIdx.size, 0, maxOf(0, sets.size - processedIdx.size - 1), "전체 자동화")
 
                     processSetDetail(d, sentenceMode, stop)
 

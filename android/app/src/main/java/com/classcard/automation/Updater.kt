@@ -30,7 +30,7 @@ object Updater {
     private const val PREFS = "classcard_update"
     private const val KEY_PROMPTED = "prompted_code"
     private const val KEY_LAST_CHECK = "last_check"
-    private const val CHECK_INTERVAL_MS = 6L * 60 * 60 * 1000
+    private const val CHECK_INTERVAL_MS = 60L * 60 * 1000   // 한 시간마다 (앱을 열 때·다시 볼 때)
 
     data class Latest(val version: String, val versionCode: Int, val apkUrl: String, val notes: String)
 

@@ -14,16 +14,29 @@ export class StopFlag {
   constructor(parent = null) {
     this.parent = parent;
     this.stopped = false;
+    this.paused = false;
   }
 
   get isSet() {
     return this.stopped || (this.parent ? this.parent.isSet : false);
   }
 
+  /** 일시정지 중인지 (부모가 멈추면 자식도 멈춘다) */
+  get isPaused() {
+    return this.paused || (this.parent ? this.parent.isPaused : false);
+  }
+
   set() {
     this.stopped = true;
   }
 
+  pause() { this.paused = true; }
+  resume() { this.paused = false; }
+
+  /**
+   * ms 만큼 기다린다. 중지되었으면 true.
+   * 일시정지 중이면 재개될 때까지 여기서 멈춘다 — 모든 모듈이 이 함수로 쉬므로 어느 모드든 이 한 곳에서 멈춘다.
+   */
   async await(ms) {
     if (this.isSet) return true;
     const tick = 50;
@@ -33,6 +46,7 @@ export class StopFlag {
       left -= tick;
       if (this.isSet) return true;
     }
+    while (this.isPaused && !this.isSet) await new Promise((r) => setTimeout(r, 100));
     return this.isSet;
   }
 
@@ -53,6 +67,23 @@ export class Driver {
     this.logger = logger;
     this.debuggerAttached = false;
     this.debuggerFailed = false;
+  }
+
+  /**
+   * 진행률 보고 — {current, total, ok, fail, skipped, label}. 팝업의 진행률 표시와 '진행 위치 저장'이 이 값을 쓴다.
+   * 같은 값이면 다시 알리지 않는다.
+   */
+  progress(p) {
+    const next = {
+      current: Number(p.current) || 0, total: Number(p.total) || 0,
+      ok: Number(p.ok) || 0, fail: Number(p.fail) || 0, skipped: Number(p.skipped) || 0,
+      label: p.label || '', at: Date.now(),
+    };
+    const prev = this.progressState;
+    if (prev && prev.current === next.current && prev.total === next.total && prev.ok === next.ok &&
+        prev.fail === next.fail && prev.skipped === next.skipped && prev.label === next.label) return;
+    this.progressState = next;
+    try { if (this.onProgress) this.onProgress(next); } catch (e) { /* 무시 */ }
   }
 
   log(message, level) {
@@ -385,14 +416,17 @@ export class Driver {
 
     if (this.debuggerAttached) {
       for (const ch of str) {
-        const code = ch.charCodeAt(0);
+        // 가상 키 코드는 글자의 문자 코드가 아니라 **키보드의 키 번호**여야 한다.
+        // 문자 코드를 그대로 쓰면 어포스트로피(39)는 → 방향키, 마침표(46)는 Delete, 하이픈(45)은 Insert 로
+        // 해석되어 글자가 빠지거나 지워진다 (문장 스펠에서 "isn't" 의 ' 가 빠지던 원인).
+        const vk = virtualKeyOf(ch);
         const base = {
-          modifiers: 0,
+          modifiers: vk.shift ? 8 : 0,
           key: ch,
           text: ch,
-          unmodifiedText: ch,
-          windowsVirtualKeyCode: code,
-          nativeVirtualKeyCode: code,
+          unmodifiedText: vk.shift ? ch.toLowerCase() : ch,
+          windowsVirtualKeyCode: vk.code,
+          nativeVirtualKeyCode: vk.code,
         };
         // keyDown 에 text 가 있으면 그 자체로 글자가 입력된다.
         // ('char' 를 따로 보내면 같은 글자가 두 번 들어간다)
@@ -417,6 +451,23 @@ export class Driver {
   async blurActiveElement() {
     await this.exec('if (document.activeElement && document.activeElement.blur) document.activeElement.blur();');
   }
+}
+
+/** 미국 배열 기준 문자 → 가상 키 코드(Windows VK). 없는 글자(한글 등)는 0 (text 로만 입력된다). */
+const SHIFTED = { '~': '`', '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
+  '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/' };
+const OEM_VK = { ';': 186, '=': 187, ',': 188, '-': 189, '.': 190, '/': 191, '`': 192, '[': 219, '\\': 220, ']': 221, "'": 222, ' ': 32 };
+export function virtualKeyOf(ch) {
+  if (/^[a-z]$/.test(ch)) return { code: ch.toUpperCase().charCodeAt(0), shift: false };
+  if (/^[A-Z]$/.test(ch)) return { code: ch.charCodeAt(0), shift: true };
+  if (/^[0-9]$/.test(ch)) return { code: ch.charCodeAt(0), shift: false };
+  if (Object.prototype.hasOwnProperty.call(SHIFTED, ch)) {
+    const base = SHIFTED[ch];
+    const code = /^[0-9]$/.test(base) ? base.charCodeAt(0) : OEM_VK[base];
+    return { code, shift: true };
+  }
+  if (Object.prototype.hasOwnProperty.call(OEM_VK, ch)) return { code: OEM_VK[ch], shift: false };
+  return { code: 0, shift: false };
 }
 
 const KEY_SPECS = {

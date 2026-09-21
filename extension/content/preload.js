@@ -63,3 +63,29 @@
     };
   } catch (e) {}
 })();
+
+/* ------------------------------------------------- 3) 카드 데이터(study-data-payload) 보관 */
+// 지금 사이트(v3 학습 화면)는 카드 목록을 <script id="study-data-payload"> JSON 으로 싣고,
+// 페이지 스크립트가 읽자마자 지워 버린다(그 뒤로는 closure 안에만 있다). 그래서 지워지기 전에
+// 우리가 먼저 읽어 window.__cc_study_data 에 둔다 — 시작 화면에서도 단어장을 만들 수 있다.
+(function () {
+  try {
+    if (window.__ccStudyDataHook) return;
+    window.__ccStudyDataHook = true;
+    function grab() {
+      try {
+        var el = document.getElementById('study-data-payload');
+        if (!el) return false;
+        var arr = JSON.parse(el.textContent || 'null');
+        if (Array.isArray(arr) && arr.length) { window.__cc_study_data = arr; return true; }
+      } catch (e) {}
+      return false;
+    }
+    // 페이지의 jQuery(ready) 보다 먼저 등록되므로 DOMContentLoaded 에서 먼저 읽는다
+    document.addEventListener('DOMContentLoaded', grab, true);
+    // 혹시 그 전에 보이면 그때 바로
+    var mo = new MutationObserver(function () { if (grab()) mo.disconnect(); });
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    document.addEventListener('DOMContentLoaded', function () { setTimeout(function () { mo.disconnect(); }, 3000); });
+  } catch (e) {}
+})();

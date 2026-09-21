@@ -11,8 +11,10 @@ const STUDY_DATA_RE = /var\s+study_data\s*=\s*(\[[\s\S]*?\]);/;
 
 /** 현재 페이지에서 카드 목록([{front, back}, ...])을 뽑는다. */
 export async function getData(d, opts = {}) {
+  // 전역 study_data (예전 화면) 또는 preload 가 지워지기 전에 챙겨 둔 카드 목록(지금 화면: __cc_study_data)
   const direct = await d.eval(
-    "return (typeof study_data !== 'undefined' && study_data) ? study_data : null;",
+    "if (typeof study_data !== 'undefined' && study_data && study_data.length) return study_data;" +
+    'return (window.__cc_study_data && window.__cc_study_data.length) ? window.__cc_study_data : null;',
   );
   if (Array.isArray(direct) && direct.length) {
     const cards = toCards(direct);
@@ -133,6 +135,27 @@ export async function startStudyIfNeeded(d, stop) {
   return true;
 }
 
+/**
+ * 카드 학습 화면(암기·리콜·스펠·문장 모드 공통)의 진행률을 화면에서 읽어 보고한다.
+ *   전체 = .CardItem 수, 현재 = 보이는 카드의 순번, 성공 = data-status k, 실패 = data-status x
+ * (사이트의 refreshProgress 가 쓰는 값과 같다)
+ */
+export async function reportCardProgress(d, label = '') {
+  const p = await d.eval(`
+    var items = document.querySelectorAll('.study-body .CardItem, .CardItem');
+    if (!items.length) return null;
+    var cur = document.querySelector('.CardItem.active') || document.querySelector('.CardItem.current');
+    var idx = cur ? Array.prototype.indexOf.call(items, cur) + 1 : 0;
+    var ok = 0, fail = 0;
+    for (var i = 0; i < items.length; i++) {
+        var st = items[i].getAttribute('data-status') || '';
+        if (st === 'k' || st === 'xk') ok++; else if (st === 'x') fail++;
+    }
+    return { total: items.length, current: Math.max(idx, ok + fail), ok: ok, fail: fail };`);
+  if (!p) return;
+  d.progress({ current: p.current, total: p.total, ok: p.ok, fail: p.fail, skipped: Math.max(0, p.total - p.ok - p.fail), label });
+}
+
 // ============================================================ Memorize.py
 
 /**
@@ -215,6 +238,7 @@ export async function memorize(d, answerDict, stop) {
   d.log('[암기] 시작');
   try {
     while (!stop.isSet) {
+      await reportCardProgress(d, '암기');
       if (await checkStep2SuccessAndStop(d, stop)) break;
       if (await startStudyIfNeeded(d, stop)) continue;
 
@@ -310,6 +334,7 @@ export async function recall(d, answerDict, stop) {
 
   try {
     while (!stop.isSet) {
+      await reportCardProgress(d, '리콜');
       if (await checkStep2SuccessAndStop(d, stop)) break;
       if (await startStudyIfNeeded(d, stop)) continue;
 
@@ -583,6 +608,7 @@ export async function spell(d, answerDict, stop) {
   let loggedSource = false;
   try {
     while (!stop.isSet) {
+      await reportCardProgress(d, '스펠');
       if (await spellCheckEnd(d, stop)) break;
       if (await startStudyIfNeeded(d, stop)) continue;
 

@@ -33,7 +33,7 @@ sed -i "s#/home/user/Classcard-Automated-Macro-/extension#$ROOT/extension#g" "$W
 RUNNERS=("$@")
 if [ ${#RUNNERS[@]} -eq 0 ]; then
   RUNNERS=(run_recall2 run_spell2 run_memorize run_msent run_rsent run_wtest run_tsent run_tsent2 run_matching run_scramble
-           run_talk run_talk_trusted run_talk_type run_full4 run_gtalk2 run_gclass_modal run_gmulti run_gtypes run_gmatch run_gstreak run_useactive)
+           run_talk run_talk_trusted run_talk_type run_full4 run_gtalk2 run_gclass_modal run_gmulti run_gtypes run_gmatch run_gstreak run_useactive run_sspell run_sent3)
 fi
 
 XVFB=""

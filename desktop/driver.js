@@ -38,6 +38,11 @@ export class ElectronDriver {
     this.logger(`${this.tag} ${message}`, level);
   }
 
+  /** 진행률 보고 (확장 드라이버와 같은 규칙) */
+  progress(p) {
+    return ExtensionDriver.prototype.progress.call(this, p);
+  }
+
   // ---------------------------------------------------------------- eval
 
   /** 확장과 같은 규칙: 스크립트는 함수 본문으로 감싸지므로 `return` 을 그대로 쓴다. 실패는 null. */

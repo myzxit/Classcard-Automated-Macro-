@@ -198,6 +198,8 @@ const IOS_MODES = [
   { id: 'spell', label: '⌨ 스펠', needsTrusted: true },
   { id: 'memorize_sentence', label: '📖 문장 암기', needsTrusted: true },
   { id: 'recall_sentence', label: '📝 문장 리콜', needsTrusted: true },
+  // 문장 스펠: 기본 학습설정(어순배열)은 타일 클릭만이라 아이폰에서도 된다. 입력형 설정이면 채점이 거부된다.
+  { id: 'spell_sentence', label: '✍ 문장 스펠', fn: () => __mod.sentence.spellSentence, noDict: true },
   { id: 'test_sentence', label: '📕 문장 테스트', needsTrusted: true },
   { id: 'scramble', label: '✳ 문장 스크램블', needsTrusted: true },
 ];
@@ -233,9 +235,11 @@ panel.innerHTML = `
 <div class="cc-modes"></div>
 <details class="cc-more"><summary>아이폰에서 안 되는 모드 보기</summary><div class="cc-locked"></div></details>
 <div class="cc-bar">
+  <button class="cc-pause" type="button">⏸ 일시정지</button>
   <button class="cc-stop" type="button">■ 정지</button>
   <span class="cc-state">대기 중</span>
 </div>
+<div class="cc-prog"><div class="cc-prog-txt"></div><div class="cc-prog-bar"><div></div></div></div>
 <div class="cc-log" role="log"></div>`;
 
 const style = document.createElement('style');
@@ -282,6 +286,12 @@ style.textContent = `
   border-radius: 9px; padding: 9px 14px; font-size: 13px; min-height: 40px; font-weight: 700;
 }
 #cc-ios-panel .cc-state { opacity: .8; }
+#cc-ios-panel .cc-pause { background: rgba(245,158,11,.25); color: #ffe7b0; border: 1px solid rgba(245,158,11,.5); border-radius: 9px; padding: 5px 10px; font-weight: 700; }
+#cc-ios-panel .cc-prog { padding: 0 12px 6px; display: none; }
+#cc-ios-panel .cc-prog.on { display: block; }
+#cc-ios-panel .cc-prog-txt { font-size: 11px; opacity: .9; }
+#cc-ios-panel .cc-prog-bar { height: 7px; border-radius: 5px; background: rgba(255,255,255,.12); overflow: hidden; margin-top: 3px; }
+#cc-ios-panel .cc-prog-bar > div { height: 100%; width: 0; background: linear-gradient(90deg, #8b5cf6, #ec4899); transition: width .3s; }
 #cc-ios-panel .cc-more { padding: 0 10px 8px; font-size: 12px; opacity: .8; }
 #cc-ios-panel .cc-more summary { padding: 6px 2px; cursor: pointer; }
 #cc-ios-panel .cc-locked {
@@ -414,6 +424,21 @@ for (const mode of IOS_MODES) {
 panel.querySelector('.cc-stop').addEventListener('click', () => {
   if (current) { current.set(); addLog('정지 요청됨'); }
 });
+const $pause = panel.querySelector('.cc-pause');
+$pause.addEventListener('click', () => {
+  if (!current) return;
+  if (current.isPaused) { current.resume(); $pause.textContent = '⏸ 일시정지'; addLog('재개합니다.', 'success'); }
+  else { current.pause(); $pause.textContent = '▶ 재개'; addLog('일시정지 — 재개를 누를 때까지 멈춥니다.', 'warn'); }
+});
+// 진행률: 모듈이 driver.progress() 로 알려 준다
+const $prog = panel.querySelector('.cc-prog');
+driver.onProgress = (p) => {
+  const pct = p.total > 0 ? Math.min(100, Math.round((p.current / p.total) * 100)) : 0;
+  $prog.classList.add('on');
+  $prog.querySelector('.cc-prog-txt').textContent =
+    `현재 ${p.current} / ${p.total} · 진행률 ${pct}% · 남은 ${Math.max(0, p.total - p.current)} · 성공 ${p.ok} · 실패 ${p.fail} · 미처리 ${p.skipped}`;
+  $prog.querySelector('.cc-prog-bar > div').style.width = `${pct}%`;
+};
 
 addLog('아이폰용 자동화 준비 완료. 학습 화면에서 모드를 누르세요.', 'success');
 if (dict) addLog(`저장된 단어장 ${dict.size}개를 불러왔습니다.`);

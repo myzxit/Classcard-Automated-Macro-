@@ -16,6 +16,7 @@ const MODES = [
   { id: 'spell', label: '⌨ 스펠', help: '스펠 학습 화면에서 실행하세요. 단어장이 없으면 자동으로 가져옵니다.' },
   { id: 'memorize_sentence', label: '📖 문장 암기', help: '문장 암기 화면에 들어간 상태에서 실행하세요.' },
   { id: 'recall_sentence', label: '📝 문장 리콜', help: '문장 리콜 화면에서 실행하세요. 정답은 페이지 로그에서 자동으로 캡처합니다.' },
+  { id: 'spell_sentence', label: '✍ 문장 스펠', help: '문장 세트의 스펠 학습 화면에서 실행하세요. 어순배열·영작·딕테이션·첫글자 설정 모두 됩니다.' },
   { id: 'test', label: '🃏 단어 테스트', help: '단어 테스트 문제 화면에서 실행하세요. 70점 초과를 보장하며 일부는 일부러 틀립니다.' },
   { id: 'test_sentence', label: '📕 문장 테스트', help: '문장 테스트 문제 화면에서 실행하세요. 신뢰된 클릭이 필요해 디버거가 잠깐 연결됩니다.' },
   { id: 'matching', label: '🎴 단어 매칭', help: '매칭 게임 화면에서 실행하세요. 목표 점수에 도달하면 중도 종료합니다.' },
@@ -87,9 +88,10 @@ async function init() {
   renderLogDates();
   renderLog();
   renderUpdate(state.update);
+  renderProgress();
 }
 
-/** 새 버전 안내 띠. 백그라운드가 6시간마다 확인해서 알려 준다. */
+/** 새 버전 안내 띠. 백그라운드가 한 시간마다(그리고 팝업을 열 때) 확인해서 알려 준다. */
 function renderUpdate(update) {
   const banner = $('updateBanner');
   if (!update) { banner.classList.add('hidden'); return; }
@@ -130,6 +132,16 @@ function bindEvents() {
     renderAccounts();
   });
   $('btnRun').addEventListener('click', onRun);
+  $('btnPause').addEventListener('click', () => send({ type: 'pause' }));
+  $('btnResume').addEventListener('click', () => send({ type: 'resume' }));
+  $('btnStop').addEventListener('click', () => send({ type: 'stop' }));
+  $('btnSavePos').addEventListener('click', async () => {
+    const r = await send({ type: 'saveProgress', accountIds: selectedIds() });
+    if (r && r.resume) state.resume = r.resume;
+    flash($('btnSavePos'), '저장됨');
+    renderProgress();
+  });
+  $('btnResumeRun').addEventListener('click', () => send({ type: 'resumeRun', accountIds: selectedIds() }));
   $('btnUpdate').addEventListener('click', async () => {
     flash($('btnUpdate'), '받는 중…');
     await send({ type: 'downloadUpdate' });
@@ -158,6 +170,7 @@ function bindEvents() {
       state.running = msg.running;
       renderAccounts();
       renderStatus();
+      renderProgress();
     } else if (msg.type === 'update') {
       renderUpdate(msg.update);
     }
@@ -214,16 +227,32 @@ function renderAccounts() {
     const session = sessionFor(account.id);
     const sState = session ? session.state : 'off';
     stateLine.textContent = session
-      ? (session.detail || stateLabel(sState))
+      ? (session.detail || stateLabel(sState)) + (session.paused ? ' · 일시정지' : '')
       : '탭 꺼짐';
 
-    grow.append(name, stateLine);
+    // 비밀번호: 가려 두고 👁 로 보기/숨기기
+    const pwLine = document.createElement('div');
+    pwLine.className = 'pw';
+    const shown = shownPw.has(account.id);
+    pwLine.textContent = account.pw ? (shown ? account.pw : '•'.repeat(Math.min(12, account.pw.length))) : '(비밀번호 없음)';
+    if (shown) pwLine.classList.add('shown');
+    const eye = document.createElement('button');
+    eye.className = 'eye';
+    eye.title = shown ? '비밀번호 숨기기' : '비밀번호 보기';
+    eye.textContent = shown ? '🙈' : '👁';
+    eye.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (shown) shownPw.delete(account.id); else shownPw.add(account.id);
+      renderAccounts();
+    });
+
+    grow.append(name, stateLine, pwLine);
 
     const chip = document.createElement('span');
     chip.className = `chip ${sState}`;
     chip.textContent = chipLabel(sState);
 
-    row.append(check, grow, chip);
+    row.append(check, grow, eye, chip);
     row.addEventListener('click', () => {
       if (session && chrome.tabs) chrome.tabs.update(session.tabId, { active: true });
     });
@@ -232,6 +261,8 @@ function renderAccounts() {
 
   $('accountSummary').textContent = `계정 ${state.accounts.length} · 실행 ${state.running}`;
 }
+
+const shownPw = new Set();   // 비밀번호를 보이게 한 계정 (팝업이 열려 있는 동안만)
 
 function stateLabel(s) {
   return { off: '탭 꺼짐', opening: '탭 여는 중', ready: '탭 열림', running: '진행 중', error: '오류' }[s] || s;
@@ -447,6 +478,56 @@ function onRun() {
   const ids = selectedIds();
   if (!ids.length) return;
   send({ type: 'run', modeId: selectedModeId, accountIds: ids });
+}
+
+/** 진행률 카드: 세션마다 현재/전체 · % · 막대 · 남은 수 · 성공/실패/미처리. 없으면 저장된 진행 위치를 보여 준다. */
+function renderProgress() {
+  const list = $('progressList');
+  list.textContent = '';
+  const sessions = state.sessions.filter((s) => s.progress || s.running);
+  const anyPaused = state.sessions.some((s) => s.running && s.paused);
+  const anyRunning = state.sessions.some((s) => s.running && !s.paused);
+  $('btnPause').disabled = !anyRunning;
+  $('btnResume').disabled = !anyPaused;
+  $('btnStop').disabled = !(state.running > 0);
+  const resumable = selectedIds().some((id) => state.resume && state.resume[id]);
+  $('btnResumeRun').disabled = !resumable || state.running > 0;
+  $('progressHint').textContent = anyPaused ? '일시정지 중' : (state.running > 0 ? '실행 중' : '');
+
+  for (const s of sessions) {
+    const p = s.progress || { current: 0, total: 0, ok: 0, fail: 0, skipped: 0, label: '' };
+    const pct = p.total > 0 ? Math.min(100, Math.round((p.current / p.total) * 100)) : 0;
+    const left = Math.max(0, p.total - p.current);
+    const row = document.createElement('div');
+    row.className = 'prog-row';
+    row.innerHTML =
+      `<div class="prog-head"><span class="who"></span><span class="mode"></span><span class="pct">${pct}%</span></div>` +
+      `<div class="prog-nums"><span>현재: <b>${p.current} / ${p.total}</b></span><span>진행률: <b>${pct}%</b></span><span>남은 항목: <b>${left}</b></span></div>` +
+      `<div class="prog-bar${s.paused ? ' paused' : ''}"><div style="width:${pct}%"></div></div>` +
+      `<div class="prog-counts"><span class="ok">성공 ${p.ok}</span><span class="fail">실패 ${p.fail}</span><span class="todo">미처리 ${p.skipped}</span></div>`;
+    row.querySelector('.who').textContent = s.id;
+    row.querySelector('.mode').textContent = (p.label || modeLabel(s.modeId) || '') + (s.paused ? ' · ⏸ 일시정지' : (s.running ? '' : ' · 끝남'));
+    list.appendChild(row);
+  }
+  if (!sessions.length) {
+    const saved = Object.entries(state.resume || {});
+    const empty = document.createElement('div');
+    empty.className = 'prog-empty';
+    if (saved.length) {
+      empty.textContent = '저장된 진행 위치: ' + saved.map(([id, e]) => {
+        const p = e.progress;
+        return `${id} — ${modeLabel(e.modeId)}${p ? ` ${p.current}/${p.total}` : ''} (${new Date(e.savedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })})`;
+      }).join(' · ') + ' → [이어하기]';
+    } else {
+      empty.textContent = '진행 중인 자동화가 없습니다. 자동화를 시작하면 여기에 진행률이 표시됩니다.';
+    }
+    list.appendChild(empty);
+  }
+}
+
+function modeLabel(id) {
+  const m = MODES.find((x) => x.id === id);
+  return m ? m.label.replace(/^\S+\s/, '') : (id || '');
 }
 
 function renderStatus() {

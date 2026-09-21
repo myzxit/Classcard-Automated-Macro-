@@ -343,16 +343,29 @@ class StopFlag {
   constructor(parent = null) {
     this.parent = parent;
     this.stopped = false;
+    this.paused = false;
   }
 
   get isSet() {
     return this.stopped || (this.parent ? this.parent.isSet : false);
   }
 
+  /** 일시정지 중인지 (부모가 멈추면 자식도 멈춘다) */
+  get isPaused() {
+    return this.paused || (this.parent ? this.parent.isPaused : false);
+  }
+
   set() {
     this.stopped = true;
   }
 
+  pause() { this.paused = true; }
+  resume() { this.paused = false; }
+
+  /**
+   * ms 만큼 기다린다. 중지되었으면 true.
+   * 일시정지 중이면 재개될 때까지 여기서 멈춘다 — 모든 모듈이 이 함수로 쉬므로 어느 모드든 이 한 곳에서 멈춘다.
+   */
   async await(ms) {
     if (this.isSet) return true;
     const tick = 50;
@@ -362,6 +375,7 @@ class StopFlag {
       left -= tick;
       if (this.isSet) return true;
     }
+    while (this.isPaused && !this.isSet) await new Promise((r) => setTimeout(r, 100));
     return this.isSet;
   }
 
@@ -382,6 +396,23 @@ class Driver {
     this.logger = logger;
     this.debuggerAttached = false;
     this.debuggerFailed = false;
+  }
+
+  /**
+   * 진행률 보고 — {current, total, ok, fail, skipped, label}. 팝업의 진행률 표시와 '진행 위치 저장'이 이 값을 쓴다.
+   * 같은 값이면 다시 알리지 않는다.
+   */
+  progress(p) {
+    const next = {
+      current: Number(p.current) || 0, total: Number(p.total) || 0,
+      ok: Number(p.ok) || 0, fail: Number(p.fail) || 0, skipped: Number(p.skipped) || 0,
+      label: p.label || '', at: Date.now(),
+    };
+    const prev = this.progressState;
+    if (prev && prev.current === next.current && prev.total === next.total && prev.ok === next.ok &&
+        prev.fail === next.fail && prev.skipped === next.skipped && prev.label === next.label) return;
+    this.progressState = next;
+    try { if (this.onProgress) this.onProgress(next); } catch (e) { /* 무시 */ }
   }
 
   log(message, level) {
@@ -714,14 +745,17 @@ class Driver {
 
     if (this.debuggerAttached) {
       for (const ch of str) {
-        const code = ch.charCodeAt(0);
+        // 가상 키 코드는 글자의 문자 코드가 아니라 **키보드의 키 번호**여야 한다.
+        // 문자 코드를 그대로 쓰면 어포스트로피(39)는 → 방향키, 마침표(46)는 Delete, 하이픈(45)은 Insert 로
+        // 해석되어 글자가 빠지거나 지워진다 (문장 스펠에서 "isn't" 의 ' 가 빠지던 원인).
+        const vk = virtualKeyOf(ch);
         const base = {
-          modifiers: 0,
+          modifiers: vk.shift ? 8 : 0,
           key: ch,
           text: ch,
-          unmodifiedText: ch,
-          windowsVirtualKeyCode: code,
-          nativeVirtualKeyCode: code,
+          unmodifiedText: vk.shift ? ch.toLowerCase() : ch,
+          windowsVirtualKeyCode: vk.code,
+          nativeVirtualKeyCode: vk.code,
         };
         // keyDown 에 text 가 있으면 그 자체로 글자가 입력된다.
         // ('char' 를 따로 보내면 같은 글자가 두 번 들어간다)
@@ -748,6 +782,23 @@ class Driver {
   }
 }
 
+/** 미국 배열 기준 문자 → 가상 키 코드(Windows VK). 없는 글자(한글 등)는 0 (text 로만 입력된다). */
+const SHIFTED = { '~': '`', '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0',
+  '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/' };
+const OEM_VK = { ';': 186, '=': 187, ',': 188, '-': 189, '.': 190, '/': 191, '`': 192, '[': 219, '\\': 220, ']': 221, "'": 222, ' ': 32 };
+function virtualKeyOf(ch) {
+  if (/^[a-z]$/.test(ch)) return { code: ch.toUpperCase().charCodeAt(0), shift: false };
+  if (/^[A-Z]$/.test(ch)) return { code: ch.charCodeAt(0), shift: true };
+  if (/^[0-9]$/.test(ch)) return { code: ch.charCodeAt(0), shift: false };
+  if (Object.prototype.hasOwnProperty.call(SHIFTED, ch)) {
+    const base = SHIFTED[ch];
+    const code = /^[0-9]$/.test(base) ? base.charCodeAt(0) : OEM_VK[base];
+    return { code, shift: true };
+  }
+  if (Object.prototype.hasOwnProperty.call(OEM_VK, ch)) return { code: OEM_VK[ch], shift: false };
+  return { code: 0, shift: false };
+}
+
 const KEY_SPECS = {
   space: { key: ' ', code: 'Space', keyCode: 32, text: ' ' },
   enter: { key: 'Enter', code: 'Enter', keyCode: 13, text: '\r' },
@@ -763,7 +814,7 @@ const KEY_SPECS = {
   9: { key: '9', code: 'Digit9', keyCode: 57, text: '9' },
 };
 
-  return { StopFlag, Driver };
+  return { StopFlag, Driver, virtualKeyOf };
 })();
 
 // ======================================================== extension/engine/modules/basic.js
@@ -781,8 +832,10 @@ const STUDY_DATA_RE = /var\s+study_data\s*=\s*(\[[\s\S]*?\]);/;
 
 /** 현재 페이지에서 카드 목록([{front, back}, ...])을 뽑는다. */
 async function getData(d, opts = {}) {
+  // 전역 study_data (예전 화면) 또는 preload 가 지워지기 전에 챙겨 둔 카드 목록(지금 화면: __cc_study_data)
   const direct = await d.eval(
-    "return (typeof study_data !== 'undefined' && study_data) ? study_data : null;",
+    "if (typeof study_data !== 'undefined' && study_data && study_data.length) return study_data;" +
+    'return (window.__cc_study_data && window.__cc_study_data.length) ? window.__cc_study_data : null;',
   );
   if (Array.isArray(direct) && direct.length) {
     const cards = toCards(direct);
@@ -903,6 +956,27 @@ async function startStudyIfNeeded(d, stop) {
   return true;
 }
 
+/**
+ * 카드 학습 화면(암기·리콜·스펠·문장 모드 공통)의 진행률을 화면에서 읽어 보고한다.
+ *   전체 = .CardItem 수, 현재 = 보이는 카드의 순번, 성공 = data-status k, 실패 = data-status x
+ * (사이트의 refreshProgress 가 쓰는 값과 같다)
+ */
+async function reportCardProgress(d, label = '') {
+  const p = await d.eval(`
+    var items = document.querySelectorAll('.study-body .CardItem, .CardItem');
+    if (!items.length) return null;
+    var cur = document.querySelector('.CardItem.active') || document.querySelector('.CardItem.current');
+    var idx = cur ? Array.prototype.indexOf.call(items, cur) + 1 : 0;
+    var ok = 0, fail = 0;
+    for (var i = 0; i < items.length; i++) {
+        var st = items[i].getAttribute('data-status') || '';
+        if (st === 'k' || st === 'xk') ok++; else if (st === 'x') fail++;
+    }
+    return { total: items.length, current: Math.max(idx, ok + fail), ok: ok, fail: fail };`);
+  if (!p) return;
+  d.progress({ current: p.current, total: p.total, ok: p.ok, fail: p.fail, skipped: Math.max(0, p.total - p.ok - p.fail), label });
+}
+
 // ============================================================ Memorize.py
 
 /**
@@ -985,6 +1059,7 @@ async function memorize(d, answerDict, stop) {
   d.log('[암기] 시작');
   try {
     while (!stop.isSet) {
+      await reportCardProgress(d, '암기');
       if (await checkStep2SuccessAndStop(d, stop)) break;
       if (await startStudyIfNeeded(d, stop)) continue;
 
@@ -1080,6 +1155,7 @@ async function recall(d, answerDict, stop) {
 
   try {
     while (!stop.isSet) {
+      await reportCardProgress(d, '리콜');
       if (await checkStep2SuccessAndStop(d, stop)) break;
       if (await startStudyIfNeeded(d, stop)) continue;
 
@@ -1353,6 +1429,7 @@ async function spell(d, answerDict, stop) {
   let loggedSource = false;
   try {
     while (!stop.isSet) {
+      await reportCardProgress(d, '스펠');
       if (await spellCheckEnd(d, stop)) break;
       if (await startStudyIfNeeded(d, stop)) continue;
 
@@ -1408,7 +1485,7 @@ async function spell(d, answerDict, stop) {
   }
 }
 
-  return { getData, getDataFromCards, dictFromCards, startStudyIfNeeded, checkStep2SuccessAndStop, waitWithCheck, memorize, recall, findAnswer, spell };
+  return { getData, getDataFromCards, dictFromCards, startStudyIfNeeded, reportCardProgress, checkStep2SuccessAndStop, waitWithCheck, memorize, recall, findAnswer, spell };
 })();
 
 // ======================================================== extension/engine/modules/games.js
@@ -1681,6 +1758,7 @@ async function test(d, answerDict, stop) {
       }
 
       answeredCount++;
+      d.progress({ current: answeredCount, total, ok: answeredCount - wrongIdx.size, fail: wrongIdx.size, skipped: Math.max(0, total - answeredCount), label: '테스트' });
       const makeWrong = wrongIdx.has(answeredCount);
       const allNums = q.options.map((o) => o.num);
 
@@ -1766,12 +1844,35 @@ async function answerCandidates(d, maps) {
 async function pickByTiles(d, candidates) {
   if (!candidates || !candidates.length) return null;
   const tiles = await listButtons(d);
-  const bag = (arr) => arr.map((t) => N.normEn(String(t).replace(/\*$/, ''))).filter(Boolean).sort().join('|');
-  const want = bag(tiles);
-  if (!want) return null;
+  return pickByTileBag(tiles, candidates);
+}
+
+/**
+ * 타일 낱말 묶음과 정확히 같은 후보를 먼저, 없으면 (타일이 여러 낱말 묶음이거나 기호가 다를 때) 낱말 집합이
+ * 가장 비슷한 후보를 고른다 — 후보끼리 구분이 안 될 만큼 비슷하면 고르지 않는다.
+ */
+function pickByTileBag(tiles, candidates) {
+  const words = (arr) => [].concat(...arr.map((t) => N.parseEnglishWords(String(t).replace(/\*$/, ''))))
+    .map((w) => N.normEn(w)).filter(Boolean);
+  const tileWords = words(tiles);
+  if (!tileWords.length) return null;
+  const want = tileWords.slice().sort().join('|');
   for (const cand of candidates) {
-    if (bag(N.parseEnglishWords(cand)) === want) return cand;
+    if (words([cand]).sort().join('|') === want) return cand;
   }
+  const setA = new Set(tileWords);
+  let best = null, bestScore = 0, second = 0;
+  for (const cand of candidates) {
+    const cw = words([cand]);
+    if (!cw.length) continue;
+    const setB = new Set(cw);
+    let inter = 0;
+    for (const w of setA) if (setB.has(w)) inter += 1;
+    const score = inter / Math.max(setA.size, setB.size);
+    if (score > bestScore) { second = bestScore; bestScore = score; best = cand; }
+    else if (score > second) second = score;
+  }
+  if (best && bestScore >= 0.75 && bestScore > second) return best;
   return null;
 }
 
@@ -1847,10 +1948,32 @@ var flipped = card.classList.contains('flip') || words > 0;
 
 var prompt = '';
 var pSel = ['.flip-card-front .front-hidden', '.flip-card-front .cc-table',
-            '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body'];
+            '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body',
+            '.test-sentence-mean', '.sentence-mean', '.quest-back', '.q-body', '.question'];
 for (var i = 0; i < pSel.length && !prompt; i++) {
     var el = card.querySelector(pSel[i]);
-    if (el) prompt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+    if (el) prompt = (el.textContent || '').replace(/[ \\t\\r\\n]+/g, ' ').trim();
+}
+if (!prompt) {
+    // 화면 구조가 바뀌어 위 자리에 없으면: 카드 안의 글 중 낱말 버튼·놓인 낱말·버튼 글을 뺀 나머지에서
+    // 한글이 든 줄을 제시문으로 본다 (제시문은 항상 우리말 뜻이다)
+    var skip = [];
+    for (var a = 0; a < WORD_SEL.length; a++) skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll(WORD_SEL[a])));
+    for (var b = 0; b < PLACED_SEL.length; b++) skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll(PLACED_SEL[b])));
+    skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll('a.btn, button, .btn, script, style')));
+    var lines = [];
+    var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+    var node;
+    while ((node = walker.nextNode())) {
+        var t = (node.nodeValue || '').replace(/[ \\t\\r\\n]+/g, ' ').trim();
+        if (!t || !/[가-힣]/.test(t)) continue;
+        var p = node.parentElement, skipped = false;
+        for (var k = 0; k < skip.length && !skipped; k++) if (skip[k] === p || skip[k].contains(p)) skipped = true;
+        if (skipped) continue;
+        if (p && p.offsetParent === null && !card.classList.contains('flip')) continue;
+        lines.push(t);
+    }
+    prompt = lines.join(' ').trim();
 }
 
 return { found: true, qid: qid, flipped: flipped, prompt: prompt,
@@ -2064,8 +2187,51 @@ async function clickToken(d, token, stop) {
 }
 
 /** 영어 문장을 어순대로 클릭. makeWrong 이면 마지막 두 토큰을 바꿔 클릭. */
+/**
+ * 타일이 낱말 하나가 아니라 여러 낱말 묶음("in righteousness")일 때, 문장 어순대로 어떤 타일을 눌러야 하는지 계획한다.
+ * 각 자리에서 가장 긴 묶음부터 맞춰 본다. 맞는 타일이 없는 자리는 낱말 하나(기존 방식)로 둔다.
+ */
+function planChunks(tokens, tileTexts) {
+  const words = (t) => N.parseEnglishWords(t).map((w) => N.normEn(w)).filter(Boolean);
+  const tiles = tileTexts.map((t) => ({ text: t, words: words(t), used: false }));
+  const toks = tokens.map((t) => N.normEn(t));
+  const plan = [];
+  let pos = 0;
+  while (pos < tokens.length) {
+    if (!toks[pos]) { pos += 1; continue; }            // 순수 구두점
+    let best = null;
+    for (const tile of tiles) {
+      if (tile.used || !tile.words.length) continue;
+      const n = tile.words.length;
+      if (best && n <= best.words.length) continue;
+      let ok = true, k = pos, m = 0;
+      while (m < n && k < tokens.length) {
+        if (!toks[k]) { k += 1; continue; }
+        if (toks[k] !== tile.words[m]) { ok = false; break; }
+        k += 1; m += 1;
+      }
+      if (ok && m === n) best = tile;
+    }
+    if (best) {
+      best.used = true;
+      plan.push(best.text);
+      let m = 0;
+      while (m < best.words.length && pos < tokens.length) { if (toks[pos]) m += 1; pos += 1; }
+    } else {
+      plan.push(tokens[pos]);
+      pos += 1;
+    }
+  }
+  return plan;
+}
+
 async function clickSentence(d, english, makeWrong, stop) {
-  const tokens = N.parseEnglishWords(english);
+  let tokens = N.parseEnglishWords(english);
+  // 타일이 여러 낱말 묶음이면 묶음 단위로 누른다
+  const tileTexts = (await listButtons(d)).filter((t) => !/\*$/.test(t));
+  if (tileTexts.some((t) => N.parseEnglishWords(t).length > 1)) {
+    tokens = planChunks(tokens, tileTexts);
+  }
 
   const order = tokens.map((_, i) => i);
   if (makeWrong && order.length >= 2) {
@@ -2122,6 +2288,7 @@ async function testSentence(d, answerDict, stop) {
 
   const flipAttempts = new Map();
   const answeredQids = new Set();
+  let dumpedEmptyPrompt = false;
   let answeredCount = 0;
   let lastQid = null;
   let noProgress = 0;
@@ -2190,12 +2357,18 @@ async function testSentence(d, answerDict, stop) {
       }
       if (!english) {
         d.log(`[문장 테스트] 매칭 실패(건너뜀): '${q.prompt}'`, 'warn');
+        if (!q.prompt && !dumpedEmptyPrompt) {
+          dumpedEmptyPrompt = true;
+          const dump = await d.eval(DUMP_CARD_JS);
+          d.log('[문장 테스트] 제시문을 읽지 못했습니다. 화면 구조: ' + JSON.stringify(dump).slice(0, 400), 'warn');
+        }
         answeredQids.add(q.qid);
         if (await stop.await(300)) break;
         continue;
       }
 
       answeredCount++;
+      d.progress({ current: answeredCount, total, ok: answeredCount - wrongIdx.size, fail: wrongIdx.size, skipped: Math.max(0, total - answeredCount), label: '테스트' });
       const makeWrong = wrongIdx.has(answeredCount);
 
       const ok = await clickSentence(d, english, makeWrong, stop);
@@ -2667,15 +2840,18 @@ function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-  return { CONFIG, planWrongIndices, buildLookups, solve, testCheckEndAndStop, test, buildMaps, matchEnglish, testSentenceCheckEndAndStop, testSentence, findPair, isSetHome, returnToSetHome, gameCheckEndAndStop, matching, alignIndex, findNextIndex, scramble };
+  return { CONFIG, planWrongIndices, buildLookups, solve, testCheckEndAndStop, test, buildMaps, pickByTileBag, matchEnglish, testSentenceCheckEndAndStop, planChunks, testSentence, findPair, isSetHome, returnToSetHome, gameCheckEndAndStop, matching, alignIndex, findNextIndex, scramble };
 })();
 
 // ======================================================== extension/engine/modules/sentence.js
 __mod.sentence = (function () {
   const N = __mod.norm;
+  const startStudyIfNeeded = __mod.basic.startStudyIfNeeded;
+  const reportCardProgress = __mod.basic.reportCardProgress;
 /**
  * MemorizeSentence.py / RecallSentence.py 이식 (문장 암기 · 문장 리콜).
  */
+
 
 
 // ============================================================ 공통 종료 판정
@@ -2819,8 +2995,8 @@ async function clickScrambleWord(d, rawToken, stop) {
   return false;
 }
 
-/** MemorizeSentence.py — 문장 암기 자동화 */
-async function memorizeSentence(d, answerDict, stop) {
+/** MemorizeSentence.py — 예전 문장 암기 화면(.sentence-word 타일 + SPACE) 자동화. 지금 사이트가 아니면 이 흐름으로 폴백한다. */
+async function memorizeSentenceLegacy(d, answerDict, stop) {
   d.log('[문장 암기] 시작');
   try {
     while (!stop.isSet) {
@@ -3120,8 +3296,8 @@ async function advance(d, stop, maxTries = 6) {
   }
 }
 
-/** RecallSentence.py — 문장 리콜 자동화 */
-async function recallSentence(d, answerDict, stop) {
+/** RecallSentence.py — 예전 문장 리콜 화면(콘솔 정답 캡처 + .btn-scramble) 자동화. 지금 사이트가 아니면 이 흐름으로 폴백한다. */
+async function recallSentenceLegacy(d, answerDict, stop) {
   d.log('[문장 리콜] 시작');
 
   // 페이지가 정답을 로그할 때까지 잠깐 대기 (console.log 후킹 캡처)
@@ -3261,7 +3437,550 @@ async function recallSentence(d, answerDict, stop) {
   }
 }
 
-  return { checkStep2SuccessAndStop, memorizeSentence, findSubsequenceEnd, findMatchingSentences, findMatchingSentenceFallback, findSentenceByCandidates, recallSentence };
+// ============================================================ 문장 스펠 (신규 — 파이썬 원본 없음)
+//
+// 문장 세트(set_type 5)의 /Spell/{set} 은 단어 스펠과 다른 화면이다 (scripts/v3/spell_sentence.js):
+//   - 카드: `.study-body .CardItem.active`, 카드 데이터는 jQuery data('item') (front = 정답 문장)
+//   - 학습설정 show_type: 2 어순배열(기본) / 0 영작 / 4 딕테이션 / 5·6 첫글자 / 7
+//   - 어순배열: `.back .para_item.active` 의 data('arr') 가 정답 낱말 배열(끝 구두점 [!?,.] 을 뗀 것),
+//     `.scramble-body .scramble-item` 의 data('input') 과 `==` 비교. 지금까지 놓은 수 = `.front .line span:not(.end)`.
+//     (이 타일의 click 핸들러는 isTrusted 를 보지 않는다)
+//   - 영작·딕테이션·첫글자: `textarea.input-answer` 의 마지막 keydown 이 isTrusted 여야 채점한다.
+//     첫글자 모드는 글자 하나를 치면 keyup 이 낱말을 통째로 채워 준다.
+//   - 결과: `.study-wrapper.correct|wrong` + `.study-footer .feedback .btn-retry-card` / `.btn-next-card`.
+//     어순배열은 자동으로 넘어가지 않고, 입력형은 자동재생이 켜져 있으면(기본) 소리만 틀고 멈춘다.
+//   - 끝: `#study_end.active` (모르는 카드가 있으면 `.btn-study-end-unknow` 로 한 바퀴 더)
+
+/** 화면 상태 한 번에 읽기 (String.raw: 정규식 역슬래시를 그대로 둔다 — Kotlin 미러와 같은 본문) */
+const SSPELL_STATE_JS = String.raw`
+function vis(el) { return !!el && el.offsetParent !== null; }
+var out = { end: false, unknown: 0, round: false, start: false, modal: false, card: false };
+var endEl = document.querySelector('#study_end');
+if (endEl && endEl.classList.contains('active')) {
+    out.end = true;
+    var un = endEl.querySelector('.btn-study-end-unknow');
+    var cnt = endEl.querySelector('.unknown_count');
+    out.unknown = (vis(un) && cnt) ? (parseInt(cnt.textContent, 10) || 0) : 0;
+}
+var rep = document.querySelectorAll('.btn-study-end-repeat');
+for (var i = 0; i < rep.length; i++) if (vis(rep[i])) out.end = true;
+out.round = vis(document.querySelector('.round-body.active'));
+var sb = document.querySelectorAll('.btn-opt-start, .start-opt-body a.btn');
+for (var j = 0; j < sb.length; j++) if (vis(sb[j])) out.start = true;
+var modal = document.querySelector('#alertModal');
+out.modal = !!modal && window.getComputedStyle(modal).display === 'block';
+var wrap = document.querySelector('.study-wrapper');
+out.correct = !!wrap && wrap.classList.contains('correct');
+out.wrong = !!wrap && wrap.classList.contains('wrong');
+out.playing = !!(window.audio && window.audio.src && !window.audio.paused && !window.audio.ended);
+out.showType = (typeof show_type !== 'undefined' && show_type !== null) ? parseInt(show_type, 10) : null;
+var card = document.querySelector('.study-body .CardItem.active') || document.querySelector('.CardItem.active');
+if (!card || !vis(card)) return out;
+out.card = true;
+var jq = window.jQuery;
+var item = jq ? jq(card).data('item') : null;
+out.key = String(jq ? jq(card).data('idx') : '') + ':' + Array.prototype.indexOf.call(card.parentNode.children, card);
+out.status = card.getAttribute('data-status') || '';
+out.step1 = !!card.querySelector('.step.s1.active');                     // 문장 암기 1단계(문장 보기)
+var ib = card.querySelector('.front .input-box') || card.querySelector('.input-box');
+// 예전 화면: v3 의 표식(카드 안 .scramble-body / 입력창 / input-box 의 arr_answer 데이터)이 없는데 낱말 타일은 있다
+var hasArrAnswer = !!(ib && jq && jq(ib).data('arr_answer'));
+out.legacy = !card.querySelector('.scramble-body') && !card.querySelector('textarea.input-answer') && !hasArrAnswer
+    && !!(card.querySelector('.sentence-word, .btn-scramble, .scramble-item') || document.querySelector('.scramble-body .btn-scramble'));
+out.scramble = card.classList.contains('scramble') || !!card.querySelector('.scramble-body');
+out.recall = !!ib && !out.scramble;                                        // 문장 리콜(빈칸 채우기)
+if (out.recall) {
+    var arrA = jq ? jq(ib).data('arr_answer') : null;
+    var rw = [];
+    if (arrA && arrA.length) for (var q = 0; q < arrA.length; q++) rw.push(String(arrA[q]).trim());
+    out.rWords = rw;
+    out.rPlaced = ib.querySelectorAll('.btn-scramble:not(.now)').length;
+    var rt = document.querySelectorAll('.scramble-body .btn-scramble');
+    var rl = [];
+    for (var r = 0; r < rt.length; r++) rl.push({ text: (rt[r].textContent || '').trim(), clicked: rt[r].classList.contains('clicked') });
+    out.rTiles = rl;
+}
+if (out.scramble) {
+    var para = card.querySelector('.back .para_item.active');
+    var arr = (jq && para) ? jq(para).data('arr') : null;
+    var words = [];
+    if (arr && arr.length) {
+        for (var k = 0; k < arr.length; k++) {
+            var w = String(arr[k]);
+            if (w == '/') continue;
+            var s = w.replace(/[!?,.]+$/g, '').trim();
+            words.push(s.length ? s : w.trim());
+        }
+    }
+    out.words = words;
+    out.done = card.querySelectorAll('.front .line span:not(.end)').length;
+    var body = card.querySelector('.scramble-body');
+    out.tilesDisabled = !!body && body.classList.contains('disabled');
+    var tiles = card.querySelectorAll('.scramble-body .scramble-item');
+    var list = [];
+    for (var t = 0; t < tiles.length; t++) {
+        var inp = jq ? jq(tiles[t]).data('input') : null;
+        list.push({ input: inp == null ? (tiles[t].textContent || '').trim() : String(inp),
+                    clicked: tiles[t].classList.contains('clicked') });
+    }
+    out.tiles = list;
+} else {
+    var ta = card.querySelector('textarea.input-answer');
+    out.hasInput = vis(ta);
+    out.value = ta ? ta.value : '';
+    var front = (item && item.front != null) ? String(item.front) : '';
+    var ans = (typeof removeBracket === 'function') ? removeBracket(front)
+        : front.replace(/\[[^\]]*\]/g, '').replace(/\([^)]*\)/g, '');
+    ans = ans.replace(/<br\s*\/?>/gi, ' ').replace(/\r\n|\r|\n/g, ' ').replace(/\s+/g, ' ').trim();
+    out.answer = ans;
+}
+return out;`;
+
+async function sspellState(d) {
+  const s = await d.eval(SSPELL_STATE_JS);
+  return s && typeof s === 'object' ? s : null;
+}
+
+/** 어순배열 타일 하나 클릭 (타일 click 은 isTrusted 를 안 보지만 규칙대로 진짜 클릭을 먼저 쓴다) */
+async function sspellClickTile(d, index) {
+  return d.clickSmart(`
+    var card = document.querySelector('.study-body .CardItem.active') || document.querySelector('.CardItem.active');
+    var tiles = card ? card.querySelectorAll('.scramble-body .scramble-item') : [];
+    el = tiles[${index}] || null;`);
+}
+
+/** 채점 결과 화면의 버튼 ('.btn-next-card' 다음 카드/나중에 다시, '.btn-retry-card' 지금 재시도) */
+async function sspellClickFeedback(d, cls) {
+  return d.clickSmart(`
+    var btns = document.querySelectorAll('.study-footer .feedback ${cls}');
+    for (var i = 0; i < btns.length; i++) if (btns[i].offsetParent !== null) { el = btns[i]; break; }
+    if (!el) {   // 문장 암기 화면은 feedback 묶음 없이 footer 에 바로 버튼이 있다
+        btns = document.querySelectorAll('.study-footer ${cls}');
+        for (var j = 0; j < btns.length; j++) if (btns[j].offsetParent !== null) { el = btns[j]; break; }
+    }`);
+}
+
+async function sspellClickConfirm(d) {
+  return d.clickSmart(`
+    var btns = document.querySelectorAll('.study-footer .btns .btn-confirm-card');
+    for (var i = 0; i < btns.length; i++) if (btns[i].offsetParent !== null) { el = btns[i]; break; }`);
+}
+
+/** '대소문자 틀림!' 같은 안내 모달의 확인 버튼 */
+async function sspellCloseModal(d) {
+  return d.clickSmart(`
+    var btns = document.querySelectorAll('#alertModal .btn, #alertModal button');
+    for (var i = 0; i < btns.length; i++) if (btns[i].offsetParent !== null) { el = btns[i]; break; }`);
+}
+
+/** 입력창(textarea.input-answer)에 포커스를 주고 비운다 (값 지우기는 신뢰된 입력이 필요 없다) */
+async function sspellFocusInput(d) {
+  return d.evalBool(`
+    var card = document.querySelector('.study-body .CardItem.active') || document.querySelector('.CardItem.active');
+    var ta = card ? card.querySelector('textarea.input-answer') : null;
+    if (!ta || ta.offsetParent === null) return false;
+    ta.focus();
+    if (ta.value) {
+        var setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+        setter.call(ta, '');
+        ta.dispatchEvent(new Event('input', {bubbles: true}));
+    }
+    return true;`);
+}
+
+async function sspellRefocusInput(d) {
+  return d.evalBool(`
+    var card = document.querySelector('.study-body .CardItem.active') || document.querySelector('.CardItem.active');
+    var ta = card ? card.querySelector('textarea.input-answer') : null;
+    if (!ta) return false;
+    if (document.activeElement !== ta) ta.focus();
+    return true;`);
+}
+
+/** 첫글자 모드(5·6)에서 칠 글자들: 낱말마다 첫 글자·숫자 하나 (기호뿐인 낱말은 사이트가 알아서 채운다) */
+function sspellFirstLetters(answer) {
+  const out = [];
+  for (const w of String(answer || '').split(/\s+/)) {
+    const m = w.match(/[0-9A-Za-zÀ-ɏ가-힣]/);
+    if (m) out.push(m[0]);
+  }
+  return out;
+}
+
+/** 카드가 바뀌거나(키 변화) 끝날 때까지 기다린다: 'changed' | 'done' | 'stopped' | 'stuck' */
+async function sspellWaitCardChange(d, stop, prevKey, timeout) {
+  let elapsed = 0;
+  while (elapsed < timeout) {
+    if (await stop.await(200)) return 'stopped';
+    elapsed += 200;
+    const s = await sspellState(d);
+    if (!s) continue;
+    if (s.end) return 'done';
+    if (s.round || s.start) return 'changed';
+    if (s.card && s.key !== prevKey && !s.correct && !s.wrong) return 'changed';
+  }
+  return 'stuck';
+}
+
+/** 소리가 나는 중이면 끝까지 듣는다 (최대 maxMs) */
+async function sspellWaitAudio(d, stop, maxMs) {
+  let waited = 0;
+  while (waited < maxMs) {
+    const playing = await d.evalBool(
+      'return !!(window.audio && window.audio.src && !window.audio.paused && !window.audio.ended);',
+    );
+    if (!playing) return;
+    if (await stop.await(250)) return;
+    waited += 250;
+  }
+}
+
+const SSPELL_MAX_ROUNDS = 3;      // 모르는 카드 다시 학습 최대 횟수
+const SSPELL_RETRY_PER_CARD = 2;  // 오답 시 '지금 재시도' 횟수 (그 뒤 '나중에 다시')
+
+/** 문장 스펠 자동화 (어순배열 · 영작 · 딕테이션 · 첫글자 모두) */
+async function spellSentence(d, answerDict, stop) {
+  d.log('[문장 스펠] 시작');
+  let rounds = 0;
+  let retries = 0;
+  let retryKey = null;
+  let loggedMode = false;
+  let warnedTrusted = false;
+  let sameCount = 0;
+  let lastSig = '';
+  try {
+    while (!stop.isSet) {
+      const s = await sspellState(d);
+      if (!s) { if (await stop.await(400)) break; continue; }
+      if (s.card) await reportCardProgress(d, '문장 리콜');
+      if (s.card) await reportCardProgress(d, '문장 암기');
+      if (s.card) await reportCardProgress(d, '문장 스펠');
+
+      if (s.end) {
+        if (s.unknown > 0 && rounds < SSPELL_MAX_ROUNDS) {
+          rounds += 1;
+          d.log(`[문장 스펠] 모르는 카드 ${s.unknown}개 — 다시 학습합니다 (${rounds}/${SSPELL_MAX_ROUNDS})`);
+          await d.clickFirstVisible('#study_end .btn-study-end-unknow');
+          if (await stop.await(1500)) break;
+          continue;
+        }
+        d.log('[문장 스펠] 학습 완료');
+        await d.exec('var a = document.querySelectorAll("#study_end.active .study-header a"); if (a.length) a[0].click();');
+        await d.exec('var a = document.querySelectorAll(".btn-top-menu a"); if (a.length) a[0].click();');
+        await stop.sleep(500);
+        await d.exec('var a = document.querySelectorAll(".close_o"); if (a.length) a[0].click();');
+        stop.set();
+        break;
+      }
+      if (s.modal) {            // '대소문자 틀림!' 안내 → 확인 (정답 처리는 이미 됐다)
+        await sspellCloseModal(d);
+        if (await stop.await(700)) break;
+        continue;
+      }
+      if (s.round) { if (await stop.await(500)) break; continue; }
+      if (s.start) {
+        await startStudyIfNeeded(d, stop);
+        if (await stop.await(800)) break;
+        continue;
+      }
+      if (!s.card) { if (await stop.await(400)) break; continue; }
+
+      // 같은 상태가 오래 이어지면 한 줄 진단 (사이트가 바뀌었을 때 원인을 짚기 위해)
+      const sig = `${s.key}|${s.correct}|${s.wrong}|${s.scramble}|${s.done}|${(s.tiles || []).filter((t) => !t.clicked).length}|${s.value || ''}`;
+      if (sig === lastSig) {
+        sameCount += 1;
+        if (sameCount === 40) {
+          d.log(`[문장 스펠] 진행이 멈췄습니다 — 화면: ${JSON.stringify({ key: s.key, status: s.status, scramble: s.scramble, done: s.done, words: (s.words || []).length, tiles: (s.tiles || []).length, showType: s.showType }).slice(0, 220)}`, 'warn');
+          await sspellClickFeedback(d, '.btn-next-card');
+        }
+      } else { sameCount = 0; lastSig = sig; }
+
+      if (!loggedMode) {
+        loggedMode = true;
+        d.log(`[문장 스펠] 학습설정: ${s.scramble ? '어순배열' : (s.showType === 5 || s.showType === 6) ? '첫글자 입력' : (s.showType === 4) ? '딕테이션' : '영작'}`);
+      }
+
+      if (s.correct) {          // 정답 → 소리가 나면 끝까지 듣고 다음 카드
+        if (!s.scramble) { await stop.sleep(900); await sspellWaitAudio(d, stop, 20000); }
+        if (stop.isSet) break;
+        await sspellClickFeedback(d, '.btn-next-card');
+        const r = await sspellWaitCardChange(d, stop, s.key, 3000);
+        if (r === 'stopped') break;
+        if (r === 'stuck') { await d.blurActiveElement(); await d.pressSpace(); }
+        continue;
+      }
+      if (s.wrong) {            // 오답 → 몇 번은 지금 재시도, 그 뒤엔 나중에 다시
+        if (retryKey !== s.key) { retryKey = s.key; retries = 0; }
+        if (retries < SSPELL_RETRY_PER_CARD) {
+          retries += 1;
+          d.log(`[문장 스펠] 오답 — 지금 재시도 (${retries}/${SSPELL_RETRY_PER_CARD})`, 'warn');
+          await sspellClickFeedback(d, '.btn-retry-card');
+        } else {
+          d.log('[문장 스펠] 오답 — 나중에 다시', 'warn');
+          await sspellClickFeedback(d, '.btn-next-card');
+          await sspellWaitCardChange(d, stop, s.key, 3000);
+        }
+        if (await stop.await(500)) break;
+        continue;
+      }
+
+      if (s.scramble) {
+        if (!s.words || !s.words.length || s.tilesDisabled) { if (await stop.await(300)) break; continue; }
+        const expected = s.words[s.done];
+        if (expected === undefined) { if (await stop.await(300)) break; continue; }  // 다음 묶음/문단으로 넘어가는 중
+        let hit = -1;
+        for (let i = 0; i < s.tiles.length; i++) {
+          if (!s.tiles[i].clicked && s.tiles[i].input === expected) { hit = i; break; }
+        }
+        if (hit < 0) {
+          // 사이트와 같은 비교인데 없다면 화면이 갱신되는 중 — 잠깐 기다렸다 다시
+          if (await stop.await(250)) break;
+          continue;
+        }
+        await sspellClickTile(d, hit);
+        if (await stop.await(120)) break;
+        continue;
+      }
+
+      // ---- 입력형 (영작 · 딕테이션 · 첫글자)
+      if (!s.hasInput) { if (await stop.await(300)) break; continue; }
+      if (!s.answer) {
+        d.log('[문장 스펠] 정답 문장을 읽지 못했습니다 — 빈 답으로 넘깁니다', 'warn');
+        await sspellClickConfirm(d);
+        if (await stop.await(600)) break;
+        continue;
+      }
+      if (!(await sspellFocusInput(d))) { if (await stop.await(300)) break; continue; }
+      let typed = true;
+      if (s.showType === 5 || s.showType === 6) {
+        for (const ch of sspellFirstLetters(s.answer)) {
+          if (!(await d.typeText(ch))) { typed = false; break; }
+          if (await stop.await(140)) break;
+          await sspellRefocusInput(d);      // 사이트가 글자마다 blur → 50ms 뒤 focus 를 한다
+        }
+      } else {
+        typed = await d.typeText(s.answer);
+      }
+      if (stop.isSet) break;
+      if (!typed && !warnedTrusted) {
+        warnedTrusted = true;
+        d.log('[문장 스펠] 진짜 키 입력을 보낼 수 없어 채점이 거부됩니다 — 학습설정을 "어순배열"로 바꾸면 됩니다', 'error');
+      }
+      if (await stop.await(150)) break;
+      await sspellClickConfirm(d);
+      // 채점 결과(correct/wrong) 또는 카드 전환을 기다린다
+      let waited = 0;
+      while (waited < 3000) {
+        if (await stop.await(200)) break;
+        waited += 200;
+        const t = await sspellState(d);
+        if (!t || t.end || t.modal || t.correct || t.wrong || t.key !== s.key) break;
+      }
+    }
+  } catch (e) {
+    if (!stop.isSet) d.log(`[문장 스펠] 오류: ${e.message}`, 'error');
+  } finally {
+    d.log('[문장 스펠] 종료');
+  }
+}
+
+// ============================================================ 문장 암기 (지금 사이트: scripts/v3/mem_sentence.js)
+//
+//   - 카드 `.CardItem.active` 는 1단계(.step.s1: 문장·뜻 보기, '영작 연습하기' .btn-go-step1)와
+//     2단계(.step.s2: 어순배열 — 문장 스펠의 어순배열과 같은 .para_item data('arr') / .scramble-item data('input'))로 되어 있다.
+//   - SPACE 는 1단계에서 2단계로, **2단계에서는 '나중에 다시'(.btn-next-card)** 를 누른다.
+//     예전 흐름처럼 SPACE 를 먼저 두 번 누르면 문장을 만들기도 전에 카드를 건너뛴다 (실제 로그의 "안 만들어졌는데 건너뜀").
+//   - 다 맞추면 `.study-wrapper.correct` + '다음 카드'(.btn-next-card). 틀린 타일은 0.8초 뒤 다시 제시된다.
+//   - 카드가 나오면 0.6초 뒤 문장 소리가 난다 — 끝까지 듣고 2단계로 간다.
+//   - 끝: `#study_end.active`, 모르는 카드가 있으면 `.btn-study-end-unknow` 로 그 카드만 다시.
+
+async function memorizeSentence(d, answerDict, stop) {
+  // 사이트가 어느 화면인지 먼저 본다 (카드가 아직 없으면 시작 화면부터)
+  d.log('[문장 암기] 시작');
+  let rounds = 0;
+  let sameCount = 0;
+  let lastSig = '';
+  let waitedAudioFor = null;
+  try {
+    while (!stop.isSet) {
+      const s = await sspellState(d);
+      if (!s) { if (await stop.await(400)) break; continue; }
+
+      if (s.end) {
+        if (s.unknown > 0 && rounds < SSPELL_MAX_ROUNDS) {
+          rounds += 1;
+          d.log(`[문장 암기] 모르는 카드 ${s.unknown}개 — 다시 학습합니다 (${rounds}/${SSPELL_MAX_ROUNDS})`);
+          await d.clickFirstVisible('#study_end .btn-study-end-unknow');
+          if (await stop.await(1500)) break;
+          continue;
+        }
+        d.log('[문장 암기] 학습 완료');
+        await d.exec('var a = document.querySelectorAll("#study_end.active .study-header a"); if (a.length) a[0].click();');
+        await d.exec('var a = document.querySelectorAll(".btn-top-menu a"); if (a.length) a[0].click();');
+        await stop.sleep(500);
+        await d.exec('var a = document.querySelectorAll(".close_o"); if (a.length) a[0].click();');
+        stop.set();
+        break;
+      }
+      if (s.modal) { await sspellCloseModal(d); if (await stop.await(700)) break; continue; }
+      if (s.round) { if (await stop.await(500)) break; continue; }
+      if (s.start) { await startStudyIfNeeded(d, stop); if (await stop.await(800)) break; continue; }
+      if (!s.card) { if (await stop.await(400)) break; continue; }
+
+      if (s.legacy) {           // 예전 화면 — 옛 흐름으로
+        d.log('[문장 암기] 예전 화면 구조입니다 — 이전 방식으로 진행합니다');
+        await memorizeSentenceLegacy(d, answerDict, stop);
+        return;
+      }
+
+      const sig = `${s.key}|${s.step1}|${s.correct}|${s.done}|${(s.tiles || []).filter((t) => !t.clicked).length}`;
+      if (sig === lastSig) {
+        sameCount += 1;
+        if (sameCount === 60) {
+          d.log(`[문장 암기] 진행이 멈췄습니다 — 화면: ${JSON.stringify({ key: s.key, step1: s.step1, done: s.done, words: (s.words || []).length, tiles: (s.tiles || []).length }).slice(0, 200)}`, 'warn');
+          await sspellClickFeedback(d, '.btn-next-card');
+        }
+      } else { sameCount = 0; lastSig = sig; }
+
+      if (s.step1) {            // 1단계: 문장 소리를 끝까지 듣고 '영작 연습하기'
+        if (waitedAudioFor !== s.key) {
+          waitedAudioFor = s.key;
+          await stop.sleep(900);
+          await sspellWaitAudio(d, stop, 20000);
+          if (stop.isSet) break;
+        }
+        const clicked = await d.clickSmart(`
+          var card = document.querySelector('.study-body .CardItem.active') || document.querySelector('.CardItem.active');
+          var b = card ? card.querySelector('.step.s1 .btn-go-step1') : null;
+          if (b && b.offsetParent !== null) el = b;`);
+        if (!clicked) await d.pressSpace();
+        if (await stop.await(500)) break;
+        continue;
+      }
+
+      if (s.correct) {          // 다 맞춤 → 다음 카드
+        await sspellClickFeedback(d, '.btn-next-card');
+        const r = await sspellWaitCardChange(d, stop, s.key, 3000);
+        if (r === 'stopped') break;
+        if (r === 'stuck') { await d.blurActiveElement(); await d.pressSpace(); }
+        continue;
+      }
+
+      if (!s.scramble || !s.words || !s.words.length || s.tilesDisabled) { if (await stop.await(300)) break; continue; }
+      const expected = s.words[s.done];
+      if (expected === undefined) { if (await stop.await(300)) break; continue; }
+      let hit = -1;
+      for (let i = 0; i < s.tiles.length; i++) {
+        if (!s.tiles[i].clicked && s.tiles[i].input === expected) { hit = i; break; }
+      }
+      if (hit < 0) { if (await stop.await(250)) break; continue; }
+      await sspellClickTile(d, hit);
+      if (await stop.await(120)) break;
+    }
+  } catch (e) {
+    if (!stop.isSet) d.log(`[문장 암기] 오류: ${e.message}`, 'error');
+  } finally {
+    d.log('[문장 암기] 종료');
+  }
+}
+
+// ============================================================ 문장 리콜 (지금 사이트: scripts/v3/recall_sentence.js)
+//
+//   - 카드 `.CardItem.active .front .input-box` 에 앞부분 낱말이 미리 채워져 있고, 빈칸은 `.btn-scramble.now`('?') 로 표시된다.
+//     빈칸 정답은 그 input-box 의 jQuery data('arr_answer') (순서대로). 콘솔 캡처가 필요 없다.
+//   - 보기 타일은 footer 의 `.scramble-body .btn-scramble` (한 번에 최대 4개). 놓은 수 = `.input-box .btn-scramble:not(.now)`.
+//     타일 글과 정답 낱말이 `==` 로 같아야 한다. 한 묶음을 다 놓으면 채점: 틀리면 `.study-wrapper.wrong`(정답 표시), 맞으면 다음 묶음.
+//   - 다 맞추면 `.study-wrapper.correct`. 어느 쪽이든 `.feedback .btn-next-card`(다음카드) 로 넘어간다 (재시도 없음 — 틀린 카드는 다음 바퀴에).
+//   - 끝: `#study_end.active`, 모르는 카드가 있으면 `.btn-study-end-unknow` 로 그 카드만 다시.
+
+async function rsentClickTile(d, index) {
+  return d.clickSmart(`
+    var tiles = document.querySelectorAll('.scramble-body .btn-scramble');
+    el = tiles[${index}] || null;`);
+}
+
+async function recallSentence(d, answerDict, stop) {
+  d.log('[문장 리콜] 시작');
+  let rounds = 0;
+  let sameCount = 0;
+  let lastSig = '';
+  let wrongLogged = null;
+  try {
+    while (!stop.isSet) {
+      const s = await sspellState(d);
+      if (!s) { if (await stop.await(400)) break; continue; }
+
+      if (s.end) {
+        if (s.unknown > 0 && rounds < SSPELL_MAX_ROUNDS) {
+          rounds += 1;
+          d.log(`[문장 리콜] 모르는 카드 ${s.unknown}개 — 다시 학습합니다 (${rounds}/${SSPELL_MAX_ROUNDS})`);
+          await d.clickFirstVisible('#study_end .btn-study-end-unknow');
+          if (await stop.await(1500)) break;
+          continue;
+        }
+        d.log('[문장 리콜] 학습 완료');
+        await d.exec('var a = document.querySelectorAll("#study_end.active .study-header a"); if (a.length) a[0].click();');
+        await d.exec('var a = document.querySelectorAll(".btn-top-menu a"); if (a.length) a[0].click();');
+        await stop.sleep(500);
+        await d.exec('var a = document.querySelectorAll(".close_o"); if (a.length) a[0].click();');
+        stop.set();
+        break;
+      }
+      if (s.modal) { await sspellCloseModal(d); if (await stop.await(700)) break; continue; }
+      if (s.round) { if (await stop.await(500)) break; continue; }
+      if (s.start) { await startStudyIfNeeded(d, stop); if (await stop.await(800)) break; continue; }
+      if (!s.card) { if (await stop.await(400)) break; continue; }
+
+      if (s.legacy) {
+        d.log('[문장 리콜] 예전 화면 구조입니다 — 이전 방식으로 진행합니다');
+        await recallSentenceLegacy(d, answerDict, stop);
+        return;
+      }
+
+      const sig = `${s.key}|${s.correct}|${s.wrong}|${s.rPlaced}|${(s.rTiles || []).filter((t) => !t.clicked).length}`;
+      if (sig === lastSig) {
+        sameCount += 1;
+        if (sameCount === 60) {
+          d.log(`[문장 리콜] 진행이 멈췄습니다 — 화면: ${JSON.stringify({ key: s.key, recall: s.recall, placed: s.rPlaced, words: (s.rWords || []).length, tiles: (s.rTiles || []).length }).slice(0, 200)}`, 'warn');
+          await sspellClickFeedback(d, '.btn-next-card');
+        }
+      } else { sameCount = 0; lastSig = sig; }
+
+      if (s.correct || s.wrong) {
+        if (s.wrong && wrongLogged !== s.key) { wrongLogged = s.key; d.log('[문장 리콜] 오답 처리된 카드 — 다음 바퀴에 다시 나옵니다', 'warn'); }
+        await sspellClickFeedback(d, '.btn-next-card');
+        const r = await sspellWaitCardChange(d, stop, s.key, 3000);
+        if (r === 'stopped') break;
+        if (r === 'stuck') { await d.blurActiveElement(); await d.pressSpace(); }
+        continue;
+      }
+
+      if (!s.recall || !s.rWords || !s.rWords.length) { if (await stop.await(300)) break; continue; }
+      const expected = s.rWords[s.rPlaced];
+      if (expected === undefined) { if (await stop.await(300)) break; continue; }
+      let hit = -1;
+      for (let i = 0; i < s.rTiles.length; i++) {
+        if (!s.rTiles[i].clicked && s.rTiles[i].text === expected) { hit = i; break; }
+      }
+      if (hit < 0) {
+        // 사이트는 < > 를 &lt; &gt; 로 바꿔 비교한다 — 표시 글자가 다를 수 있으니 공백·기호를 뺀 비교로 한 번 더
+        const norm = (t) => String(t).toLowerCase().replace(/[^a-z0-9가-힣]/g, '');
+        for (let i = 0; i < s.rTiles.length; i++) {
+          if (!s.rTiles[i].clicked && norm(s.rTiles[i].text) === norm(expected) && norm(expected)) { hit = i; break; }
+        }
+      }
+      if (hit < 0) { if (await stop.await(250)) break; continue; }
+      await rsentClickTile(d, hit);
+      if (await stop.await(150)) break;
+    }
+  } catch (e) {
+    if (!stop.isSet) d.log(`[문장 리콜] 오류: ${e.message}`, 'error');
+  } finally {
+    d.log('[문장 리콜] 종료');
+  }
+}
+
+  return { checkStep2SuccessAndStop, findSubsequenceEnd, findMatchingSentences, findMatchingSentenceFallback, findSentenceByCandidates, sspellFirstLetters, spellSentence, memorizeSentence, recallSentence };
 })();
 
 // ======================================================== extension/engine/modules/grammar.js
@@ -6546,7 +7265,8 @@ async function runModeIsolated(d, modeFn, answerDict, parentStop) {
  */
 async function processSetDetail(d, sentenceMode, stop) {
   const testPass = sentenceMode ? PASS.sentenceTest : PASS.test;
-  const spellRequired = !sentenceMode && (await isSpellRequired(d));
+  // 스펠은 선생님이 '필수'로 지정한 경우에만 (단어 세트는 단어 스펠, 문장 세트는 문장 스펠)
+  const spellRequired = await isSpellRequired(d);
 
   const memorizeDone = await isModeCompleted(d, MEMORIZE_BTN_SELECTOR);
   const recallDone = await isModeCompleted(d, RECALL_BTN_SELECTOR);
@@ -6581,6 +7301,7 @@ async function processSetDetail(d, sentenceMode, stop) {
     ['리콜', RECALL_BTN_SELECTOR, sentenceMode ? Sentence.recallSentence : Basic.recall],
   ];
   if (sentenceMode) {
+    if (spellRequired) steps.push(['스펠', SPELL_BTN_SELECTOR, Sentence.spellSentence]);
     steps.push(['스크램블', MATCH_BTN_SELECTOR, Games.scramble]);
   } else {
     if (spellRequired) steps.push(['스펠', SPELL_BTN_SELECTOR, Basic.spell]);
@@ -6735,6 +7456,7 @@ async function runFullAutomation(d, stop) {
 
       sentenceMode = sentenceMode || (await isSentenceSetDetail(d));
       d.log(`[전체] [${sentenceMode ? '문장' : '단어'}] ${target.name}`);
+      d.progress({ current: processed.size + 1, total: sets.length, ok: processed.size, fail: 0, skipped: Math.max(0, sets.length - processed.size - 1), label: '전체 자동화' });
 
       await processSetDetail(d, sentenceMode, stop);
 
@@ -6959,6 +7681,8 @@ const IOS_MODES = [
   { id: 'spell', label: '⌨ 스펠', needsTrusted: true },
   { id: 'memorize_sentence', label: '📖 문장 암기', needsTrusted: true },
   { id: 'recall_sentence', label: '📝 문장 리콜', needsTrusted: true },
+  // 문장 스펠: 기본 학습설정(어순배열)은 타일 클릭만이라 아이폰에서도 된다. 입력형 설정이면 채점이 거부된다.
+  { id: 'spell_sentence', label: '✍ 문장 스펠', fn: () => __mod.sentence.spellSentence, noDict: true },
   { id: 'test_sentence', label: '📕 문장 테스트', needsTrusted: true },
   { id: 'scramble', label: '✳ 문장 스크램블', needsTrusted: true },
 ];
@@ -6994,9 +7718,11 @@ panel.innerHTML = `
 <div class="cc-modes"></div>
 <details class="cc-more"><summary>아이폰에서 안 되는 모드 보기</summary><div class="cc-locked"></div></details>
 <div class="cc-bar">
+  <button class="cc-pause" type="button">⏸ 일시정지</button>
   <button class="cc-stop" type="button">■ 정지</button>
   <span class="cc-state">대기 중</span>
 </div>
+<div class="cc-prog"><div class="cc-prog-txt"></div><div class="cc-prog-bar"><div></div></div></div>
 <div class="cc-log" role="log"></div>`;
 
 const style = document.createElement('style');
@@ -7043,6 +7769,12 @@ style.textContent = `
   border-radius: 9px; padding: 9px 14px; font-size: 13px; min-height: 40px; font-weight: 700;
 }
 #cc-ios-panel .cc-state { opacity: .8; }
+#cc-ios-panel .cc-pause { background: rgba(245,158,11,.25); color: #ffe7b0; border: 1px solid rgba(245,158,11,.5); border-radius: 9px; padding: 5px 10px; font-weight: 700; }
+#cc-ios-panel .cc-prog { padding: 0 12px 6px; display: none; }
+#cc-ios-panel .cc-prog.on { display: block; }
+#cc-ios-panel .cc-prog-txt { font-size: 11px; opacity: .9; }
+#cc-ios-panel .cc-prog-bar { height: 7px; border-radius: 5px; background: rgba(255,255,255,.12); overflow: hidden; margin-top: 3px; }
+#cc-ios-panel .cc-prog-bar > div { height: 100%; width: 0; background: linear-gradient(90deg, #8b5cf6, #ec4899); transition: width .3s; }
 #cc-ios-panel .cc-more { padding: 0 10px 8px; font-size: 12px; opacity: .8; }
 #cc-ios-panel .cc-more summary { padding: 6px 2px; cursor: pointer; }
 #cc-ios-panel .cc-locked {
@@ -7175,6 +7907,21 @@ for (const mode of IOS_MODES) {
 panel.querySelector('.cc-stop').addEventListener('click', () => {
   if (current) { current.set(); addLog('정지 요청됨'); }
 });
+const $pause = panel.querySelector('.cc-pause');
+$pause.addEventListener('click', () => {
+  if (!current) return;
+  if (current.isPaused) { current.resume(); $pause.textContent = '⏸ 일시정지'; addLog('재개합니다.', 'success'); }
+  else { current.pause(); $pause.textContent = '▶ 재개'; addLog('일시정지 — 재개를 누를 때까지 멈춥니다.', 'warn'); }
+});
+// 진행률: 모듈이 driver.progress() 로 알려 준다
+const $prog = panel.querySelector('.cc-prog');
+driver.onProgress = (p) => {
+  const pct = p.total > 0 ? Math.min(100, Math.round((p.current / p.total) * 100)) : 0;
+  $prog.classList.add('on');
+  $prog.querySelector('.cc-prog-txt').textContent =
+    `현재 ${p.current} / ${p.total} · 진행률 ${pct}% · 남은 ${Math.max(0, p.total - p.current)} · 성공 ${p.ok} · 실패 ${p.fail} · 미처리 ${p.skipped}`;
+  $prog.querySelector('.cc-prog-bar > div').style.width = `${pct}%`;
+};
 
 addLog('아이폰용 자동화 준비 완료. 학습 화면에서 모드를 누르세요.', 'success');
 if (dict) addLog(`저장된 단어장 ${dict.size}개를 불러왔습니다.`);

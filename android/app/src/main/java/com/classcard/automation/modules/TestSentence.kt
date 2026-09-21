@@ -95,12 +95,72 @@ object TestSentence {
      */
     private suspend fun pickByTiles(d: Driver, candidates: List<String>): String? {
         if (candidates.isEmpty()) return null
-        fun bag(words: List<String>) =
-            words.map { Norm.normEn(it.removeSuffix("*")) }.filter { it.isNotEmpty() }.sorted()
-                .joinToString("|")
-        val want = bag(listButtons(d))
-        if (want.isEmpty()) return null
-        return candidates.firstOrNull { bag(Norm.parseEnglishWords(it)) == want }
+        return pickByTileBag(listButtons(d), candidates)
+    }
+
+    /**
+     * 타일 낱말 묶음과 정확히 같은 후보를 먼저, 없으면 (타일이 여러 낱말 묶음이거나 기호가 다를 때) 낱말 집합이
+     * 가장 비슷한 후보를 고른다 — 후보끼리 구분이 안 될 만큼 비슷하면 고르지 않는다. (확장 pickByTileBag 과 같다)
+     */
+    fun pickByTileBag(tiles: List<String>, candidates: List<String>): String? {
+        fun words(arr: List<String>) = arr.flatMap { Norm.parseEnglishWords(it.removeSuffix("*")) }
+            .map { Norm.normEn(it) }.filter { it.isNotEmpty() }
+        val tileWords = words(tiles)
+        if (tileWords.isEmpty()) return null
+        val want = tileWords.sorted().joinToString("|")
+        candidates.firstOrNull { words(listOf(it)).sorted().joinToString("|") == want }?.let { return it }
+        val setA = tileWords.toSet()
+        var best: String? = null
+        var bestScore = 0.0
+        var second = 0.0
+        for (cand in candidates) {
+            val cw = words(listOf(cand))
+            if (cw.isEmpty()) continue
+            val setB = cw.toSet()
+            val inter = setA.count { setB.contains(it) }
+            val score = inter.toDouble() / maxOf(setA.size, setB.size)
+            if (score > bestScore) { second = bestScore; bestScore = score; best = cand }
+            else if (score > second) second = score
+        }
+        return if (best != null && bestScore >= 0.75 && bestScore > second) best else null
+    }
+
+    /**
+     * 타일이 낱말 하나가 아니라 여러 낱말 묶음("in righteousness")일 때, 문장 어순대로 어떤 타일을 눌러야 하는지 계획한다.
+     * 각 자리에서 가장 긴 묶음부터 맞춰 본다. 맞는 타일이 없는 자리는 낱말 하나(기존 방식)로 둔다. (확장 planChunks 와 같다)
+     */
+    fun planChunks(tokens: List<String>, tileTexts: List<String>): List<String> {
+        class T(val text: String, val words: List<String>) { var used = false }
+        fun words(t: String) = Norm.parseEnglishWords(t).map { Norm.normEn(it) }.filter { it.isNotEmpty() }
+        val tiles = tileTexts.map { T(it, words(it)) }
+        val toks = tokens.map { Norm.normEn(it) }
+        val plan = ArrayList<String>()
+        var pos = 0
+        while (pos < tokens.size) {
+            if (toks[pos].isEmpty()) { pos += 1; continue }
+            var best: T? = null
+            for (tile in tiles) {
+                if (tile.used || tile.words.isEmpty()) continue
+                val n = tile.words.size
+                if (best != null && n <= best.words.size) continue
+                var ok = true; var k = pos; var m = 0
+                while (m < n && k < tokens.size) {
+                    if (toks[k].isEmpty()) { k += 1; continue }
+                    if (toks[k] != tile.words[m]) { ok = false; break }
+                    k += 1; m += 1
+                }
+                if (ok && m == n) best = tile
+            }
+            if (best != null) {
+                best.used = true
+                plan.add(best.text)
+                var m = 0
+                while (m < best.words.size && pos < tokens.size) { if (toks[pos].isNotEmpty()) m += 1; pos += 1 }
+            } else {
+                plan.add(tokens[pos]); pos += 1
+            }
+        }
+        return plan
     }
 
     /** 한글 프롬프트로 영어 정답 문장 조회. 실패 시 괄호 제거 폴백. */
@@ -161,10 +221,32 @@ object TestSentence {
 
         var prompt = '';
         var pSel = ['.flip-card-front .front-hidden', '.flip-card-front .cc-table',
-                    '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body'];
+                    '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body',
+                    '.test-sentence-mean', '.sentence-mean', '.quest-back', '.q-body', '.question'];
         for (var i = 0; i < pSel.length && !prompt; i++) {
             var el = card.querySelector(pSel[i]);
-            if (el) prompt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+            if (el) prompt = (el.textContent || '').replace(/[ \t\r\n]+/g, ' ').trim();
+        }
+        if (!prompt) {
+            // 화면 구조가 바뀌어 위 자리에 없으면: 카드 안의 글 중 낱말 버튼·놓인 낱말·버튼 글을 뺀 나머지에서
+            // 한글이 든 줄을 제시문으로 본다 (제시문은 항상 우리말 뜻이다)
+            var skip = [];
+            for (var a = 0; a < WORD_SEL.length; a++) skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll(WORD_SEL[a])));
+            for (var b = 0; b < PLACED_SEL.length; b++) skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll(PLACED_SEL[b])));
+            skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll('a.btn, button, .btn, script, style')));
+            var lines = [];
+            var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+            var node;
+            while ((node = walker.nextNode())) {
+                var t = (node.nodeValue || '').replace(/[ \t\r\n]+/g, ' ').trim();
+                if (!t || !/[가-힣]/.test(t)) continue;
+                var p = node.parentElement, skipped = false;
+                for (var k = 0; k < skip.length && !skipped; k++) if (skip[k] === p || skip[k].contains(p)) skipped = true;
+                if (skipped) continue;
+                if (p && p.offsetParent === null && !card.classList.contains('flip')) continue;
+                lines.push(t);
+            }
+            prompt = lines.join(' ').trim();
         }
 
         return { found: true, qid: qid, flipped: flipped, prompt: prompt,
@@ -421,7 +503,10 @@ object TestSentence {
     private suspend fun clickSentence(
         d: Driver, english: String, makeWrong: Boolean, stop: StopFlag,
     ): Boolean {
-        val tokens = Norm.parseEnglishWords(english)
+        var tokens = Norm.parseEnglishWords(english)
+        // 타일이 여러 낱말 묶음이면 묶음 단위로 누른다
+        val tileTexts = listButtons(d).filter { !it.endsWith("*") }
+        if (tileTexts.any { Norm.parseEnglishWords(it).size > 1 }) tokens = planChunks(tokens, tileTexts)
 
         val order = tokens.indices.toMutableList()
         if (makeWrong && order.size >= 2) {
@@ -474,6 +559,7 @@ object TestSentence {
                 d.log("[문장 테스트] 카드 목록·단어장이 없습니다 — 페이지가 남기는 정답으로 풉니다.")
             }
 
+            var dumpedEmptyPrompt = false
             val total = countTotal(d)
             val wrongIdx = Test.planWrongIndices(total, TARGET_SCORE)
             if (DEBUG && total != null) {
@@ -555,12 +641,17 @@ object TestSentence {
                     }
                     if (english == null) {
                         d.log("[문장 테스트] 매칭 실패(건너뜀): '${q.prompt}'")
+                        if (q.prompt.isEmpty() && !dumpedEmptyPrompt) {
+                            dumpedEmptyPrompt = true
+                            d.log("[문장 테스트] 제시문을 읽지 못했습니다. 화면 구조: " + d.eval(DUMP_CARD_JS).take(400))
+                        }
                         answeredQids.add(q.qid)  // 건너뜀 (해당 문항 오답 처리)
                         if (stop.await(300)) break
                         continue
                     }
 
                     answeredCount++
+                    d.progress(answeredCount, total ?: 0, answeredCount - wrongIdx.size, wrongIdx.size, maxOf(0, (total ?: 0) - answeredCount), "문장 테스트")
                     val makeWrong = answeredCount in wrongIdx
 
                     if (DEBUG) {

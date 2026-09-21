@@ -117,7 +117,97 @@ function sessionSummary() {
     state: s.state,
     detail: s.detail,
     tabId: s.tabId,
+    running: !!s.running,
+    paused: !!(s.stop && s.stop.isPaused),
+    modeId: s.modeId || null,
+    progress: s.progress || null,
   }));
+}
+
+// ------------------------------------------------------------------ 진행률 · 일시정지 · 진행 위치 저장
+//
+// 모듈은 driver.progress({current,total,ok,fail,skipped}) 로 진행률을 알린다(카드 화면은 data-status 로 센다).
+// 일시정지는 StopFlag.pause(): 모든 모듈이 stop.await() 로 쉬므로 그 자리에서 멈춘다.
+// '진행 위치'는 {계정: {modeId, url, progress}} 로 저장해 두고, 새로고침·재시작 뒤 '이어하기'가 같은 페이지에서 같은 모드를 다시 돌린다
+// (학습 진행 자체는 사이트가 계정에 저장하므로, 같은 화면에서 다시 시작하면 그 자리부터 이어진다).
+
+const RESUME_KEY = 'resume';
+let lastResumeSaveAt = 0;
+
+async function getResumeAll() {
+  const r = await chrome.storage.local.get(RESUME_KEY);
+  return (r && r[RESUME_KEY]) || {};
+}
+
+async function saveResume(session, { explicit = false } = {}) {
+  if (!session || !session.modeId) return null;
+  if (!explicit && Date.now() - lastResumeSaveAt < 5000) return null;
+  lastResumeSaveAt = Date.now();
+  let url = '';
+  try { url = await session.driver.currentUrl(); } catch (e) { url = ''; }
+  const all = await getResumeAll();
+  const entry = { modeId: session.modeId, url, progress: session.progress || null, savedAt: Date.now() };
+  all[session.account.id] = entry;
+  await chrome.storage.local.set({ [RESUME_KEY]: all });
+  if (explicit) {
+    const p = session.progress;
+    session.driver.log(`진행 위치를 저장했습니다 — ${MODES[session.modeId]?.label || session.modeId}${p ? ` ${p.current}/${p.total}` : ''} · ${url.replace('https://www.classcard.net', '')}`, 'success');
+  }
+  return entry;
+}
+
+async function clearResume(accountId) {
+  const all = await getResumeAll();
+  if (all[accountId]) { delete all[accountId]; await chrome.storage.local.set({ [RESUME_KEY]: all }); }
+}
+
+function hookProgress(session) {
+  session.driver.onProgress = (p) => {
+    session.progress = p;
+    notifyState();
+    saveResume(session).catch(() => {});
+  };
+}
+
+function pauseAll() {
+  let any = false;
+  for (const session of sessions.values()) {
+    if (session.running && session.stop && !session.stop.isPaused) { session.stop.pause(); any = true; session.driver.log('일시정지 — 재개를 누를 때까지 멈춥니다.', 'warn'); }
+  }
+  if (!any) log('    일시정지할 자동화가 없습니다.', 'dim');
+  notifyState();
+}
+
+function resumeAll() {
+  let any = false;
+  for (const session of sessions.values()) {
+    if (session.running && session.stop && session.stop.isPaused) { session.stop.resume(); any = true; session.driver.log('재개합니다.', 'success'); }
+  }
+  if (!any) log('    재개할 자동화가 없습니다.', 'dim');
+  notifyState();
+}
+
+/** 저장해 둔 진행 위치에서 이어하기: 같은 페이지로 가서 같은 모드를 다시 돌린다. */
+async function resumeRun(accountIds) {
+  const all = await getResumeAll();
+  const ids = (accountIds || []).filter((id) => all[id]);
+  if (!ids.length) { log('[이어하기] 저장된 진행 위치가 없습니다. 먼저 [진행 위치 저장]을 누르거나 자동화를 한 번 돌리세요.', 'warn'); return; }
+  const accounts = await getAccounts();
+  for (const id of ids) {
+    const entry = all[id];
+    const account = accounts.find((a) => a.id === id) || { id, pw: '' };
+    let session = sessions.get(id);
+    if (!session || !(await tabAlive(session.tabId))) session = await openTabForAccount(account, { forceLogin: false });
+    if (entry.url && session && !session.manual) {
+      const cur = await session.driver.currentUrl();
+      if (cur !== entry.url) { await session.driver.loadUrl(entry.url); await session.driver.waitForLoad(); }
+    } else if (entry.url && session) {
+      const cur = await session.driver.currentUrl();
+      if (cur !== entry.url) { await session.driver.loadUrl(entry.url); await session.driver.waitForLoad(); }
+    }
+    log(`[${id}] 저장된 위치에서 이어합니다 — ${MODES[entry.modeId]?.label || entry.modeId}${entry.progress ? ` (${entry.progress.current}/${entry.progress.total})` : ''}`);
+    await startRun(entry.modeId, [id]);
+  }
 }
 
 function notifyState() {
@@ -183,6 +273,7 @@ async function openTabForAccount(account, { forceLogin }) {
       stop: null,
     };
     sessions.set(account.id, session);
+    hookProgress(session);
     notifyState();
     await driver.waitForLoad();
   }
@@ -317,6 +408,8 @@ const MODES = {
   memorize_sentence: { label: '문장 암기', fn: Sentence.memorizeSentence, noDict: true },
   // 문장 리콜은 페이지가 로그하는 정답을 캡처한다.
   recall_sentence: { label: '문장 리콜', fn: Sentence.recallSentence, noDict: true },
+  // 문장 스펠은 카드 데이터(정답 문장)를 화면에서 읽는다 — 어순배열은 타일 클릭, 입력형은 진짜 키 입력.
+  spell_sentence: { label: '문장 스펠', fn: Sentence.spellSentence, noDict: true },
   test: { label: '단어 테스트', fn: Games.test },                          // 단어장 필수
   // 문장 테스트는 페이지 카드 목록(study_data)에서 정답을 읽으므로 단어장이 없어도 된다.
   test_sentence: { label: '문장 테스트', fn: Games.testSentence, noDict: true },
@@ -346,6 +439,9 @@ async function runModeOnSession(session, modeId) {
   const stop = new StopFlag();
   session.stop = stop;
   session.running = true;
+  session.modeId = modeId;
+  session.progress = null;
+  session.driver.progressState = null;
   setSessionState(session, 'running', mode.label);
 
   // 문장 테스트의 스크램블 버튼은 신뢰된 입력만 받는다 -> CDP 연결
@@ -384,9 +480,12 @@ async function runModeOnSession(session, modeId) {
       setSessionState(session, 'error', '자동화 오류');
     }
   } finally {
+    const finished = !!(session.progress && session.progress.total > 0 && session.progress.current >= session.progress.total);
     stop.set();
     session.running = false;
     await session.driver.detachDebugger();
+    if (finished) await clearResume(session.account.id).catch(() => {});   // 끝까지 했으면 이어할 게 없다
+    else await saveResume(session, { explicit: false }).catch(() => {});   // 중간에 멈췄으면 그 자리를 남긴다
     if (session.state !== 'error') setSessionState(session, 'ready', '');
     notifyState();
   }
@@ -590,6 +689,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           logs: logsByDate,
           today: todayString(),
           update: updateInfo,
+          resume: await getResumeAll(),
         });
         break;
       }
@@ -636,6 +736,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         stopAll();
         sendResponse({ ok: true });
         break;
+      case 'pause':
+        pauseAll();
+        sendResponse({ ok: true });
+        break;
+      case 'resume':
+        resumeAll();
+        sendResponse({ ok: true });
+        break;
+      case 'saveProgress': {
+        let saved = 0;
+        for (const session of sessions.values()) {
+          if ((msg.accountIds || []).includes(session.account.id) && session.modeId) {
+            if (await saveResume(session, { explicit: true })) saved += 1;
+          }
+        }
+        if (!saved) log('[진행 위치 저장] 저장할 진행 중인(또는 방금 돌린) 자동화가 없습니다.', 'warn');
+        sendResponse({ ok: true, resume: await getResumeAll() });
+        break;
+      }
+      case 'resumeRun':
+        resumeRun(msg.accountIds);
+        sendResponse({ ok: true });
+        break;
       case 'fetchDict': {
         const accounts = (await getAccounts()).filter((a) => msg.accountIds.includes(a.id));
         for (const account of accounts) {
@@ -667,6 +790,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           account, tabId: tab.id, driver, state: 'ready', detail: '현재 탭 사용', running: false, stop: null,
           manual: true,
         });
+        hookProgress(sessions.get(account.id));
         log(`[${account.id}] 현재 탭을 사용합니다.`);
         notifyState();
         sendResponse({ ok: true });
