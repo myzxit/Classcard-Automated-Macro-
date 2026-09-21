@@ -1,0 +1,83 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>리콜(실제 규칙)</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .wrap{max-width:860px;margin:20px auto;background:#fff;border-radius:12px;padding:20px;min-height:380px;position:relative}
+ .CardItem{display:none;position:relative}
+ .CardItem.current.showing{display:block}
+ .card-top{font-size:22px;font-weight:700;margin-bottom:14px}
+ .quest-body{position:relative}
+ .cc-table{border:1px solid #94a3b8;border-radius:8px;padding:10px 14px;margin:6px 0;cursor:pointer}
+ .cc-table.card-quest-o{background:#dcfce7}.cc-table.card-quest-x{background:#fee2e2}
+ /* 덮개: 내려가기 전에는 보기를 덮는다 (실제 사이트와 같은 동작) */
+ .card-cover{position:absolute;left:0;right:0;top:0;bottom:0;background:#334155;border-radius:8px;z-index:5}
+ .card-cover.down{visibility:hidden;z-index:-1}
+ .btnNextCard{display:inline-block;margin-top:16px;padding:8px 16px;border:1px solid #64748b;border-radius:8px;cursor:pointer}
+ #study_end{display:none}#study_end.active{display:block;text-align:center;padding:20px}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="wrap" id="page"><div id="slider"></div>
+  <a class="btnNextCard" href="#">다음 카드</a></div>
+<div id="study_end"><div class="study-header"><a href="#">나가기</a></div>
+  <a class="btn-study-end-repeat" href="#">다시 학습</a></div>
+<div id="done"><h2>🎉 리콜 완료</h2><p id="stat"></p></div>
+<script>
+// 실제 recall.js 규칙 재현:
+//  1) 카드 전환 0.8초 뒤 .card-cover 에 down 이 붙는다 (그 전엔 보기가 덮여 있다)
+//  2) 정답 보기에는 .answer 클래스가 있다
+//  3) 보기 클릭은 e.isTrusted 가 아니면 무시 (setCardQuestItem)
+//  4) 정답이면 1초 뒤 사이트가 .btnNextCard 를 스스로 누른다 / 오답이면 안 넘어간다
+var CARDS = [
+  { q:'apple',  opts:['책','사과','물','친구'], a:1 },
+  { q:'book',   opts:['책','학교','물','사과'], a:0 },
+  { q:'water',  opts:['친구','학교','물','책'], a:2 },
+  { q:'friend', opts:['사과','물','학교','친구'], a:3 },
+  { q:'school', opts:['학교','책','친구','물'], a:0 }
+];
+var idx = 0, results = [], ignored = 0, coverTimer = null, isQuestClick = true;
+function render(){
+  var c = CARDS[idx];
+  document.getElementById('slider').innerHTML =
+    '<div class="CardItem current showing" data-idx="'+idx+'">' +
+      '<div class="card-top">'+c.q+'</div>' +
+      '<div class="quest-body">' +
+        c.opts.map(function(t,i){
+          return '<div class="cc-table middle fill-parent-w'+(i===c.a?' answer':'')+'">'+t+'</div>'; }).join('') +
+        '<div class="card-cover"></div>' +
+      '</div>' +
+    '</div>';
+  isQuestClick = true;
+  [].forEach.call(document.querySelectorAll('.CardItem.current .cc-table'), function(el){
+    el.addEventListener('click', function(e){
+      if (!e.isTrusted) { ignored++; return; }              // 합성 클릭 무시
+      if (!isQuestClick) return;
+      var card = document.querySelector('.CardItem.current');
+      var cover = card.querySelector('.card-cover');
+      if (!cover.classList.contains('down')) return;        // 덮개가 안 내려오면 못 고른다
+      isQuestClick = false;
+      var ok = el.classList.contains('answer');
+      el.classList.add(ok ? 'card-quest-o' : 'card-quest-x');
+      card.classList.add(ok ? 'active' : 'deactive');
+      results.push(ok ? '정답' : '오답');
+      if (ok) setTimeout(function(){ document.querySelector('.btnNextCard').click(); }, 1000);
+    });
+  });
+  if (coverTimer) clearTimeout(coverTimer);
+  coverTimer = setTimeout(function(){
+    var cv = document.querySelector('.CardItem.current .card-cover');
+    if (cv) cv.classList.add('down');
+  }, 800);
+}
+document.querySelector('.btnNextCard').addEventListener('click', function(e){
+  e.preventDefault();
+  idx++;
+  if (idx >= CARDS.length) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('study_end').classList.add('active');
+    document.getElementById('done').style.display='block';
+    document.getElementById('stat').textContent = results.join(' / ') + ' · 무시된 합성 클릭 ' + ignored;
+    return;
+  }
+  render();
+});
+render();
+</script></body></html>

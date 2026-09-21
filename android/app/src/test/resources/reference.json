@@ -1,0 +1,1108 @@
+{
+  "mnorm": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "끌어서떼어내다제거하다성공하다"
+    ],
+    [
+      "pull off",
+      "pulloff"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "HelloWorld"
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "b강조bnbsp텍스트"
+    ],
+    [
+      "in(to)",
+      "into"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "TheManscarisntit"
+    ],
+    [
+      "…dash–em—",
+      "dashem"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "matching_mnorm": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "끌어서떼어내다제거하다성공하다"
+    ],
+    [
+      "pull off",
+      "pulloff"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "HelloWorld"
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "강조텍스트"
+    ],
+    [
+      "in(to)",
+      "into"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "TheManscarisntit"
+    ],
+    [
+      "…dash–em—",
+      "dashem"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "knorm": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "끌어서떼어내다제거하다성공하다"
+    ],
+    [
+      "pull off",
+      "pulloff"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "HelloWorld"
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "강조텍스트"
+    ],
+    [
+      "in(to)",
+      "into"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "TheManscarisntit"
+    ],
+    [
+      "…dash–em—",
+      "dashem"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "wnorm": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "12"
+    ],
+    [
+      "pull off",
+      "pulloff"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "helloworld123"
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "bbnbsp"
+    ],
+    [
+      "in(to)",
+      "into"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "themanscarisntit"
+    ],
+    [
+      "…dash–em—",
+      "dashem"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "norm_en": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "12"
+    ],
+    [
+      "pull off",
+      "pulloff"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "helloworld123"
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "bbnbsp"
+    ],
+    [
+      "in(to)",
+      "into"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "themanscarisntit"
+    ],
+    [
+      "…dash–em—",
+      "dashem"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "normalize_kor": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "1.끌어서떼어내다,제거하다2.성공하다"
+    ],
+    [
+      "pull off",
+      "pulloff"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "Hello,World!123"
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "<b>강조</b>&nbsp;텍스트"
+    ],
+    [
+      "in(to)",
+      "in(to)"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "TheMan'scar,isn'tit?"
+    ],
+    [
+      "…dash–em—",
+      "...dash–em—"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "normalize_text": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "1.끌어서떼어내다,제거하다2.성공하다"
+    ],
+    [
+      "pull off",
+      "pulloff"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "Hello,World!123"
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "<b>강조</b>&nbsp;텍스트"
+    ],
+    [
+      "in(to)",
+      "in(to)"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "TheMan'scar,isn'tit?"
+    ],
+    [
+      "…dash–em—",
+      "...dash–em—"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "strip_parens_simple": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다"
+    ],
+    [
+      "pull off",
+      "pull off"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "  Hello,  World! 123 "
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "<b>강조</b>&nbsp;텍스트"
+    ],
+    [
+      "in(to)",
+      "in"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "The Man's car, isn't it?"
+    ],
+    [
+      "…dash–em—",
+      "…dash–em—"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "strip_parens": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다"
+    ],
+    [
+      "pull off",
+      "pull off"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "Hello, World! 123"
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "<b>강조</b>&nbsp;텍스트"
+    ],
+    [
+      "in(to)",
+      "in"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "The Man's car, isn't it?"
+    ],
+    [
+      "…dash–em—",
+      "…dash–em—"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "normalize_unicode": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다"
+    ],
+    [
+      "pull off",
+      "pull off"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "  Hello,  World! 123 "
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "<b>강조</b>&nbsp;텍스트"
+    ],
+    [
+      "in(to)",
+      "in(to)"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "The Man's car, isn't it?"
+    ],
+    [
+      "…dash–em—",
+      "...dash-em-"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "wkey": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "12"
+    ],
+    [
+      "pull off",
+      "pulloff"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "helloworld123"
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "bbnbsp"
+    ],
+    [
+      "in(to)",
+      "into"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "themanscarisntit"
+    ],
+    [
+      "…dash–em—",
+      "dashem"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "scramble_mnorm": [
+    [
+      "1. 끌어서 떼어내다, 제거하다 2. 성공하다",
+      "1.끌어서떼어내다,제거하다2.성공하다"
+    ],
+    [
+      "pull off",
+      "pulloff"
+    ],
+    [
+      "  Hello,  World! 123 ",
+      "hello,world!123"
+    ],
+    [
+      "<b>강조</b>&nbsp;텍스트",
+      "<b>강조</b>&nbsp;텍스트"
+    ],
+    [
+      "in(to)",
+      "in(to)"
+    ],
+    [
+      "The Man's car, isn't it?",
+      "theman'scar,isn'tit?"
+    ],
+    [
+      "…dash–em—",
+      "...dash-em-"
+    ],
+    [
+      "",
+      ""
+    ]
+  ],
+  "tokenize": [
+    [
+      "I go in(to) the room.",
+      [
+        "I",
+        "go",
+        "in",
+        "(to)",
+        "the",
+        "room."
+      ]
+    ],
+    [
+      "You'll never walk alone",
+      [
+        "You'll",
+        "never",
+        "walk",
+        "alone"
+      ]
+    ],
+    [
+      "The man - who knows - left, quietly.",
+      [
+        "The",
+        "man",
+        "-",
+        "who",
+        "knows",
+        "-",
+        "left,",
+        "quietly."
+      ]
+    ],
+    [
+      "She said “hello” and left…",
+      [
+        "She",
+        "said",
+        "“hello”",
+        "and",
+        "left…"
+      ]
+    ],
+    [
+      "a b c",
+      [
+        "a",
+        "b",
+        "c"
+      ]
+    ],
+    [
+      "well-known problem",
+      [
+        "well-known",
+        "problem"
+      ]
+    ]
+  ],
+  "tokenize_loose": [
+    [
+      "I go in(to) the room.",
+      [
+        "I",
+        "go",
+        "in",
+        "(to)",
+        "the",
+        "room",
+        "."
+      ]
+    ],
+    [
+      "You'll never walk alone",
+      [
+        "You",
+        "'",
+        "ll",
+        "never",
+        "walk",
+        "alone"
+      ]
+    ],
+    [
+      "The man - who knows - left, quietly.",
+      [
+        "The",
+        "man",
+        "-",
+        "who",
+        "knows",
+        "-",
+        "left",
+        ",",
+        "quietly",
+        "."
+      ]
+    ],
+    [
+      "She said “hello” and left…",
+      [
+        "She",
+        "said",
+        "“hello”",
+        "and",
+        "left…"
+      ]
+    ],
+    [
+      "a b c",
+      [
+        "a",
+        "b",
+        "c"
+      ]
+    ],
+    [
+      "well-known problem",
+      [
+        "well",
+        "-",
+        "known",
+        "problem"
+      ]
+    ]
+  ],
+  "parse_english_words": [
+    [
+      "I go in(to) the room.",
+      [
+        "I",
+        "go",
+        "in(to)",
+        "the",
+        "room."
+      ]
+    ],
+    [
+      "You'll never walk alone",
+      [
+        "You'll",
+        "never",
+        "walk",
+        "alone"
+      ]
+    ],
+    [
+      "The man - who knows - left, quietly.",
+      [
+        "The",
+        "man",
+        "-",
+        "who",
+        "knows",
+        "-",
+        "left,",
+        "quietly."
+      ]
+    ],
+    [
+      "She said “hello” and left…",
+      [
+        "She",
+        "said",
+        "“hello”",
+        "and",
+        "left…"
+      ]
+    ],
+    [
+      "a b c",
+      [
+        "a",
+        "b",
+        "c"
+      ]
+    ],
+    [
+      "well-known problem",
+      [
+        "well-known",
+        "problem"
+      ]
+    ]
+  ],
+  "split_target_words": [
+    [
+      "I go in(to) the room.",
+      [
+        "I",
+        "go",
+        "in(to",
+        ")",
+        "the",
+        "room",
+        "."
+      ]
+    ],
+    [
+      "You'll never walk alone",
+      [
+        "You'll",
+        "never",
+        "walk",
+        "alone"
+      ]
+    ],
+    [
+      "The man - who knows - left, quietly.",
+      [
+        "The",
+        "man",
+        "-",
+        "who",
+        "knows",
+        "-",
+        "left",
+        ",",
+        "quietly",
+        "."
+      ]
+    ],
+    [
+      "She said “hello” and left…",
+      [
+        "She",
+        "said",
+        "“hello",
+        "”",
+        "and",
+        "left",
+        "…"
+      ]
+    ],
+    [
+      "a b c",
+      [
+        "a",
+        "b",
+        "c"
+      ]
+    ],
+    [
+      "well-known problem",
+      [
+        "well-known",
+        "problem"
+      ]
+    ]
+  ],
+  "split_subtokens": [
+    [
+      "state-of-the-art",
+      [
+        "state",
+        "of",
+        "the",
+        "art"
+      ]
+    ],
+    [
+      "go(to)school",
+      [
+        "go",
+        "to",
+        "school"
+      ]
+    ],
+    [
+      "plain",
+      []
+    ],
+    [
+      "(and) then",
+      [
+        "and",
+        "then"
+      ]
+    ]
+  ],
+  "ratio": [
+    [
+      "끌어서떼어내다제거하다",
+      "끌어서떼어내다",
+      0.7777777777777778
+    ],
+    [
+      "abcdefg",
+      "abcdfg",
+      0.9230769230769231
+    ],
+    [
+      "apple",
+      "orange",
+      0.36363636363636365
+    ],
+    [
+      "",
+      "abc",
+      0.0
+    ],
+    [
+      "동일한문장",
+      "동일한문장",
+      1.0
+    ],
+    [
+      "성공하다",
+      "실패하다",
+      0.5
+    ]
+  ],
+  "scramble": [
+    {
+      "target": "I can live without.",
+      "placed": [],
+      "cands": [
+        "without.",
+        "I",
+        "live",
+        "can"
+      ],
+      "words": [
+        "I",
+        "can",
+        "live",
+        "without",
+        "."
+      ],
+      "align": 0,
+      "idx": 1,
+      "need": "I"
+    },
+    {
+      "target": "I can live without.",
+      "placed": [
+        "I",
+        "can"
+      ],
+      "cands": [
+        "without.",
+        "live"
+      ],
+      "words": [
+        "I",
+        "can",
+        "live",
+        "without",
+        "."
+      ],
+      "align": 2,
+      "idx": 1,
+      "need": "live"
+    },
+    {
+      "target": "I can live without.",
+      "placed": [
+        "I",
+        "can",
+        "live",
+        "without."
+      ],
+      "cands": [
+        "x"
+      ],
+      "words": [
+        "I",
+        "can",
+        "live",
+        "without",
+        "."
+      ],
+      "align": 5,
+      "idx": null,
+      "need": null
+    },
+    {
+      "target": "He bought a car, a bike.",
+      "placed": [
+        "He",
+        "bought",
+        "a"
+      ],
+      "cands": [
+        "car,",
+        "a",
+        "bike."
+      ],
+      "words": [
+        "He",
+        "bought",
+        "a",
+        "car",
+        ",",
+        "a",
+        "bike",
+        "."
+      ],
+      "align": 3,
+      "idx": 0,
+      "need": "car"
+    },
+    {
+      "target": "You'll be fine",
+      "placed": [
+        "You'll"
+      ],
+      "cands": [
+        "fine",
+        "be"
+      ],
+      "words": [
+        "You'll",
+        "be",
+        "fine"
+      ],
+      "align": 1,
+      "idx": 1,
+      "need": "be"
+    },
+    {
+      "target": "The end .",
+      "placed": [
+        "The"
+      ],
+      "cands": [
+        "end",
+        "."
+      ],
+      "words": [
+        "The",
+        "end",
+        "."
+      ],
+      "align": 1,
+      "idx": 0,
+      "need": "end"
+    }
+  ],
+  "recall_matching": [
+    {
+      "prefix": [],
+      "matches": [],
+      "subseq": [
+        -1,
+        -1,
+        -1,
+        -1
+      ],
+      "punct_split": false
+    },
+    {
+      "prefix": [
+        "I",
+        "can"
+      ],
+      "matches": [
+        "I can live without it.",
+        "I can live with it."
+      ],
+      "subseq": [
+        1,
+        1,
+        -1,
+        -1
+      ],
+      "punct_split": false
+    },
+    {
+      "prefix": [
+        "I",
+        "can",
+        "live",
+        "without"
+      ],
+      "matches": [
+        "I can live without it."
+      ],
+      "subseq": [
+        3,
+        -1,
+        -1,
+        -1
+      ],
+      "punct_split": false
+    },
+    {
+      "prefix": [
+        "She"
+      ],
+      "matches": [
+        "She went to the park yesterday."
+      ],
+      "subseq": [
+        -1,
+        -1,
+        0,
+        -1
+      ],
+      "punct_split": false
+    },
+    {
+      "prefix": [
+        "He",
+        "is"
+      ],
+      "matches": [
+        "He is a well-known writer."
+      ],
+      "subseq": [
+        -1,
+        -1,
+        -1,
+        1
+      ],
+      "punct_split": false
+    }
+  ],
+  "recall_by_candidates": [
+    {
+      "cands": [
+        "She",
+        "went",
+        "to"
+      ],
+      "result": "She went to the park yesterday."
+    },
+    {
+      "cands": [
+        "I",
+        "can",
+        "live"
+      ],
+      "result": "I can live without it."
+    },
+    {
+      "cands": [
+        "zzz"
+      ],
+      "result": null
+    }
+  ],
+  "spell_find_answer": [
+    [
+      "사과",
+      "apple"
+    ],
+    [
+      " 달리다 ",
+      "run"
+    ],
+    [
+      "apple",
+      "사과"
+    ],
+    [
+      "1. 켜다 2. 자극하다",
+      "turn on"
+    ],
+    [
+      "없는말",
+      null
+    ]
+  ],
+  "test_sentence_match": [
+    [
+      "나는 그것 없이 살 수 있다.",
+      "I can live without it."
+    ],
+    [
+      "나는  그것 없이 살 수 있다.",
+      "I can live without it."
+    ],
+    [
+      "그녀는 공원에 갔다.",
+      "She went to the park yesterday."
+    ],
+    [
+      "모르는 문장",
+      null
+    ]
+  ],
+  "test_solve": [
+    {
+      "prompt": "apple",
+      "options": [
+        [
+          1,
+          "달리다"
+        ],
+        [
+          2,
+          "사과"
+        ],
+        [
+          3,
+          "끌어서 떼어내다, 제거하다"
+        ]
+      ],
+      "num": 2,
+      "answer": "사과"
+    },
+    {
+      "prompt": "사과",
+      "options": [
+        [
+          1,
+          "run"
+        ],
+        [
+          2,
+          "apple"
+        ],
+        [
+          3,
+          "pull off"
+        ]
+      ],
+      "num": 2,
+      "answer": "apple"
+    },
+    {
+      "prompt": "pull off",
+      "options": [
+        [
+          1,
+          "사과"
+        ],
+        [
+          2,
+          "끌어서 떼어내다, 제거하다"
+        ],
+        [
+          3,
+          "달리다"
+        ]
+      ],
+      "num": 2,
+      "answer": "1. 끌어서 떼어내다, 제거하다"
+    },
+    {
+      "prompt": "모르는단어",
+      "options": [
+        [
+          1,
+          "사과"
+        ],
+        [
+          2,
+          "달리다"
+        ]
+      ],
+      "num": null,
+      "answer": null
+    }
+  ],
+  "matching_pair": {
+    "left": [
+      "run",
+      "apple"
+    ],
+    "right": [
+      "사과",
+      "달리다"
+    ],
+    "li": 0,
+    "ri": 1,
+    "lraw": "run",
+    "rraw": "달리다"
+  },
+  "plan_wrong_counts": [
+    [
+      20,
+      90,
+      2
+    ],
+    [
+      25,
+      90,
+      2
+    ],
+    [
+      10,
+      100,
+      0
+    ],
+    [
+      7,
+      70,
+      2
+    ],
+    [
+      0,
+      90,
+      0
+    ]
+  ]
+}

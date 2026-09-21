@@ -1,0 +1,125 @@
+<!doctype html><meta charset="utf-8"><title>문법 실전 문제(복수 정답) 모의</title>
+<style>
+ body{font-family:sans-serif;padding:18px}
+ .flip-card{display:none} .flip-card.showing{display:block}
+ .option-item{display:inline-block;border:1px solid #bbb;padding:8px 14px;margin:5px;cursor:pointer}
+ .option-item.selected{background:#cde8ff;border-color:#3388cc}
+ .option-answer{display:none}
+ .btn-next-card{display:inline-block;margin-top:14px;padding:9px 18px;background:#3388cc;color:#fff;cursor:pointer}
+ .modal{display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.4)}
+ .modal.in{display:block}
+ .modal .modal-content{background:#fff;margin:140px auto;width:460px;padding:22px;text-align:center}
+ .btn{display:inline-block;padding:8px 16px;border:1px solid #888;margin:5px;cursor:pointer}
+ #stat{margin-top:22px;font-weight:bold}
+</style>
+
+<div class="quest-body">
+  <!-- 1번: 정답 2개 -->
+  <div class="flip-card showing" data-num="1" data-type="3">
+    <input type="hidden" class="card_idx" name="card_idx[]" value="101">
+    <div class="flip-card-inner">
+      <div class="gclass-q-item" data-idx="101">
+        <div class="gclass-q-dictation">다음 중 강조의 do 를 바르게 쓴 것을 <b>모두</b> 고르시오.</div>
+        <div class="gclass-q-input">
+          <div class="option-list">
+            <div class="option-item"><span class="option_txt">I do love it.<span class="option-answer">I do love it.</span></span></div>
+            <div class="option-item"><span class="option_txt">He do like it.<span class="option-answer">He do like it.</span></span></div>
+            <div class="option-item"><span class="option_txt">She does look nice.<span class="option-answer">She does look nice.</span></span></div>
+            <div class="option-item"><span class="option_txt">They does run.<span class="option-answer">They does run.</span></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="default-btn-body"><div class="btn btn-gclass btn-next-card">채점하기</div></div>
+    </div>
+  </div>
+
+  <!-- 2번: 정답 1개 -->
+  <div class="flip-card" data-num="2" data-type="2">
+    <input type="hidden" class="card_idx" name="card_idx[]" value="102">
+    <div class="flip-card-inner">
+      <div class="gclass-q-item" data-idx="102">
+        <div class="gclass-q-dictation">빈칸에 알맞은 것을 고르시오.</div>
+        <div class="gclass-q-input">
+          <div class="option-list">
+            <div class="option-item"><span class="option_txt">that<span class="option-answer">that</span></span></div>
+            <div class="option-item"><span class="option_txt">what<span class="option-answer">what</span></span></div>
+            <div class="option-item"><span class="option_txt">which<span class="option-answer">which</span></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="default-btn-body"><div class="btn btn-gclass btn-next-card">채점하기</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- 사이트와 같은 구조의 확인 창 -->
+<div class="modal" id="confirmModal"><div class="modal-content">
+  <div class="modal-body"><div class="msg"></div></div>
+  <div><span class="btn btn-cancel">수정</span><span class="btn btn-primary btn-ok">제출</span></div>
+</div></div>
+
+<div id="stat">아직</div>
+<script>
+// 사이트와 같은 정답 데이터: '|' 로 이어진 개수만큼 골라야 한다
+var arr_answer = [
+  { card_idx: '101', answer: 'I do love it.|She does look nice.' },
+  { card_idx: '102', answer: 'that' }
+];
+var card_index = 0;
+var graded = [];
+
+function cards() { return document.querySelectorAll('.flip-card'); }
+function cur() { return cards()[card_index]; }
+function answerOf(card) {
+  var id = card.querySelector('[name="card_idx[]"]').value;
+  for (var i = 0; i < arr_answer.length; i++) if (arr_answer[i].card_idx === id) return arr_answer[i].answer;
+  return '';
+}
+document.addEventListener('click', function (e) {
+  var opt = e.target.closest ? e.target.closest('.option-item') : null;
+  if (opt && cur().contains(opt)) { opt.classList.toggle('selected'); return; }
+
+  var btn = e.target.closest ? e.target.closest('.btn-next-card') : null;
+  if (!btn || !cur().contains(btn)) return;
+  var card = cur();
+  var want = answerOf(card).split('|');
+  var sel = card.querySelectorAll('.option-item.selected');
+  if (sel.length < want.length) {                   // 사이트와 같은 확인 창
+    showConfirm('정답이 ' + want.length + '개인데 ' + sel.length + '개만 선택하였습니다. 이대로 제출할까요?');
+    return;
+  }
+  grade(card, want, sel);
+});
+function showConfirm(msg) {
+  var m = document.getElementById('confirmModal');
+  m.querySelector('.msg').textContent = msg;
+  m.classList.add('in');
+}
+document.querySelector('#confirmModal .btn-cancel').addEventListener('click', function () {
+  document.getElementById('confirmModal').classList.remove('in');   // 수정 -> 돌아가서 더 고른다
+});
+document.querySelector('#confirmModal .btn-ok').addEventListener('click', function () {
+  var m = document.getElementById('confirmModal');
+  m.classList.remove('in');
+  var card = cur();
+  var want = answerOf(card).split('|');
+  grade(card, want, card.querySelectorAll('.option-item.selected'));  // 제출 -> 그대로 채점(보통 오답)
+});
+function grade(card, want, sel) {
+  var picked = [].map.call(sel, function (s) { return s.querySelector('.option-answer').textContent.trim(); }).sort();
+  var ok = picked.length === want.length &&
+    picked.join('|') === want.slice().sort().join('|');
+  card.querySelector('.gclass-q-item').classList.add(ok ? 'correct' : 'wrong');
+  graded.push((card.dataset.num) + (ok ? ':정답' : ':오답'));
+  document.getElementById('stat').textContent = '결과: ' + graded.join(' / ');
+  setTimeout(function () {
+    if (card_index < cards().length - 1) {
+      card.classList.remove('showing');
+      card_index += 1;
+      cards()[card_index].classList.add('showing');
+    } else {
+      document.getElementById('stat').setAttribute('data-done', '1');
+    }
+  }, 600);
+}
+</script>

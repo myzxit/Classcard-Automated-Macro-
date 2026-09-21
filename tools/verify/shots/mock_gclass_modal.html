@@ -1,0 +1,49 @@
+<!doctype html><meta charset="utf-8"><title>문법 클래스(누적오답복습 확인창) 모의</title>
+<style>
+ body{font-family:sans-serif;padding:20px}
+ .set-box{display:inline-block;border:1px solid #ccc;padding:12px 18px;margin:6px;cursor:pointer}
+ .set-box.lock{opacity:.4}
+ .modal{display:none;position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(0,0,0,.4)}
+ .modal.in{display:block}
+ .modal .modal-content{background:#fff;margin:120px auto;width:420px;padding:20px;text-align:center}
+ .btn{display:inline-block;padding:8px 16px;border:1px solid #888;margin:4px;cursor:pointer}
+ #stat{margin-top:20px;font-weight:bold}
+</style>
+<div class="gclass-main">
+  <div class="unit-list">
+    <div class="unit-item active" data-idx="2634371">
+      <div class="unit-title" data-open="1"><span class="unit-name">강조구문</span></div>
+      <div class="unit-content"><div class="unit-set-list">
+        <div class="set-box lock"><div class="title">개념 톡</div></div>
+        <div class="set-box" data-idx="0"><div class="title">누적오답복습</div></div>
+      </div></div>
+    </div>
+  </div>
+</div>
+
+<!-- 사이트와 같은 구조: 확인 버튼(.btn-ok)에 '학습 생략', 취소 버튼(.btn-cancel)에 '학습 시작' -->
+<div class="modal" id="confirmModal"><div class="modal-content">
+  <div class="modal-body"><div class="msg">틀린 문제만 모아서<br>다시 학습할 수 있습니다.<br>복습을 시작할까요?</div></div>
+  <div><span class="btn btn-cancel">학습 시작</span><span class="btn btn-primary btn-ok">학습 생략</span></div>
+</div></div>
+
+<div id="stat">아직</div>
+<script>
+var picked = null;
+document.querySelectorAll('.set-box').forEach(function (b) {
+  if (b.classList.contains('lock')) return;
+  b.addEventListener('click', function () { document.getElementById('confirmModal').classList.add('in'); });
+});
+document.querySelector('#confirmModal .btn-ok').addEventListener('click', function () {
+  picked = '학습 생략'; finish();
+});
+document.querySelector('#confirmModal .btn-cancel').addEventListener('click', function () {
+  picked = '학습 시작'; finish();
+});
+function finish() {
+  document.getElementById('confirmModal').classList.remove('in');
+  document.getElementById('stat').textContent =
+    '결과: ' + (picked === '학습 시작' ? '복습 시작 (정상)' : '복습 건너뜀 (오류)');
+  document.getElementById('stat').setAttribute('data-done', '1');
+}
+</script>

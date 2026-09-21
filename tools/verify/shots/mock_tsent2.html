@@ -1,0 +1,84 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>문장 테스트</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .wrap{max-width:900px;margin:24px auto;background:#fff;border-radius:12px;padding:22px;min-height:400px}
+ .flip-card{display:none}.flip-card.showing{display:block}
+ .flip-card-front .front-hidden{font-size:18px;margin-bottom:10px}
+ .test-sentence-input{min-height:26px;color:#0f766e;font-weight:600;margin:12px 0}
+ .test-sentence-words a.btn{display:inline-block;margin:4px;padding:8px 12px;border:1px solid #94a3b8;border-radius:8px;cursor:pointer}
+ .test-sentence-words a.btn.clicked{opacity:.35}
+ a.btn-go-result{display:none}
+ #result.on a.btn-go-result{display:inline-block}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="wrap" id="page"><div id="cards"></div></div>
+<div id="result"><a class="btn-go-result" href="#">결과 보기</a>
+  <a href="https://www.classcard.net/set/1234" id="exit" style="display:none">나가기</a></div>
+<div id="done"><h2>🎉 문장 테스트 완료</h2><p id="stat"></p></div>
+<script>
+// 사이트와 같은 전역: 카드 목록이 페이지에 실려 온다 (단어장 가져오기 없이도 정답을 알 수 있다)
+// 이 화면에는 카드 목록이 실려 오지 않는다 (단어장을 만들 수 없다).
+// 대신 사이트가 정답을 콘솔에 남긴다 -> preload 가 window.__cc_answers 로 캡처한다.
+var study_data_hidden = [
+  { front: 'I like to play soccer', back: '나는 축구하는 걸 좋아한다.' },
+  { front: 'He studies hard every day', back: '그는 매일 열심히 공부한다.' },
+  { front: 'We will go to the library', back: '우리는 도서관에 갈 것이다.' }
+];
+var study_data = null;
+var idx = 0, results = [], synthetic = 0, placed = [];
+function shuffle(a){ a=a.slice(); for(var i=a.length-1;i>0;i--){var j=(i*5+2)%(i+1);var t=a[i];a[i]=a[j];a[j]=t;} return a; }
+function render(){
+  var c = study_data_hidden[idx];
+  var tiles = shuffle(c.front.split(' ')).map(function(w){
+    return '<a class="btn" href="#">'+w+'</a>';
+  }).join('');
+  document.getElementById('cards').innerHTML =
+    study_data_hidden.map(function(_, i){
+      return '<div class="flip-card'+(i===idx?' showing':'')+'">' +
+        '<input type="hidden" name="test_question[]" value="q'+i+'">' +
+        (i===idx ? ('<div class="flip-card-front"><div class="front-hidden">'+c.back+'</div></div>' +
+        '<div class="test-sentence-input"></div>' +
+        '<div class="test-sentence-words">'+tiles+'</div>') : '') + '</div>';
+    }).join('');
+  console.log('arr_front', c.front);
+  placed = [];
+  [].forEach.call(document.querySelectorAll('.flip-card.showing .test-sentence-words a.btn'), function(el){
+    el.addEventListener('click', function(e){
+      e.preventDefault();
+      if (!e.isTrusted) { synthetic++; return; }    // 합성 클릭 무시 (실제 사이트와 동일)
+      if (el.classList.contains('clicked')) return;
+      el.classList.add('clicked');
+      placed.push(el.textContent.trim());
+      var box = document.querySelector('.test-sentence-input');
+      box.innerHTML = placed.map(function(w){ return '<span>'+w+'</span>'; }).join(' ');
+      if (placed.length === study_data_hidden[idx].front.split(' ').length) setTimeout(grade, 200);
+    });
+  });
+  // 카드는 처음엔 안 뒤집힌 상태 (SPACE 로 뒤집는다)
+  document.querySelector('.flip-card.showing').classList.remove('flip');
+}
+function grade(){
+  var c = study_data_hidden[idx];
+  results.push(placed.join(' ') === c.front ? '정답' : ('오답(' + placed.join(' ') + ')'));
+  idx++;
+  if (idx >= study_data_hidden.length) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('result').classList.add('on');
+    return;
+  }
+  render();
+}
+document.addEventListener('keydown', function(e){
+  if ((e.key === ' ' || e.code === 'Space') && e.isTrusted) {
+    var c = document.querySelector('.flip-card.showing');
+    if (c) c.classList.add('flip');                // SPACE 로 뒤집힌다
+  }
+});
+document.querySelector('a.btn-go-result').addEventListener('click', function(e){
+  e.preventDefault();
+  document.getElementById('exit').style.display = 'inline';
+  document.getElementById('done').style.display = 'block';
+  document.getElementById('stat').textContent = results.join(' / ') + ' · 무시된 합성 클릭 ' + synthetic + '회';
+});
+render();
+</script></body></html>

@@ -1,0 +1,131 @@
+<!doctype html><meta charset="utf-8"><title>문법 새 유형(구문 표시·드롭다운·문단 순서) 모의</title>
+<style>
+ body{font-family:sans-serif;padding:18px}
+ .flip-card{display:none} .flip-card.showing{display:block}
+ .syntax-options{display:inline-block;border:1px solid #999;padding:5px 12px;margin:3px;cursor:pointer}
+ .syntax-options.active{background:#ffe9a8}
+ .paint-word{display:inline-block;padding:3px 6px;margin:2px;cursor:pointer;border-bottom:2px solid transparent}
+ .paint-word.active{border-bottom-color:#3388cc;background:#eaf4ff}
+ .paragraph-row{border:1px solid #ccc;padding:7px;margin:4px 0}
+ .btn-next-card{display:inline-block;margin-top:14px;padding:9px 18px;background:#3388cc;color:#fff;cursor:pointer}
+ #stat{margin-top:20px;font-weight:bold}
+</style>
+
+<!-- ① 구문 표시형 (type 8) : 정답 '주어:0,1;동사:2' -->
+<div class="flip-card showing" data-num="1" data-type="8">
+  <input type="hidden" class="card_idx" name="card_idx[]" value="201">
+  <input type="hidden" class="user_answer" name="user_answer[]" value="">
+  <div class="flip-card-inner">
+    <div class="gclass-q-item" data-idx="201">
+      <div class="gclass-q-dictation">문장 성분을 표시하시오.</div>
+      <div class="gclass-q-input">
+        <div class="syntax-word-body">
+          <span class="paint-word" data-opidx="-1">The</span>
+          <span class="paint-word" data-opidx="-1">children</span>
+          <span class="paint-word" data-opidx="-1">run</span>
+        </div>
+        <div class="syntax-option-body">
+          <span class="syntax-options" data-opidx="0">주어</span>
+          <span class="syntax-options" data-opidx="1">동사</span>
+        </div>
+      </div>
+    </div>
+    <div class="default-btn-body"><div class="btn btn-gclass btn-next-card">채점하기</div></div>
+  </div>
+</div>
+
+<!-- ② 드롭다운형 (type 10) : 정답 'was;that' -->
+<div class="flip-card" data-num="2" data-type="10">
+  <input type="hidden" class="card_idx" name="card_idx[]" value="202">
+  <input type="hidden" class="user_answer" name="user_answer[]" value="">
+  <div class="flip-card-inner">
+    <div class="gclass-q-item" data-idx="202">
+      <div class="gclass-q-dictation">빈칸에 알맞은 것을 고르시오.</div>
+      <div class="gclass-q-input">
+        It <select class="form-control select-option"><option value="">선택</option><option value="was">was</option><option value="is">is</option></select>
+        Mike <select class="form-control select-option"><option value="">선택</option><option value="that">that</option><option value="what">what</option></select> won.
+      </div>
+    </div>
+    <div class="default-btn-body"><div class="btn btn-gclass btn-next-card">채점하기</div></div>
+  </div>
+</div>
+
+<!-- ③ 문단 순서형 (type 12) : 정답 '3;1;2' -->
+<div class="flip-card" data-num="3" data-type="12">
+  <input type="hidden" class="card_idx" name="card_idx[]" value="203">
+  <input type="hidden" class="user_answer" name="user_answer[]" value="">
+  <div class="flip-card-inner">
+    <div class="gclass-q-item" data-idx="203">
+      <div class="gclass-q-dictation">문단을 알맞은 순서로 배열하시오.</div>
+      <div class="gclass-q-input"><div class="drag-body">
+        <div class="paragraph-row" data-idx="1">(B) 그래서 우리는 …</div>
+        <div class="paragraph-row" data-idx="2">(C) 결국 …</div>
+        <div class="paragraph-row" data-idx="3">(A) 어느 날 …</div>
+      </div></div>
+    </div>
+    <div class="default-btn-body"><div class="btn btn-gclass btn-next-card">채점하기</div></div>
+  </div>
+</div>
+
+<div id="stat">아직</div>
+<script>
+var arr_answer = [
+  { card_idx: '201', answer: '주어:0,1;동사:2' },
+  { card_idx: '202', answer: 'was;that' },
+  { card_idx: '203', answer: '3;1;2' }
+];
+var card_index = 0, graded = [];
+function cards(){ return document.querySelectorAll('.flip-card'); }
+function cur(){ return cards()[card_index]; }
+function answerOf(c){ var id=c.querySelector('[name="card_idx[]"]').value;
+  for (var i=0;i<arr_answer.length;i++) if (arr_answer[i].card_idx===id) return arr_answer[i].answer; return ''; }
+
+// 사이트와 같은 클릭 동작
+document.addEventListener('click', function (e) {
+  var so = e.target.closest ? e.target.closest('.syntax-options') : null;
+  if (so && cur().contains(so)) {
+    cur().querySelectorAll('.syntax-options').forEach(function(x){ x.classList.remove('active'); });
+    so.classList.add('active'); return;
+  }
+  var pw = e.target.closest ? e.target.closest('.paint-word') : null;
+  if (pw && cur().contains(pw)) {
+    var act = cur().querySelector('.syntax-options.active');
+    if (!act) return;
+    var oi = act.getAttribute('data-opidx');
+    if (pw.getAttribute('data-opidx') === oi) { pw.setAttribute('data-opidx','-1'); pw.classList.remove('active','option'+oi); }
+    else { pw.setAttribute('data-opidx', oi); pw.classList.add('active','option'+oi); }
+    return;
+  }
+  var btn = e.target.closest ? e.target.closest('.btn-next-card') : null;
+  if (btn && cur().contains(btn)) grade();
+});
+
+// 사이트와 같은 채점: 유형별로 user_answer 를 만들어 정답과 비교
+function grade() {
+  var card = cur(), type = card.dataset.type, want = answerOf(card), got = '';
+  if (type === '8' || type === '11') {
+    var opts = card.querySelectorAll('.syntax-options');
+    var words = card.querySelectorAll('.paint-word');
+    var rows = [];
+    opts.forEach(function (o) {
+      var picked = [];
+      words.forEach(function (w, i) { if (w.getAttribute('data-opidx') === o.getAttribute('data-opidx')) picked.push(i); });
+      rows.push(o.textContent.trim() + ':' + picked.join(','));
+    });
+    got = rows.join(';');
+  } else if (type === '12') {
+    got = [].map.call(card.querySelectorAll('.paragraph-row'), function (r) { return r.getAttribute('data-idx'); }).join(';');
+  } else {
+    got = [].map.call(card.querySelectorAll('select.select-option'), function (s) { return s.value.trim(); }).join(';');
+  }
+  var ok = got === want;
+  card.querySelector('.gclass-q-item').classList.add(ok ? 'correct' : 'wrong');
+  graded.push(card.dataset.num + (ok ? ':정답' : ':오답(' + got + ')'));
+  document.getElementById('stat').textContent = '결과: ' + graded.join(' / ');
+  setTimeout(function () {
+    if (card_index < cards().length - 1) {
+      card.classList.remove('showing'); card_index += 1; cards()[card_index].classList.add('showing');
+    } else { document.getElementById('stat').setAttribute('data-done','1'); }
+  }, 600);
+}
+</script>

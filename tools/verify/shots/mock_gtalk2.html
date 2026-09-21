@@ -1,0 +1,160 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>개념 톡(실제 규칙)</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#20262e;color:#e6edf3}
+ .wrap{max-width:880px;margin:20px auto;padding:20px}
+ .talk-card{background:#2c3540;border-radius:10px;padding:12px 14px;margin:10px 0}
+ .talk-card.correct{outline:2px solid #22c55e}.talk-card.wrong{outline:2px solid #ef4444}
+ .option-item{padding:6px 10px;border-radius:6px;cursor:pointer;margin:4px 0;background:#1f2731}
+ .option-item.selected{background:#0b4f6c}
+ .order-item{display:inline-block;margin:4px;padding:6px 10px;border:1px solid #64748b;border-radius:6px;cursor:pointer}
+ .order-item.selected{background:#0b4f6c}
+ .user-text{background:#1b2029;color:#fff;border:1px solid #64748b;border-radius:6px;padding:2px 6px;width:120px}
+ .select-body{margin-top:10px}
+ .select-option{display:inline-block;margin:4px;padding:6px 10px;border:1px solid #64748b;border-radius:6px;cursor:pointer}
+ .next-btn{display:inline-block;margin:8px 0;color:#60a5fa;cursor:pointer}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="wrap" id="page"><div id="cards"></div><div class="select-body hidden" id="sel"></div></div>
+<div id="done"><h2>🎉 개념 톡 완료</h2><p id="stat"></p></div>
+<script>
+// scripts/v2/grammar_talk.js 규칙 재현
+//  - 지금 카드는 전역 card_idx 가 가리키는 .talk-card
+//  - 정답은 arr_card[card_idx].answer  (';' 로 여러 개)
+//  - type 2 객관식: .option-item 클릭 -> .selected 의 .option-txt 를 answer 와 비교
+//  - type 6 어순: .order-item 을 순서대로 클릭
+//  - type 0 빈칸: .user-text 에 값 (보기 .select-option 으로 채우기)
+//  - .next-btn 클릭 또는 Enter(keyup) 로 다음 카드
+var arr_card = [
+  { type:0, answer:'' },
+  { type:2, answer:'동사' },
+  { type:0, answer:'do like;do have' },
+  { type:6, answer:'I;do;like;soccer' },
+  { type:0, answer:'인칭' },
+  { type:0, answer:'' }
+];
+var CARD_HTML = [
+  '오늘은 강조구문을 배워볼게요.',
+  null,   // 객관식
+  'I <input type="text" class="user-text choice" data-cnt="0"> to play soccer. / You <input type="text" class="user-text choice-next" data-cnt="1"> to practice.',
+  null,   // 어순
+  null,   // 빈칸 + 보기
+  '잘 하셨어요! 끝입니다.'
+];
+var OPTIONS = ['인칭','동사','부사'];
+var ORDER = ['like','I','soccer','do'];
+var PICKS = ['시제','인칭','수'];
+var card_idx = -1, results = [], ignoredPrev = 0;
+function render(){
+  var html = '';
+  for (var i = 0; i <= card_idx && i < arr_card.length; i++) {
+    var t = arr_card[i].type;
+    var body = '';
+    if (t === 2) {
+      body = '<div class="q">다음 중 무엇을 강조하나요?</div>' +
+        OPTIONS.map(function(o){ return '<div class="content-row option-item"><span class="option-num">•</span><span class="option-txt">'+o+'</span></div>'; }).join('');
+    } else if (t === 6) {
+      body = '<div class="order-list">' + ORDER.map(function(w){ return '<div class="order-item">'+w+'</div>'; }).join('') + '</div>';
+    } else if (i === 4) {
+      body = '문장에서 <input type="text" class="user-text choice" data-cnt="0"> 에 따라 does 로 바뀝니다.';
+    } else {
+      body = CARD_HTML[i] || '';
+    }
+    html += '<div class="talk-card" data-type="'+t+'" data-idx="'+i+'">'+body+'</div>';
+  }
+  document.getElementById('cards').innerHTML = html;
+  // 보기(빈칸 고르기)는 문서 전체에 하나만 있고, 현재 카드에 .choice 가 있을 때만 보인다
+  var cur = document.querySelectorAll('.talk-card')[card_idx];
+  var needPick = cur && cur.querySelector('.user-text.choice') && card_idx === 4;
+  document.getElementById('sel').innerHTML = needPick
+    ? PICKS.map(function(p,i){ return '<div class="select-option"><span class="select-num">'+(i+1)+'</span>'+p+'</div>'; }).join('')
+    : '';
+  bind();
+  setNextBtn();
+}
+function curCard(){ return document.querySelectorAll('.talk-card')[card_idx]; }
+function bind(){
+  // 실제와 같이 '현재 카드'에서만 동작한다 (이전 카드 보기를 눌러도 아무 일 없음)
+  [].forEach.call(document.querySelectorAll('.option-item'), function(el){
+    el.onclick = function(){
+      var card = el.closest('.talk-card');
+      if (card !== curCard()) { ignoredPrev++; return; }
+      el.classList.add('selected');
+      setAnswer();
+    };
+  });
+  [].forEach.call(document.querySelectorAll('.order-item'), function(el){
+    el.onclick = function(){
+      var card = el.closest('.talk-card');
+      if (card !== curCard()) { ignoredPrev++; return; }
+      if (el.classList.contains('selected')) return;
+      // 실제 스크립트처럼 고른 낱말을 앞쪽으로 옮긴다 (DOM 순서 = 고른 순서)
+      var c0 = curCard();
+      var sel = c0.querySelectorAll('.order-item.selected');
+      if (sel.length) sel[sel.length - 1].after(el); else c0.querySelector('.order-list').prepend(el);
+      el.classList.add('selected');
+      var c = curCard();
+      if (c.querySelectorAll('.order-item.selected').length === c.querySelectorAll('.order-item').length) setAnswer();
+    };
+  });
+  [].forEach.call(document.querySelectorAll('.select-option'), function(el){
+    el.onclick = function(){
+      var c = curCard(); if (!c) return;
+      var input = c.querySelector('.user-text.choice'); if (!input) return;
+      input.value = el.textContent.replace(el.querySelector('.select-num').textContent, '').trim();
+      input.classList.remove('choice'); input.classList.add('choice-end');
+      var next = c.querySelector('.user-text:not(.choice-end)');
+      if (next) { next.classList.add('choice'); } else { setAnswer(); }
+    };
+  });
+}
+function setNextBtn(){
+  var old = document.querySelector('.next-btn-div'); if (old) old.remove();
+  var c = curCard(); if (!c) return;
+  var t = arr_card[card_idx].type;
+  var needInput = c.querySelector('.user-text:not(.choice-end)');
+  if (t === 2 || t === 6 || (needInput && card_idx === 4)) return;   // 답을 해야 넘어간다
+  var div = document.createElement('div');
+  div.className = 'next-btn-div';
+  div.innerHTML = '<div class="next-btn">계속하기 (Enter)</div>';
+  c.after(div);
+  div.querySelector('.next-btn').onclick = function(){ setAnswer(); };
+}
+function setAnswer(){
+  var c = curCard(); var obj = arr_card[card_idx]; var t = obj.type;
+  var ok = true;
+  if (t === 2) {
+    ok = (c.querySelector('.selected .option-txt')||{}).textContent === obj.answer;
+    results.push(ok ? '객관식:정답' : '객관식:오답');
+  } else if (t === 6) {
+    var got = [].map.call(c.querySelectorAll('.order-item.selected'), function(e){ return e.textContent.trim(); }).join(';');
+    ok = got === obj.answer;
+    results.push(ok ? '어순:정답' : ('어순:오답('+got+')'));
+  } else if (obj.answer) {
+    var vals = [].map.call(c.querySelectorAll('.user-text'), function(e){ return e.value.trim(); }).join(';');
+    ok = vals === obj.answer;
+    results.push(ok ? '빈칸:정답' : ('빈칸:오답('+vals+')'));
+  }
+  c.classList.add(ok ? 'correct' : 'wrong');
+  if (!ok) { setNextBtn(); return; }          // 틀리면 다시 (넘어가지 않는다)
+  setTimeout(nextCard, 300);
+}
+function nextCard(){
+  card_idx++;
+  if (card_idx > arr_card.length - 1) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('done').style.display='block';
+    document.getElementById('stat').textContent = results.join(' / ') + ' · 이전 카드 오클릭 ' + ignoredPrev;
+    return;
+  }
+  render();
+}
+document.addEventListener('keyup', function(e){
+  if (e.keyCode !== 13) return;
+  var c = curCard(); if (!c) return;
+  var t = arr_card[card_idx].type;
+  if (t === 2 || t === 6) return;                 // 답을 해야 넘어간다
+  if (card_idx === 4 && c.querySelector('.user-text:not(.choice-end)')) return;
+  setAnswer();
+});
+nextCard();
+</script></body></html>

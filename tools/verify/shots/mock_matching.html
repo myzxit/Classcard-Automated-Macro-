@@ -1,0 +1,62 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>단어 매칭</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .match-top{padding:14px 22px;font-weight:700}
+ .wrap{max-width:900px;margin:0 auto;display:flex;gap:24px;padding:0 22px}
+ .match-body{flex:1}
+ .flip-card{border:1px solid #94a3b8;border-radius:8px;padding:12px;margin:6px 0;cursor:pointer}
+ .flip-card.gone{visibility:hidden}
+ .flip-card.sel{border-color:#2563eb;background:#eff6ff}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="match-top">점수 <span class="point">0</span></div>
+<div class="wrap" id="page">
+  <div class="match-body left" id="L"></div>
+  <div class="match-body right" id="R"></div>
+</div>
+<div id="done"><h2>🎉 매칭 완료</h2><p id="stat"></p></div>
+<script>
+var card_list = [
+  { front: 'apple', back: '사과' },
+  { front: 'book', back: '책' },
+  { front: 'water', back: '물' },
+  { front: 'friend', back: '친구' }
+];
+var pairsLeft = card_list.length, score = 0, synthetic = 0, wrong = 0;
+var selL = null, selR = null;
+function cardHtml(t){ return '<div class="flip-card"><div class="match-text"><div style="font-size:18px">'+t+'</div></div></div>'; }
+function render(){
+  document.getElementById('L').innerHTML = card_list.map(function(c){ return cardHtml(c.front); }).join('');
+  document.getElementById('R').innerHTML = [3,1,0,2].map(function(i){ return cardHtml(card_list[i].back); }).join('');
+  bind('#L .flip-card', 'L'); bind('#R .flip-card', 'R');
+}
+function bind(sel, side){
+  [].forEach.call(document.querySelectorAll(sel), function(el){
+    el.addEventListener('click', function(e){
+      if (!e.isTrusted) { synthetic++; return; }     // 합성 클릭 무시 (실제 사이트와 동일)
+      if (el.classList.contains('gone')) return;
+      el.classList.add('sel');
+      if (side === 'L') selL = el; else selR = el;
+      if (selL && selR) check();
+    });
+  });
+}
+function check(){
+  var en = selL.textContent.trim(), ko = selR.textContent.trim();
+  var ok = card_list.some(function(c){ return c.front === en && c.back === ko; });
+  if (ok) {
+    selL.parentNode.removeChild(selL); selR.parentNode.removeChild(selR);   // 실제처럼 카드를 없앤다
+    score += 1000; pairsLeft--;
+    document.querySelector('.point').textContent = score;
+  } else { wrong++; }
+  selL.classList.remove('sel'); selR.classList.remove('sel');
+  selL = null; selR = null;
+  if (pairsLeft === 0) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('done').style.display='block';
+    document.getElementById('stat').textContent =
+      '짝 4개 완료 · 점수 '+score+' · 틀린 짝 '+wrong+' · 무시된 합성 클릭 '+synthetic;
+  }
+}
+render();
+</script></body></html>

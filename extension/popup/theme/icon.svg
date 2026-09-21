@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- 앱 아이콘 — 오리지널 캐릭터 '유메'의 얼굴 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b2a8a"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#efe6ff"/>
+      <stop offset="1" stop-color="#b79cf0"/>
+    </linearGradient>
+    <radialGradient id="eye" cx="0.5" cy="0.35" r="0.6">
+      <stop offset="0" stop-color="#c9a6ff"/>
+      <stop offset="0.6" stop-color="#7a3fe0"/>
+      <stop offset="1" stop-color="#2d1466"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="120" fill="url(#bg)"/>
+  <g fill="#fff6c8" opacity="0.9">
+    <path d="M90 90 l6 18 18 6 -18 6 -6 18 -6 -18 -18 -6 18 -6z"/>
+    <path d="M420 70 l5 14 14 5 -14 5 -5 14 -5 -14 -14 -5 14 -5z"/>
+    <circle cx="440" cy="180" r="5"/><circle cx="60" cy="230" r="4"/>
+  </g>
+  <!-- 뒷머리 -->
+  <ellipse cx="256" cy="270" rx="170" ry="160" fill="url(#hair)"/>
+  <path d="M110 300 q-40 90 -10 180 l60 -40 q-30 -60 -20 -130z" fill="url(#hair)"/>
+  <path d="M402 300 q40 90 10 180 l-60 -40 q30 -60 20 -130z" fill="url(#hair)"/>
+  <!-- 얼굴 -->
+  <path d="M120 290 q0 150 136 168 q136 -18 136 -168 q0 -90 -136 -90 q-136 0 -136 90z" fill="#ffe6d8"/>
+  <ellipse cx="170" cy="370" rx="26" ry="14" fill="#ffb4c4" opacity="0.7"/>
+  <ellipse cx="342" cy="370" rx="26" ry="14" fill="#ffb4c4" opacity="0.7"/>
+  <ellipse cx="196" cy="340" rx="30" ry="42" fill="url(#eye)"/>
+  <ellipse cx="316" cy="340" rx="30" ry="42" fill="url(#eye)"/>
+  <ellipse cx="186" cy="322" rx="11" ry="14" fill="#fff"/>
+  <ellipse cx="306" cy="322" rx="11" ry="14" fill="#fff"/>
+  <path d="M236 402 q20 18 40 0" stroke="#d86a8a" stroke-width="7" fill="none" stroke-linecap="round"/>
+  <!-- 앞머리 -->
+  <path d="M100 280 q30 -130 156 -130 q126 0 156 130 q-40 -60 -92 -36 q-22 -38 -64 -6 q-42 -32 -64 6 q-52 -24 -92 36z" fill="url(#hair)"/>
+  <!-- 모자 -->
+  <path d="M60 190 q196 -60 392 0 q-196 34 -392 0z" fill="#2a1d6e"/>
+  <path d="M150 182 q50 -150 160 -170 q-30 100 60 170z" fill="#2a1d6e"/>
+  <path d="M150 182 q90 -30 220 -12 l-8 14 q-110 -10 -206 12z" fill="#ffd86b"/>
+  <path d="M286 30 q30 -26 60 -8 q-26 20 -22 54z" fill="#ffd86b"/>
+</svg>

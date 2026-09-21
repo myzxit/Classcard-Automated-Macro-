@@ -1,0 +1,62 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>문장 리콜</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .wrap{max-width:900px;margin:24px auto;background:#fff;border-radius:12px;padding:22px;min-height:360px}
+ .CardItem{display:none}.CardItem.active{display:block}
+ .input-box{min-height:30px;margin:12px 0;color:#0f766e;font-weight:600}
+ .btn-scramble{display:inline-block;margin:4px;padding:8px 12px;border:1px solid #94a3b8;border-radius:8px;cursor:pointer}
+ .btn-scramble.clicked{display:none}
+ #study_end{display:none}#study_end.active{display:block;text-align:center;padding:20px}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="wrap" id="page"><div id="cards"></div></div>
+<div id="study_end"><div class="study-header"><a href="#">나가기</a></div>
+  <a class="btn-study-end-repeat" href="#">다시 학습</a></div>
+<div id="done"><h2>🎉 문장 리콜 완료</h2><p id="stat"></p></div>
+<script>
+var SENT = [
+  'I like to play soccer',
+  'He studies hard every day',
+  'We will go to the library'
+];
+var idx = 0, placed = [], results = [], synthetic = 0;
+function shuffle(a){ a=a.slice(); for(var i=a.length-1;i>0;i--){var j=(i*3+1)%(i+1);var t=a[i];a[i]=a[j];a[j]=t;} return a; }
+function render(){
+  var s = SENT[idx];
+  console.log('arr_front', s);              // 사이트가 정답을 콘솔에 남긴다 (preload 캡처)
+  document.getElementById('cards').innerHTML =
+    '<div class="CardItem active" data-idx="'+idx+'">' +
+      '<div class="input-box"></div>' +
+      '<div class="tiles">' + shuffle(s.split(' ')).map(function(w){
+        return '<div class="btn-scramble clickable">'+w+'</div>'; }).join('') + '</div>' +
+    '</div>';
+  placed = [];
+  [].forEach.call(document.querySelectorAll('.btn-scramble'), function(el){
+    el.addEventListener('click', function(e){
+      if (!e.isTrusted) { synthetic++; return; }    // 합성 클릭 무시 (실제 사이트와 동일)
+      if (el.classList.contains('clicked')) return;
+      el.classList.add('clicked');
+      placed.push(el.textContent.trim());
+      document.querySelector('.input-box').textContent = placed.join(' ');
+    });
+  });
+}
+function advance(){
+  var s = SENT[idx];
+  if (placed.length !== s.split(' ').length) return;   // 다 놓아야 넘어간다
+  results.push(placed.join(' ') === s ? '정답' : ('오답(' + placed.join(' ') + ')'));
+  idx++;
+  if (idx >= SENT.length) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('study_end').classList.add('active');
+    document.getElementById('done').style.display='block';
+    document.getElementById('stat').textContent = results.join(' / ') + ' · 무시된 합성 클릭 ' + synthetic;
+    return;
+  }
+  render();
+}
+document.addEventListener('keydown', function(e){
+  if ((e.key === ' ' || e.code === 'Space') && e.isTrusted) advance();
+});
+render();
+</script></body></html>

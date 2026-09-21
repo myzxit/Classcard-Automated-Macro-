@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 220 300">
+  <!-- '유메' — 이 프로젝트만의 오리지널 캐릭터 (이세계 견습 마법사). 기존 작품의 캐릭터가 아닙니다. -->
+  <defs>
+    <linearGradient id="hair" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#e9dcff"/>
+      <stop offset="1" stop-color="#b79cf0"/>
+    </linearGradient>
+    <linearGradient id="cloak" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3b2a8a"/>
+      <stop offset="1" stop-color="#1c1450"/>
+    </linearGradient>
+    <linearGradient id="dress" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7f2ff"/>
+      <stop offset="1" stop-color="#d9caff"/>
+    </linearGradient>
+    <radialGradient id="eye" cx="0.5" cy="0.35" r="0.6">
+      <stop offset="0" stop-color="#c9a6ff"/>
+      <stop offset="0.6" stop-color="#7a3fe0"/>
+      <stop offset="1" stop-color="#2d1466"/>
+    </radialGradient>
+    <radialGradient id="gem" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.4" stop-color="#9af0ff"/>
+      <stop offset="1" stop-color="#3fb4e6"/>
+    </radialGradient>
+    <radialGradient id="gemGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.3" stop-color="#9af0ff" stop-opacity="0.7"/>
+      <stop offset="1" stop-color="#9af0ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <g>
+    <animateTransform attributeName="transform" type="translate" values="0 0; 0 -5; 0 0" dur="4s" repeatCount="indefinite"/>
+
+    <!-- 뒷머리 · 트윈테일 -->
+    <path d="M60 110 q-30 60 -10 150 q20 -30 22 -90z" fill="url(#hair)"/>
+    <path d="M160 110 q30 60 10 150 q-20 -30 -22 -90z" fill="url(#hair)"/>
+    <ellipse cx="110" cy="105" rx="62" ry="58" fill="url(#hair)"/>
+
+    <!-- 망토 -->
+    <path d="M62 170 q48 -40 96 0 l30 110 q-78 22 -156 0z" fill="url(#cloak)"/>
+    <g fill="#ffe27a" opacity="0.9">
+      <path d="M85 215 l2 6 6 2 -6 2 -2 6 -2 -6 -6 -2 6 -2z"/>
+      <path d="M140 240 l2 6 6 2 -6 2 -2 6 -2 -6 -6 -2 6 -2z"/>
+      <path d="M100 262 l1.5 4 4 1.5 -4 1.5 -1.5 4 -1.5 -4 -4 -1.5 4 -1.5z"/>
+    </g>
+    <!-- 원피스 -->
+    <path d="M84 176 q26 -14 52 0 l14 96 q-40 10 -80 0z" fill="url(#dress)"/>
+    <path d="M84 176 q26 -14 52 0 l3 20 q-29 8 -58 0z" fill="#a78bfa" opacity="0.6"/>
+    <!-- 리본 -->
+    <path d="M110 178 l-12 -7 0 14z M110 178 l12 -7 0 14z" fill="#f472b6"/>
+    <circle cx="110" cy="178" r="3.5" fill="#fb7fc4"/>
+
+    <!-- 얼굴 -->
+    <path d="M60 110 q0 60 50 66 q50 -6 50 -66 q0 -34 -50 -34 q-50 0 -50 34z" fill="#ffe6d8"/>
+    <!-- 볼 -->
+    <ellipse cx="80" cy="140" rx="9" ry="5" fill="#ffb4c4" opacity="0.7"/>
+    <ellipse cx="140" cy="140" rx="9" ry="5" fill="#ffb4c4" opacity="0.7"/>
+    <!-- 눈 -->
+    <g>
+      <ellipse cx="88" cy="128" rx="11" ry="15" fill="url(#eye)"/>
+      <ellipse cx="132" cy="128" rx="11" ry="15" fill="url(#eye)"/>
+      <ellipse cx="84" cy="121" rx="4" ry="5" fill="#fff"/>
+      <ellipse cx="128" cy="121" rx="4" ry="5" fill="#fff"/>
+      <circle cx="92" cy="135" r="1.8" fill="#fff" opacity="0.8"/>
+      <circle cx="136" cy="135" r="1.8" fill="#fff" opacity="0.8"/>
+      <!-- 눈 깜빡임 -->
+      <rect x="74" y="110" width="72" height="0" fill="#ffe6d8">
+        <animate attributeName="height" values="0;0;36;0;0" keyTimes="0;0.9;0.93;0.96;1" dur="5s" repeatCount="indefinite"/>
+      </rect>
+    </g>
+    <path d="M76 112 q12 -6 22 0" stroke="#7a5fbf" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <path d="M122 112 q10 -6 22 0" stroke="#7a5fbf" stroke-width="2" fill="none" stroke-linecap="round"/>
+    <!-- 입 -->
+    <path d="M104 152 q6 6 12 0" stroke="#d86a8a" stroke-width="2" fill="none" stroke-linecap="round"/>
+
+    <!-- 앞머리 -->
+    <path d="M52 104 q10 -50 58 -50 q48 0 58 50 q-14 -24 -34 -14 q-8 -14 -24 -2 q-16 -12 -24 2 q-20 -10 -34 14z" fill="url(#hair)"/>
+    <!-- 머리 장식(별 핀) -->
+    <path d="M62 92 l3 8 8 3 -8 3 -3 8 -3 -8 -8 -3 8 -3z" fill="#ffd86b"/>
+
+    <!-- 모자 (뾰족 마법사 모자) -->
+    <path d="M40 70 q70 -22 140 0 q-70 12 -140 0z" fill="#2a1d6e"/>
+    <path d="M70 68 q20 -70 60 -76 q-6 40 20 70z" fill="url(#cloak)"/>
+    <path d="M100 18 q10 -10 22 -4 q-8 8 -6 20z" fill="#ffd86b"/>
+    <path d="M70 68 q30 -8 80 -6 l-3 5 q-40 -2 -74 5z" fill="#ffd86b" opacity="0.85"/>
+
+    <!-- 손 · 지팡이 -->
+    <line x1="176" y1="120" x2="160" y2="270" stroke="#7b5a3c" stroke-width="6" stroke-linecap="round"/>
+    <circle cx="150" cy="215" r="10" fill="#ffe6d8"/>
+    <circle cx="178" cy="112" r="24" fill="url(#gemGlow)">
+      <animate attributeName="r" values="22;30;22" dur="2.4s" repeatCount="indefinite"/>
+    </circle>
+    <path d="M178 96 l10 16 -10 16 -10 -16z" fill="url(#gem)"/>
+    <g fill="#ffffff">
+      <path d="M198 92 l1.5 4 4 1.5 -4 1.5 -1.5 4 -1.5 -4 -4 -1.5 4 -1.5z">
+        <animate attributeName="opacity" values="1;0;1" dur="1.6s" repeatCount="indefinite"/>
+      </path>
+      <path d="M160 86 l1.2 3 3 1.2 -3 1.2 -1.2 3 -1.2 -3 -3 -1.2 3 -1.2z">
+        <animate attributeName="opacity" values="0;1;0" dur="2.1s" repeatCount="indefinite"/>
+      </path>
+    </g>
+
+    <!-- 신발 -->
+    <path d="M86 272 q12 -4 24 0 l2 14 q-14 4 -28 0z" fill="#3b2a8a"/>
+    <path d="M112 272 q12 -4 24 0 l2 14 q-14 4 -28 0z" fill="#3b2a8a"/>
+  </g>
+</svg>
