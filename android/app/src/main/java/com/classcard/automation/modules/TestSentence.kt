@@ -15,7 +15,10 @@ object TestSentence {
     var DEBUG = false
 
     /** 테스트 목표 점수(0~100). 100 -> 다 맞음. */
-    var TARGET_SCORE = 100
+    // 문장 테스트는 **95점 이상 100점 이하**가 되게 한다.
+    // 늘 100점이면 티가 나므로, 95점 밑으로는 절대 안 내려가는 선에서 매번 다르게 고른다.
+    var MIN_SCORE = 95
+    var MAX_SCORE = 100
 
     private data class Card(
         val qid: String,
@@ -620,7 +623,11 @@ object TestSentence {
                 d.log("[문장 테스트] 페이지 정답 ${testAnswers.size}개를 확보했습니다 (문제별 정답 — 100점)")
             }
             val total = countTotal(d)
-            val wrongIdx = Test.planWrongIndices(total, TARGET_SCORE)
+            val wrongIdx = Test.planWrongIndicesRange(total, MIN_SCORE, MAX_SCORE)
+            if (total != null && total > 0) {
+                val expected = kotlin.math.round((total - wrongIdx.size) * 1000.0 / total) / 10.0
+                d.log("[문장 테스트] 총 ${total}문항 · 일부러 틀릴 문항 ${wrongIdx.size}개 -> 예상 ${expected}점 ($MIN_SCORE~${MAX_SCORE}점 사이로 맞춥니다)")
+            }
             if (DEBUG && total != null) {
                 d.log("[문장 테스트] 총 ${total}문항 / 일부러 틀릴 순번: ${wrongIdx.sorted().ifEmpty { "없음" }}")
             }

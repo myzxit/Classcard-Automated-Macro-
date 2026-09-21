@@ -1531,7 +1531,10 @@ __mod.games = (function () {
 /** 모듈별 목표 점수/기준값 — 원본 상수를 그대로 옮겼고 설정에서 바꿀 수 있다. */
 const CONFIG = {
   testTargetScore: 90,           // Test.py TARGET_SCORE
-  testSentenceTargetScore: 100,  // TestSentence.py TARGET_SCORE
+  // 문장 테스트는 **95점 이상 100점 이하**가 되게 한다.
+  // 늘 100점이면 티가 나므로, 95점 밑으로는 절대 안 내려가는 선에서 매번 다르게 고른다.
+  testSentenceMinScore: 95,
+  testSentenceMaxScore: 100,
   // 이 범위에서 목표 점수를 뽑아, 도달하면 게임 도중에 빠져나간다(점수는 서버에 저장됨).
   matchExitMin: 7000,            // 단어 매칭 목표 점수 (7000~8500)
   matchExitMax: 8500,
@@ -1545,6 +1548,30 @@ const GO_RESULT_SELECTOR = 'a.btn-go-result';
  * TARGET_SCORE 이상이 나오도록 일부러 틀릴 문항 순번(1-based) 집합.
  * 틀릴 개수 = floor(total * (100 - target) / 100) — 내림이라 점수는 항상 목표 이상.
  */
+/**
+ * 점수가 [minScore, maxScore] 안에 들도록 일부러 틀릴 문항 번호를 고른다.
+ *
+ * 한 문항의 값은 100/total 점이다. 그래서 틀릴 수 있는 최대 개수는
+ * `floor(total * (100 - minScore) / 100)` 이고, 이 개수를 넘기면 minScore 밑으로 떨어진다.
+ * (예: 18문항이면 한 개만 틀려도 94.4점이라 95점을 지키려면 **하나도 틀리면 안 된다**.
+ *  20문항이면 한 개까지 틀려도 95점이다.)
+ * 그 범위 안에서 매번 다른 개수를 골라, 늘 같은 점수가 나오지 않게 한다.
+ */
+function planWrongIndicesRange(total, minScore, maxScore, rand = Math.random) {
+  if (!total || total <= 0) return new Set();
+  const maxWrong = Math.max(0, Math.min(total, Math.floor((total * (100 - minScore)) / 100)));
+  const minWrong = Math.max(0, Math.min(maxWrong, Math.ceil((total * (100 - maxScore)) / 100)));
+  const nWrong = minWrong + Math.floor(rand() * (maxWrong - minWrong + 1));
+  if (nWrong <= 0) return new Set();
+  const pool = [];
+  for (let i = 1; i <= total; i++) pool.push(i);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return new Set(pool.slice(0, nWrong));
+}
+
 function planWrongIndices(total, targetScore) {
   if (!total || total <= 0) return new Set();
   let nWrong = Math.floor((total * (100 - targetScore)) / 100);
@@ -2370,7 +2397,12 @@ async function testSentence(d, answerDict, stop) {
   }
 
   const total = await countTotal(d);
-  const wrongIdx = planWrongIndices(total, CONFIG.testSentenceTargetScore);
+  const wrongIdx = planWrongIndicesRange(total, CONFIG.testSentenceMinScore, CONFIG.testSentenceMaxScore);
+  if (total) {
+    const expected = Math.round(((total - wrongIdx.size) / total) * 1000) / 10;
+    d.log(`[문장 테스트] 총 ${total}문항 · 일부러 틀릴 문항 ${wrongIdx.size}개 -> 예상 ${expected}점 ` +
+      `(${CONFIG.testSentenceMinScore}~${CONFIG.testSentenceMaxScore}점 사이로 맞춥니다)`);
+  }
 
   const flipAttempts = new Map();
   const answeredQids = new Set();
@@ -2937,7 +2969,7 @@ function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-  return { CONFIG, planWrongIndices, buildLookups, solve, testCheckEndAndStop, test, buildMaps, pickByTileBag, matchEnglish, testSentenceCheckEndAndStop, planChunks, handleTestModals, testSentence, findPair, isSetHome, returnToSetHome, gameCheckEndAndStop, matching, alignIndex, findNextIndex, scramble };
+  return { CONFIG, planWrongIndicesRange, planWrongIndices, buildLookups, solve, testCheckEndAndStop, test, buildMaps, pickByTileBag, matchEnglish, testSentenceCheckEndAndStop, planChunks, handleTestModals, testSentence, findPair, isSetHome, returnToSetHome, gameCheckEndAndStop, matching, alignIndex, findNextIndex, scramble };
 })();
 
 // ======================================================== extension/engine/modules/sentence.js
