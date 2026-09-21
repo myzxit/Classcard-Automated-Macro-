@@ -15,7 +15,9 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { tmpdir } from 'node:os';
 
+import electronUpdater from 'electron-updater';
 import { ElectronDriver, StopFlag } from './driver.js';
+import { checkForUpdate } from './app/engine/update.js';
 import * as Basic from './app/engine/modules/basic.js';
 import * as Sentence from './app/engine/modules/sentence.js';
 import * as Games from './app/engine/modules/games.js';
@@ -71,6 +73,7 @@ function scheduleSave() {
 
 const DEFAULT_SETTINGS = {
   darkMode: true,
+  autoUpdate: true,
   autoLogin: true,
   keepTab: true,
   sequential: true,
@@ -443,6 +446,106 @@ function stopAll() {
   notifyState();
 }
 
+// ------------------------------------------------------------------ 자동 업데이트
+//
+// 설치판(setup.exe)은 electron-updater 가 릴리스의 latest.yml 을 보고 새 버전을 **스스로 받아 설치**한다
+// (자동화가 돌고 있지 않으면 곧바로 다시 시작해서 설치, 돌고 있으면 앱을 닫을 때 설치).
+// 휴대용(portable.exe)은 스스로를 덮어쓸 수 없으므로 새 exe 를 같은 폴더에 받아 그것을 연다.
+// 두 경우 모두 version.json / latest.yml 은 CI 가 모든 파일을 올린 뒤 맨 마지막에 올린다.
+
+// autoUpdater 는 처음 손대는 순간 electron 의 app 을 잡는다 — 앱이 준비된 뒤에만 쓴다(느긋하게 꺼낸다)
+let _autoUpdater = null;
+const getAutoUpdater = () => (_autoUpdater ||= electronUpdater.autoUpdater);
+const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
+const isPortable = !!process.env.PORTABLE_EXECUTABLE_FILE;
+let updateInfo = null;        // { version, url, notes, downloaded, file }
+let updaterErrorLogged = false;
+
+function setUpdateInfo(info) {
+  updateInfo = info;
+  toUi({ type: 'update', update: updateInfo });
+}
+
+function installNow() {
+  if (!updateInfo || !updateInfo.downloaded) return false;
+  if (isPortable) {
+    if (updateInfo.file) {
+      log(`[업데이트] 새 버전을 엽니다: ${updateInfo.file} — 앞으로는 이 파일을 쓰세요 (예전 파일은 지워도 됩니다).`);
+      shell.openPath(updateInfo.file);
+      setTimeout(() => app.quit(), 1500);
+    }
+    return true;
+  }
+  log('[업데이트] 설치를 위해 앱을 다시 시작합니다…');
+  setTimeout(() => getAutoUpdater().quitAndInstall(false, true), 800);
+  return true;
+}
+
+/** 설치판: electron-updater. */
+function setupInstalledUpdater() {
+  const autoUpdater = getAutoUpdater();
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.allowPrerelease = true;
+  autoUpdater.logger = null;
+  autoUpdater.on('update-available', (info) => {
+    log(`[업데이트] 새 버전 v${info.version} 이 나왔습니다 — 받는 중…`);
+    setUpdateInfo({ version: info.version, url: '', notes: '', downloaded: false });
+  });
+  autoUpdater.on('update-not-available', () => { if (updateInfo && !updateInfo.downloaded) setUpdateInfo(null); });
+  autoUpdater.on('update-downloaded', (info) => {
+    setUpdateInfo({ version: info.version, url: '', notes: '', downloaded: true });
+    if (runningCount() === 0 && !currentRun) {
+      log(`[업데이트] v${info.version} 을 받았습니다 — 5초 뒤 다시 시작해서 설치합니다.`);
+      setTimeout(installNow, 5000);
+    } else {
+      log(`[업데이트] v${info.version} 을 받았습니다 — 자동화가 끝나고 앱을 닫으면 설치됩니다 (팝업의 '지금 설치'로 바로 할 수도 있습니다).`);
+    }
+  });
+  autoUpdater.on('error', (e) => {
+    if (updaterErrorLogged) return;
+    updaterErrorLogged = true;
+    log(`[업데이트] 확인 실패: ${String((e && e.message) || e).slice(0, 120)}`, 'warn');
+  });
+}
+
+/** 휴대용: version.json 을 보고 새 portable.exe 를 같은 폴더에 받는다. */
+async function checkPortableUpdate(force) {
+  const r = await checkForUpdate(PKG.version);
+  if (r.error) { if (force) log(`[업데이트] 새 버전 정보를 받지 못했습니다: ${r.error}`, 'warn'); return; }
+  if (!r.available) { if (force) log(`[업데이트] 지금이 최신 버전입니다 (v${PKG.version}).`); return; }
+  if (updateInfo && updateInfo.version === r.latest.version) return;
+  const dir = dirname(process.env.PORTABLE_EXECUTABLE_FILE);
+  const file = join(dir, `classcard-automation-portable-v${r.latest.version}.exe`);
+  log(`[업데이트] 새 버전 v${r.latest.version} 이 나왔습니다 — 받는 중…`);
+  setUpdateInfo({ version: r.latest.version, url: r.latest.portable, notes: r.latest.notes || '', downloaded: false });
+  try {
+    const res = await net.fetch(r.latest.portable);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length < 10 * 1024 * 1024) throw new Error('받은 파일이 너무 작습니다');
+    writeFileSync(file, buf);
+    setUpdateInfo({ ...updateInfo, downloaded: true, file });
+    log(`[업데이트] v${r.latest.version} 을 받았습니다: ${file}`);
+    if (runningCount() === 0 && !currentRun) { log('[업데이트] 5초 뒤 새 버전을 엽니다.'); setTimeout(installNow, 5000); }
+    else log("[업데이트] 자동화가 끝나면 팝업의 '지금 설치'를 누르세요.");
+  } catch (e) {
+    log(`[업데이트] 받기 실패: ${String((e && e.message) || e).slice(0, 120)}`, 'error');
+  }
+}
+
+async function runUpdateCheck(force = false) {
+  if (!force && getSettings().autoUpdate === false) return;
+  if (!app.isPackaged) {
+    // 개발 실행(npm start)에서는 설치할 곳이 없다 — 확인만 해 보고 로그로 알린다
+    const r = await checkForUpdate(PKG.version);
+    if (force) log(r.available ? `[업데이트] 새 버전 v${r.latest.version} (개발 실행이라 설치하지 않습니다)` : `[업데이트] 최신입니다 (v${PKG.version}) ${r.error || ''}`);
+    return;
+  }
+  if (isPortable) return checkPortableUpdate(force);
+  try { await getAutoUpdater().checkForUpdates(); } catch (e) { if (force) log(`[업데이트] 확인 실패: ${e.message}`, 'warn'); }
+}
+
 // ------------------------------------------------------------------ IPC (확장 메시지와 1:1)
 
 ipcMain.on('manifest', (event) => { event.returnValue = { version: PKG.version, name: PKG.productName }; });
@@ -462,7 +565,15 @@ ipcMain.handle('msg', async (_event, msg) => {
         running: runningCount(),
         logs: store.logs,
         today: todayString(),
+        update: updateInfo,
       };
+    case 'checkUpdate':
+      await runUpdateCheck(true);
+      return { update: updateInfo };
+    case 'downloadUpdate':
+      if (updateInfo && updateInfo.downloaded) { installNow(); return { ok: true }; }
+      await runUpdateCheck(true);
+      return { ok: !!updateInfo };
     case 'setAccounts':
       setAccounts(msg.accounts);
       return { ok: true };
@@ -574,6 +685,9 @@ app.whenReady().then(async () => {
   }
   createControlWindow();
   log(`클래스카드 자동화 PC 버전 v${PKG.version} 이 준비되었습니다.`);
+  if (app.isPackaged && !isPortable) setupInstalledUpdater();
+  setTimeout(() => runUpdateCheck(), 4000);
+  setInterval(() => runUpdateCheck(), UPDATE_CHECK_MS);
   app.on('activate', () => { if (!controlWin) createControlWindow(); });
 });
 

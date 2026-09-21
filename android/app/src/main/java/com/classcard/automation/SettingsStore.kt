@@ -19,6 +19,7 @@ object SettingsStore {
     private const val KEY_START_DELAY = "start_delay"
     private const val KEY_ACCOUNT_GAP = "account_gap"
     private const val KEY_DARK_MODE = "dark_mode"
+    private const val KEY_AUTO_UPDATE = "auto_update"
 
     /** 저장된 ID/PW로 브라우저를 열 때 바로 로그인. */
     fun autoLogin(c: Context): Boolean = prefs(c).getBoolean(KEY_AUTO_LOGIN, true)
@@ -49,6 +50,10 @@ object SettingsStore {
     /** 다크 모드. 기본값은 켬. */
     fun darkMode(c: Context): Boolean = prefs(c).getBoolean(KEY_DARK_MODE, true)
     fun setDarkMode(c: Context, v: Boolean) = put(c, KEY_DARK_MODE, v)
+
+    /** 새 버전이 나오면 스스로 받아 설치 화면을 띄운다. 기본값은 켬. */
+    fun autoUpdate(c: Context): Boolean = prefs(c).getBoolean(KEY_AUTO_UPDATE, true)
+    fun setAutoUpdate(c: Context, v: Boolean) = put(c, KEY_AUTO_UPDATE, v)
 
     private fun put(c: Context, key: String, value: Boolean) =
         prefs(c).edit().putBoolean(key, value).apply()

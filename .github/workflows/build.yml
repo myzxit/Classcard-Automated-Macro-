@@ -169,9 +169,18 @@ jobs:
           path: |
             desktop/dist/classcard-automation-portable.exe
             desktop/dist/classcard-automation-setup.exe
+            desktop/dist/latest.yml
           if-no-files-found: error
 
+      # 자동 업데이트용 version.json — 모든 클라이언트가 이 파일을 보고 새 버전을 안다.
+      # APK·확장 zip(build 잡)과 exe 가 전부 올라간 **맨 마지막**에 올린다.
+      # (먼저 올리면 새 버전 안내를 보고 받은 파일이 아직 옛것일 수 있다)
+      - name: Make version.json
+        shell: bash
+        run: node tools/make_version.mjs desktop/dist/version.json
+
       # 같은 고정 릴리스에 exe 도 올린다 (build 잡이 릴리스를 먼저 만든다)
+      # latest.yml 은 electron-builder 가 만드는 자동 업데이트 설명 파일(PC 앱의 electron-updater 가 읽는다).
       - name: Publish to rolling release
         if: github.event_name != 'pull_request'
         shell: bash
@@ -179,7 +188,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          ls desktop/dist
           gh release upload "apk-latest" \
             desktop/dist/classcard-automation-portable.exe \
-            desktop/dist/classcard-automation-setup.exe --clobber
+            desktop/dist/classcard-automation-setup.exe \
+            desktop/dist/latest.yml --clobber
+          gh release upload "apk-latest" desktop/dist/version.json --clobber
           echo "- 💻 PC: https://github.com/${GITHUB_REPOSITORY}/releases/download/apk-latest/classcard-automation-portable.exe" >> "$GITHUB_STEP_SUMMARY"

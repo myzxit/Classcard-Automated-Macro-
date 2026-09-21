@@ -13,6 +13,7 @@ import * as Sentence from './engine/modules/sentence.js';
 import * as Games from './engine/modules/games.js';
 import * as Grammar from './engine/modules/grammar.js';
 import * as AutoAll from './engine/modules/autoall.js';
+import { checkForUpdate } from './engine/update.js';
 
 const LOGIN_URL = 'https://www.classcard.net/Login';
 const MAX_LOG_LINES = 3000;
@@ -28,6 +29,7 @@ let currentRun = null; // { queue, index, modeId, stopped }
 
 const DEFAULT_SETTINGS = {
   darkMode: true,
+  autoUpdate: true,
   autoLogin: true,
   keepTab: true,
   sequential: true,
@@ -464,9 +466,56 @@ function keepAlive(on) {
   }
 }
 
-chrome.alarms.onAlarm.addListener(() => {
-  // 아무것도 하지 않아도 워커가 깨어난다.
+chrome.alarms.onAlarm.addListener((alarm) => {
+  // keepalive 알람은 아무것도 하지 않아도 워커가 깨어난다.
+  if (alarm && alarm.name === 'cc-update-check') runUpdateCheck();
 });
+
+// ------------------------------------------------------------------ 자동 업데이트
+//
+// 개발자 모드로 넣은 확장은 크롬이 스스로 갈아 끼우지 못한다(웹스토어 확장만 자동 갱신).
+// 그래서 여기서는 새 버전을 스스로 **확인해서 알리고, 한 번의 클릭으로 zip 을 받아** 준다.
+// (PC 앱은 완전 자동, 안드로이드는 받아서 설치 화면까지 자동)
+
+let updateInfo = null;   // { version, url, notes, checkedAt }
+
+async function runUpdateCheck(force = false) {
+  const settings = await getSettings();
+  if (!force && settings.autoUpdate === false) return;
+  const current = chrome.runtime.getManifest().version;
+  const r = await checkForUpdate(current);
+  if (r.error) {
+    if (force) log(`[업데이트] 새 버전 정보를 받지 못했습니다: ${r.error}`, 'warn');
+    return;
+  }
+  if (!r.available) {
+    updateInfo = null;
+    if (force) log(`[업데이트] 지금이 최신 버전입니다 (v${current}).`);
+  } else if (!updateInfo || updateInfo.version !== r.latest.version) {
+    updateInfo = { version: r.latest.version, url: r.latest.extension, notes: r.latest.notes || '', checkedAt: Date.now() };
+    log(`[업데이트] 새 버전 v${r.latest.version} 이 나왔습니다 — 팝업 위의 '업데이트 받기'를 누르세요.`, 'warn');
+    try { chrome.action.setBadgeText({ text: 'NEW' }); chrome.action.setBadgeBackgroundColor({ color: '#ec4899' }); } catch (e) { /* 무시 */ }
+  }
+  chrome.runtime.sendMessage({ type: 'update', update: updateInfo }).catch(() => {});
+}
+
+/** zip 을 내려받는다. 크롬은 압축 해제·재로드를 대신 못 하므로 그 다음은 사람이 한다. */
+async function downloadUpdate() {
+  if (!updateInfo) return { ok: false };
+  try {
+    await chrome.downloads.download({ url: updateInfo.url, filename: `classcard-automation-extension-v${updateInfo.version}.zip` });
+    log(`[업데이트] v${updateInfo.version} zip 을 받고 있습니다. 압축을 풀어 지금 폴더에 덮어쓴 뒤 chrome://extensions 에서 새로고침(↻)하세요.`);
+    return { ok: true };
+  } catch (e) {
+    log(`[업데이트] 받기 실패: ${e.message}`, 'error');
+    return { ok: false };
+  }
+}
+
+chrome.alarms.create('cc-update-check', { periodInMinutes: 6 * 60 });
+chrome.runtime.onInstalled.addListener(() => { try { chrome.action.setBadgeText({ text: '' }); } catch (e) { /* 무시 */ } runUpdateCheck(); });
+chrome.runtime.onStartup.addListener(() => runUpdateCheck());
+runUpdateCheck();
 
 // 탭이 닫히면 세션도 정리
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -493,9 +542,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           running: runningCount(),
           logs: logsByDate,
           today: todayString(),
+          update: updateInfo,
         });
         break;
       }
+      case 'checkUpdate':
+        await runUpdateCheck(true);
+        sendResponse({ update: updateInfo });
+        break;
+      case 'downloadUpdate':
+        sendResponse(await downloadUpdate());
+        break;
       case 'setAccounts':
         await setAccounts(msg.accounts);
         sendResponse({ ok: true });

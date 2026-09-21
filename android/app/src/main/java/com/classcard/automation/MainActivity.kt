@@ -217,6 +217,9 @@ class MainActivity : AppCompatActivity() {
         LogBus.addListener(logListener)
         LogBus.info("클래스카드 자동화 v${BuildConfig.VERSION_NAME} 시작")
         if (accounts.isEmpty()) LogBus.warn(getString(R.string.msg_no_accounts))
+
+        // 자동 업데이트: 켜 두면 앱을 열 때(6시간에 한 번) 새 버전을 확인해 받아 온다.
+        if (SettingsStore.autoUpdate(this)) Updater.checkAndInstall(this, lifecycleScope)
     }
 
     private fun bindViews() {
@@ -695,6 +698,14 @@ class MainActivity : AppCompatActivity() {
             R.string.set_keep_browser, R.string.set_keep_browser_sub,
             SettingsStore.keepBrowser(this),
         ) { SettingsStore.setKeepBrowser(this, it) }
+
+        addToggle(
+            R.string.set_auto_update, R.string.set_auto_update_sub,
+            SettingsStore.autoUpdate(this),
+        ) { on ->
+            SettingsStore.setAutoUpdate(this, on)
+            if (on) Updater.checkAndInstall(this, lifecycleScope, force = true)
+        }
 
         // 안드로이드에는 전역 단축키가 없다. 목업과 같이 꺼진 채 비활성으로 둔다.
         addToggle(

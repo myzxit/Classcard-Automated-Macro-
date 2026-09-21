@@ -161,6 +161,22 @@ body {
 }
 .icon-btn:hover { background: var(--surface-alt); }
 
+/* -------------------------------------------------- 새 버전 안내 */
+.update-banner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  background: linear-gradient(90deg, var(--primary), var(--accent));
+}
+.update-banner .tool { flex: 0 0 auto; background: rgba(255, 255, 255, 0.18); border-color: rgba(255, 255, 255, 0.5); }
+.update-banner span { flex: 1; }
+
 /* -------------------------------------------------- 탭 */
 .tabs {
   position: relative;

@@ -1,7 +1,7 @@
 {
   "name": "classcard-automation-desktop",
   "productName": "클래스카드 자동화",
-  "version": "3.15.1",
+  "version": "3.16.0",
   "description": "클래스카드 자동화 — PC(윈도우) 버전. 크롬 확장·안드로이드 앱과 같은 엔진.",
   "private": true,
   "type": "module",
@@ -46,6 +46,13 @@
       "allowToChangeInstallationDirectory": true,
       "artifactName": "classcard-automation-setup.exe",
       "shortcutName": "클래스카드 자동화"
+    },
+    "publish": {
+      "provider": "generic",
+      "url": "https://github.com/myzxit/Classcard-Automated-Macro-/releases/download/apk-latest"
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

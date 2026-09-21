@@ -30,6 +30,7 @@ const SETTINGS = [
     type: 'choice', labelOn: '🌙 밤', labelOff: '☀ 낮',
   },
   { key: 'animeTheme', title: '이세계 테마', sub: '배경 그림과 캐릭터(유메·푸딩) 표시. 끄면 단색 화면', type: 'toggle' },
+  { key: 'autoUpdate', title: '자동 업데이트', sub: '새 버전이 나오면 알려 주고 한 번의 클릭으로 받음 (PC 앱은 스스로 설치)', type: 'toggle' },
   { key: 'autoLogin', title: '자동 로그인', sub: '저장된 ID/PW로 탭을 열 때 바로 로그인', type: 'toggle' },
   { key: 'keepTab', title: '자동화 후 탭 유지', sub: '끄면 자동화가 끝날 때 탭을 닫음', type: 'toggle' },
   { key: 'sequential', title: '다계정 순차 실행', sub: '크롬은 쿠키를 공유하므로 계정을 하나씩 실행 (끌 수 없음)', type: 'toggle', disabled: true, fixed: true },
@@ -84,6 +85,16 @@ async function init() {
   renderModeSelection();
   renderLogDates();
   renderLog();
+  renderUpdate(state.update);
+}
+
+/** 새 버전 안내 띠. 백그라운드가 6시간마다 확인해서 알려 준다. */
+function renderUpdate(update) {
+  const banner = $('updateBanner');
+  if (!update) { banner.classList.add('hidden'); return; }
+  $('updateText').textContent = `✦ 새 버전 v${update.version} 이 나왔어요 (지금 v${chrome.runtime.getManifest().version})`;
+  $('btnUpdate').textContent = IS_DESKTOP ? '⬇ 지금 설치' : '⬇ 업데이트 받기';
+  banner.classList.remove('hidden');
 }
 
 function send(message) {
@@ -118,6 +129,11 @@ function bindEvents() {
     renderAccounts();
   });
   $('btnRun').addEventListener('click', onRun);
+  $('btnUpdate').addEventListener('click', async () => {
+    flash($('btnUpdate'), '받는 중…');
+    await send({ type: 'downloadUpdate' });
+    showTab('log');
+  });
 
   $('logDateSelect').addEventListener('change', (e) => {
     currentLogDate = e.target.value;
@@ -141,6 +157,8 @@ function bindEvents() {
       state.running = msg.running;
       renderAccounts();
       renderStatus();
+    } else if (msg.type === 'update') {
+      renderUpdate(msg.update);
     }
   });
 }
