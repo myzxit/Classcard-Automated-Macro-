@@ -47,14 +47,27 @@ for r in "${RUNNERS[@]}"; do
   # 확장 코드가 바뀌었을 때 옛 서비스워커를 쓰지 않도록 프로필을 지운다
   P=$(grep -o "launchPersistentContext('[^']*'" "$WORK/$r.mjs" | sed "s/launchPersistentContext('//;s/'//")
   [ -n "$P" ] && rm -rf "$P"
-  res=$(cd "$WORK" && timeout 240 $XVFB node "$r.mjs" 2>&1 | grep -E "결과:" | tail -1 || true)
+  log="$WORK/$r.out"
+  (cd "$WORK" && timeout 240 $XVFB node "$r.mjs" > "$log" 2>&1 || true)
+  res=$(grep -E "결과:" "$log" | tail -1 || true)
   # 브라우저를 띄우는 테스트라 가끔 시간 문제로 결과 줄이 안 나온다 — 한 번은 다시 돌려 본다
   if [ -z "$res" ]; then
     [ -n "$P" ] && rm -rf "$P"
-    res=$(cd "$WORK" && timeout 240 $XVFB node "$r.mjs" 2>&1 | grep -E "결과:" | tail -1 || true)
+    (cd "$WORK" && timeout 240 $XVFB node "$r.mjs" > "$log" 2>&1 || true)
+    res=$(grep -E "결과:" "$log" | tail -1 || true)
   fi
   if [ -z "$res" ] || echo "$res" | grep -q "완주 못함\|오답\|튕김 있음\|안 됨"; then fail=$((fail+1)); mark="✗"; else mark="✓"; fi
   printf "%s %-18s %s\n" "$mark" "$r" "${res:-(결과 줄 없음)}" | tee -a "$out"
+  # 결과 줄이 없으면 왜 안 나왔는지 보여 준다 (CI 에서는 이것만이 단서다)
+  if [ -z "$res" ]; then
+    echo "   ── $r 출력 마지막 12줄 ──" | tee -a "$out"
+    tail -12 "$log" | sed 's/^/   /' | tee -a "$out"
+    echo "   ── 남은 디스크 / 메모리 ──" | tee -a "$out"
+    { df -h "$WORK" | tail -1; free -m 2>/dev/null | head -2 | tail -1; } | sed 's/^/   /' | tee -a "$out"
+  fi
+  # 프로필이 쌓이면 디스크를 다 먹는다 (러너 24개 × 수십 MB) — 끝나면 지운다
+  [ -n "$P" ] && rm -rf "$P"
+  rm -f "$log"
 done
 echo "실패 $fail / ${#RUNNERS[@]}" | tee -a "$out"
 [ "$fail" -eq 0 ]
