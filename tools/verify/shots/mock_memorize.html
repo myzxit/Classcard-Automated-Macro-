@@ -1,0 +1,33 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>암기</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .wrap{max-width:820px;margin:24px auto;background:#fff;border-radius:12px;padding:22px;min-height:300px}
+ .CardItem{display:none}.CardItem.current{display:block}
+ #study_end{display:none}#study_end.active{display:block;text-align:center;padding:20px}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="wrap" id="page"><div id="cards"></div></div>
+<div id="study_end"><div class="study-header"><a href="#">나가기</a></div>
+  <a class="btn-study-end-repeat" href="#">다시 학습</a></div>
+<div id="done"><h2>🎉 암기 완료</h2><p id="stat"></p></div>
+<script>
+var TOTAL = 6, idx = 0, spaces = 0;
+function render(){
+  document.getElementById('cards').innerHTML =
+    '<div class="CardItem current" data-idx="'+idx+'">카드 '+(idx+1)+' / '+TOTAL+'</div>';
+}
+document.addEventListener('keydown', function(e){
+  if ((e.key !== ' ' && e.code !== 'Space') || !e.isTrusted) return;   // 합성 키 무시
+  spaces++;
+  idx++;
+  if (idx >= TOTAL) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('study_end').classList.add('active');
+    document.getElementById('done').style.display='block';
+    document.getElementById('stat').textContent = '카드 '+TOTAL+'장 · SPACE '+spaces+'회';
+    return;
+  }
+  render();
+});
+render();
+</script></body></html>

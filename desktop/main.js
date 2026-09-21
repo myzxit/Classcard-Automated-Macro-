@@ -74,6 +74,7 @@ function scheduleSave() {
 const DEFAULT_SETTINGS = {
   darkMode: true,
   autoUpdate: true,
+  autoDict: true,     // 학습 페이지에 들어가면 그 페이지의 단어장을 알아서 가져온다
   autoLogin: true,
   keepTab: true,
   sequential: true,
@@ -202,6 +203,8 @@ function createAccountWindow(account) {
     return { action: 'deny' };
   });
   win.on('focus', () => { lastFocusedAccountWin = win; });
+  // 학습 페이지에 들어가면 단어장을 알아서 가져온다
+  win.webContents.on('did-finish-load', () => maybeAutoDict(win, win.webContents.getURL()));
   // 창이 닫히면 그 창을 쓰던 세션을 전부 정리한다 ('현재 창 사용'으로 다른 계정이 같은 창을 잡았어도).
   win.on('closed', () => {
     for (const [id, s] of sessions) {
@@ -216,6 +219,31 @@ function createAccountWindow(account) {
 }
 
 const winAlive = (win) => !!win && !win.isDestroyed();
+
+// ------------------------------------------------------------------ 학습 페이지 자동 단어장 (확장과 같은 규칙)
+const STUDY_PATH_RE = /classcard\.net\/(Memorize|Recall|Spell|Test|SetTest|Match|Scramble|Quiz|Learn)[A-Za-z]*\//i;
+const autoDictLast = new Map();   // win.id -> 마지막으로 가져온 주소
+
+async function maybeAutoDict(win, url) {
+  if (!winAlive(win) || !STUDY_PATH_RE.test(url || '')) return;
+  if (getSettings().autoDict === false) return;
+  const s = Array.from(sessions.values()).find((x) => x.win === win);
+  if (!s || s.running) return;
+  if (autoDictLast.get(win.id) === url) return;
+  autoDictLast.set(win.id, url);
+  await new Promise((r) => setTimeout(r, 1500));
+  if (!winAlive(win)) return;
+  const hasCards = await s.driver.evalBool(
+    "return !!document.querySelector('.CardItem, .flip-card, [name=\"card_idx[]\"], .speed_quiz_row') || (typeof study_data !== 'undefined' && !!study_data);",
+  );
+  if (!hasCards) { autoDictLast.delete(win.id); return; }
+  const data = await Basic.getData(s.driver, { quiet: true });
+  const dict = Basic.dictFromCards(data);
+  if (dict && dict.size) {
+    s.answerDict = dict;
+    s.driver.log(`학습 페이지 감지 — 단어장을 자동으로 가져왔습니다 (${dict.size}개)`, 'success');
+  }
+}
 
 // ------------------------------------------------------------------ 세션
 
@@ -243,6 +271,13 @@ async function openWindowForAccount(account, { forceLogin }) {
     sessions.delete(account.id);
     s = null;
   }
+  // '현재 창 사용'으로 잡은 창은 이미 로그인된 창이다. 로그인 화면일 때만 로그인한다(학습 화면에서 튕기지 않게).
+  if (s && s.manual) {
+    const url = await s.driver.currentUrl();
+    if (/\/Login/.test(url)) await autoLogin(s);
+    if (s.state !== 'error') setSessionState(s, 'ready', '현재 창 사용');
+    return s;
+  }
   if (!s) {
     const win = createAccountWindow(account);
     const driver = new ElectronDriver(win, `[${account.id}]`, log);
@@ -264,11 +299,13 @@ async function autoLogin(s) {
     d.log('[!] 아이디/비밀번호가 없습니다. 수동 로그인하세요.', 'warn');
     return;
   }
+  // 클래스카드 주소인데 로그인 입력창이 안 보이면 로그인된 것이다 (사이트는 비로그인이면 로그인 화면으로 보낸다)
   const url = await d.currentUrl();
-  if (!url.includes('/Login')) {
-    const loggedIn = await d.evalBool(
-      "return !!document.querySelector('.btn-top-menu, .set-item, .btn-summary');",
-    );
+  if (/classcard\.net/.test(url) && !/\/Login/.test(url)) {
+    const loggedIn = await d.evalBool(`
+      var ins = document.querySelectorAll('input[name="login_id"], input[name="login_pwd"], #login_id, #login_pwd');
+      for (var i = 0; i < ins.length; i++) { var r = ins[i].getBoundingClientRect(); if (r.width > 0 && r.height > 0) return false; }
+      return true;`);
     if (loggedIn) { d.log('이미 로그인되어 있습니다.'); return; }
   }
   await d.loadUrl(LOGIN_URL);
@@ -619,8 +656,9 @@ ipcMain.handle('msg', async (_event, msg) => {
       if (old && old.win !== win) old.stop?.set();
       sessions.set(account.id, {
         account, win, driver: new ElectronDriver(win, `[${account.id}]`, log),
-        state: 'ready', detail: '현재 창 사용', running: false, stop: null,
+        state: 'ready', detail: '현재 창 사용', running: false, stop: null, manual: true,
       });
+      maybeAutoDict(win, win.webContents.getURL());
       log(`[${account.id}] 현재 창을 사용합니다.`);
       notifyState();
       return { ok: true };

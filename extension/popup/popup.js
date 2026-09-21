@@ -32,6 +32,7 @@ const SETTINGS = [
   { key: 'animeTheme', title: '이세계 테마', sub: '배경 그림과 캐릭터(유메·푸딩) 표시. 끄면 단색 화면', type: 'toggle' },
   { key: 'autoUpdate', title: '자동 업데이트', sub: '새 버전이 나오면 알려 주고 한 번의 클릭으로 받음 (PC 앱은 스스로 설치)', type: 'toggle' },
   { key: 'autoLogin', title: '자동 로그인', sub: '저장된 ID/PW로 탭을 열 때 바로 로그인', type: 'toggle' },
+  { key: 'autoDict', title: '학습 페이지 자동 단어장', sub: '학습 페이지에 들어가면 그 페이지의 단어장을 알아서 가져옴', type: 'toggle' },
   { key: 'keepTab', title: '자동화 후 탭 유지', sub: '끄면 자동화가 끝날 때 탭을 닫음', type: 'toggle' },
   { key: 'sequential', title: '다계정 순차 실행', sub: '크롬은 쿠키를 공유하므로 계정을 하나씩 실행 (끌 수 없음)', type: 'toggle', disabled: true, fixed: true },
   { key: 'hotkey', title: '전역 단축키 사용', sub: 'Ctrl+A / Ctrl+I / Ctrl+E … (확장프로그램 미지원)', type: 'toggle', disabled: true, fixed: false },

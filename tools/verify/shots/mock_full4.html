@@ -1,0 +1,171 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>문법훈련</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9;color:#222}
+ .wrap{max-width:860px;margin:20px auto;background:#fff;border-radius:12px;padding:20px;min-height:380px}
+ .unit-item{border:1px solid #e5e9f0;border-radius:10px;padding:12px;margin-bottom:10px}
+ .unit-item.lock{opacity:.5}
+ .unit-set-list{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+ .set-box{border:1px solid #d7dee8;border-radius:8px;padding:8px 12px;cursor:pointer;min-width:100px}
+ .set-box.lock{opacity:.45;cursor:default}
+ .set-box.done{background:#dcfce7;border-color:#86efac}
+ .talk-card{display:flex;gap:10px;margin-bottom:10px}.talk-card.hidden{display:none}
+ .card-content{background:#eef4fb;border-radius:8px;padding:10px 12px}
+ .select-body{margin-top:12px;display:flex;gap:8px}.select-body.hidden{display:none}
+ .select-option{border:1px solid #cbd5e1;border-radius:8px;padding:6px 10px;cursor:pointer}
+ .gclass-q-quest{font-size:19px;margin:14px 0}
+ .object-body .object{background:#d6e7f7;border-radius:4px;padding:10px 14px;margin-bottom:8px;cursor:pointer}
+ .object-body .object.selected{background:#369fff;color:#fff}
+ .gclass-q-answer-box{display:none}
+ .btn-next-card{display:inline-block;background:#369fff;color:#fff;border-radius:6px;padding:9px 20px;cursor:pointer;margin-top:14px}
+ .result-body{display:none;text-align:center;padding:36px 0}
+ h3{margin:4px 0 12px}
+</style></head><body>
+<div class="wrap">
+ <!-- 클래스 페이지 -->
+ <div id="classPage">
+  <h3>월요일 7교시 — 강조구문</h3>
+  <div class="unit-list">
+   <div class="unit-item" data-idx="1">
+    <div class="unit-title" data-open="1"><div class="unit-name"><span>강조구문</span></div></div>
+    <div class="unit-content"><div class="unit-set-list" id="stages"></div></div>
+   </div>
+  </div>
+  <p id="progress" style="color:#64748b"></p>
+ </div>
+ <!-- 개념 톡 -->
+ <div id="talkPage" style="display:none">
+  <div id="talkCards">
+   <div class="talk-card" data-idx="t1"><div class="card-content"><div class="content-row">강조구문을 배워봅시다.</div></div></div>
+   <div class="talk-card hidden" data-idx="t2"><div class="card-content"><div class="content-row">do(does,did)로 <input type="text" class="user-text choice">를 강조해요.</div></div></div>
+   <div class="talk-card hidden" data-idx="t3"><div class="card-content"><div class="content-row correct">이때는 '정말 ~하다'로 해석해서 동사의 뜻을 강조해요.</div></div></div>
+   <div class="talk-card hidden" data-idx="t4"><div class="card-content"><div class="content-row">물론, <input type="text" class="user-text choice" data-cnt="1">이나 시제에 따라 does나 did로 변해요.</div></div></div>
+   <div class="talk-card hidden" data-idx="t5"><div class="card-content"><div class="content-row">주의할 건, do 뒤에는 반드시 동사원형이 와야 한다는 거예요.</div></div></div>
+  </div>
+  <div class="select-body hidden" id="sel">
+   <div class="select-option"><div class="select-num">1</div>동사원형</div>
+   <div class="select-option"><div class="select-num">2</div>부사구</div>
+   <div class="select-option"><div class="select-num">3</div>동사</div>
+   <div class="select-option"><div class="select-num">4</div>인칭</div>
+  </div>
+ </div>
+ <!-- 문제 화면 -->
+ <div id="quizPage" style="display:none">
+  <div class="flip-card showing"><div class="flip-card-inner">
+   <div class="gclass-q-item" id="qitem">
+     <div class="gclass-q-quest" id="q"></div>
+     <div class="gclass-q-input"><div class="object-body" id="opts"></div></div>
+     <div class="gclass-q-answer-body"><div class="gclass-q-answer-box"><span class="gclass-q-answer-text" id="ans"></span></div></div>
+   </div>
+   <div class="default-btn-body"><div class="btn btn-gclass btn-next-card" id="grade">채점하기</div></div>
+  </div></div>
+ </div>
+ <div class="result-body" id="done"><h2>🎉 단계 완료</h2></div>
+</div>
+<script>
+var STAGES = ['개념 톡','연습 문제 A','연습 문제 B'];
+// 실제 사이트처럼 정답 데이터는 전역에만 있고 화면에는 없다
+// 실제 사이트와 같은 구조: 개념 톡 = arr_card[i].answer, 문제 = arr_answer[{card_idx, answer}]
+var arr_card = [
+  { type: '0', answer: '' },
+  { type: '0', answer: '동사' },
+  { type: '0', answer: '' },
+  { type: '0', answer: '인칭' },
+  { type: '0', answer: '' }
+];
+var arr_answer = [];
+var arr_talk_answer = ['동사', '인칭'];
+var doneStages = JSON.parse(localStorage.getItem('done')||'[]');   // 실제 사이트처럼 진행이 남는다
+var log = JSON.parse(localStorage.getItem('log')||'[]');
+function show(id){ ['classPage','talkPage','quizPage'].forEach(function(x){
+  document.getElementById(x).style.display = (x===id)?'block':'none'; });
+  document.getElementById('done').style.display='none';
+}
+function renderClass(){
+  var box=document.getElementById('stages'); box.innerHTML='';
+  STAGES.forEach(function(name,i){
+    var locked = i>0 && doneStages.indexOf(STAGES[i-1])<0;   // 앞 단계를 끝내야 열린다
+    var d=document.createElement('div');
+    d.className='set-box'+(locked?' lock':'')+(doneStages.indexOf(name)>=0?' done':'');
+    d.innerHTML='<div class="title">'+name+'</div>';
+    if(!locked && doneStages.indexOf(name)<0) d.onclick=function(){ startStage(name); };
+    box.appendChild(d);
+  });
+  document.getElementById('progress').textContent='완료: '+(doneStages.join(', ')||'없음');
+  show('classPage');
+}
+function finishStage(name){
+  if(doneStages.indexOf(name)<0){ doneStages.push(name); log.push(name); }
+  localStorage.setItem('done', JSON.stringify(doneStages));
+  localStorage.setItem('log', JSON.stringify(log));
+  show(null);
+  document.getElementById('done').style.display='block';   // 종료 화면
+}
+// --- 개념 톡
+var talkStep=0;
+var BLANK_STEPS={1:0, 3:1};      // 카드 번호 -> 정답 배열 인덱스
+function startTalk(){
+  talkStep=0;
+  document.querySelectorAll('.talk-card').forEach(function(c,i){ c.classList.toggle('hidden', i>0); });
+  document.getElementById('sel').classList.add('hidden');
+  show('talkPage');
+}
+document.addEventListener('keydown', function(e){
+  if(e.key!=='Enter' || document.getElementById('talkPage').style.display==='none') return;
+  if(BLANK_STEPS[talkStep]!==undefined) return;   // 빈칸을 풀어야 넘어간다
+  talkStep++;
+  var cards=document.querySelectorAll('.talk-card');
+  if(talkStep>=cards.length){ finishStage('개념 톡'); return; }
+  cards[talkStep].classList.remove('hidden');
+  document.getElementById('sel').classList.toggle('hidden', BLANK_STEPS[talkStep]===undefined);
+});
+document.querySelectorAll('.select-option').forEach(function(o){
+  o.onclick=function(){
+    var idx = BLANK_STEPS[talkStep];
+    if(idx===undefined) return;
+    var word = o.textContent.replace(/^\d+/,'').trim();
+    if(word !== arr_talk_answer[idx]) return;    // 정답만 받는다
+    document.querySelectorAll('.talk-card')[talkStep].querySelector('.user-text').value = word;
+    talkStep++;
+    document.querySelectorAll('.talk-card')[talkStep].classList.remove('hidden');
+    document.getElementById('sel').classList.toggle('hidden', BLANK_STEPS[talkStep]===undefined);
+  };
+});
+// --- 문제 화면 (정답이 화면에 있음)
+var QUIZ={'연습 문제 A':{q:'It was ___ that I found there.',o:['me','this book','yesterday'],a:1},
+          '연습 문제 B':{q:'강조구문에서 사람을 강조할 때는?',o:['which','who','where'],a:1}};
+var curStage=null;
+function startQuiz(name){
+  curStage=name; var it=QUIZ[name];
+  var item=document.getElementById('qitem'); item.className='gclass-q-item';
+  document.getElementById('q').textContent=it.q;
+  // '연습 문제 B' 는 화면에 정답을 그리지 않는다 — 전역에만 있다 (실전 테스트와 같음)
+  document.getElementById('ans').textContent = (name==='연습 문제 B') ? '' : it.o[it.a];
+  // 문제 화면: 사이트처럼 arr_answer 에 card_idx 로 넣는다
+  window.arr_answer = [{ card_idx: 99, answer: it.o[it.a] }];
+  document.getElementById('qitem').setAttribute('data-idx', '99');
+  var box=document.getElementById('opts'); box.innerHTML='';
+  it.o.forEach(function(t,i){
+    var el=document.createElement('div'); el.className='object'; el.textContent=t;
+    el.onclick=function(){ if(item.className.indexOf('correct')>=0) return;
+      box.querySelectorAll('.object').forEach(function(x){x.classList.remove('selected')});
+      el.classList.add('selected'); };
+    box.appendChild(el);
+  });
+  show('quizPage');
+}
+document.getElementById('grade').onclick=function(){
+  var item=document.getElementById('qitem'), it=QUIZ[curStage];
+  if(item.className.indexOf('correct')<0 && item.className.indexOf('wrong')<0){
+    var sel=document.querySelector('.object.selected');
+    var ok = sel && [...document.querySelectorAll('.object')].indexOf(sel)===it.a;
+    item.classList.add(ok?'correct':'wrong');
+    log.push(curStage+(ok?':정답':':오답'));
+    localStorage.setItem('log', JSON.stringify(log));
+    return;
+  }
+  finishStage(curStage);
+};
+function startStage(name){ if(name==='개념 톡') startTalk(); else startQuiz(name); }
+window.__log=function(){ return log.join(' > '); };
+renderClass();
+</script></body></html>

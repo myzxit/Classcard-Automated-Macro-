@@ -700,6 +700,11 @@ class MainActivity : AppCompatActivity() {
         ) { SettingsStore.setKeepBrowser(this, it) }
 
         addToggle(
+            R.string.set_auto_dict, R.string.set_auto_dict_sub,
+            SettingsStore.autoDict(this),
+        ) { SettingsStore.setAutoDict(this, it) }
+
+        addToggle(
             R.string.set_auto_update, R.string.set_auto_update_sub,
             SettingsStore.autoUpdate(this),
         ) { on ->

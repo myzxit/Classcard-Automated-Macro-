@@ -10,7 +10,7 @@ import * as N from '../norm.js';
 const STUDY_DATA_RE = /var\s+study_data\s*=\s*(\[[\s\S]*?\]);/;
 
 /** 현재 페이지에서 카드 목록([{front, back}, ...])을 뽑는다. */
-export async function getData(d) {
+export async function getData(d, opts = {}) {
   const direct = await d.eval(
     "return (typeof study_data !== 'undefined' && study_data) ? study_data : null;",
   );
@@ -36,10 +36,13 @@ export async function getData(d) {
       d.log(`데이터 추출 완료! 총 ${fromDom.length}개 카드 (화면에서 읽음)`);
       return fromDom;
     }
-    d.log(
-      '[!] 단어 데이터를 찾지 못했습니다. 학습을 시작해 카드가 보이는 상태에서 다시 눌러 주세요.',
-      'error',
-    );
+    // 학습 페이지 자동 단어장처럼 '있으면 가져오는' 호출은 조용히 넘어간다(quiet)
+    if (!opts.quiet) {
+      d.log(
+        '[!] 단어 데이터를 찾지 못했습니다. 학습을 시작해 카드가 보이는 상태에서 다시 눌러 주세요.',
+        'error',
+      );
+    }
     return null;
   }
   try {

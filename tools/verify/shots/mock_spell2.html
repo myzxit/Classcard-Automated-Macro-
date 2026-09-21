@@ -1,0 +1,58 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>스펠(실제 규칙)</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .wrap{max-width:820px;margin:24px auto;background:#fff;border-radius:12px;padding:22px;min-height:300px}
+ .CardItem{display:none}.CardItem.current.showing{display:block}
+ input{padding:8px 12px;border:1px solid #94a3b8;border-radius:8px;width:260px}
+ #study_end{display:none}#study_end.active{display:block;text-align:center;padding:20px}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="wrap" id="page"><div id="cards"></div></div>
+<div id="study_end"><div class="study-header"><a href="#">나가기</a></div>
+  <a class="btn-study-end-repeat" href="#">다시 학습</a></div>
+<div id="done"><h2>🎉 스펠 완료</h2><p id="stat"></p></div>
+<script>
+// 실제 spell.js 규칙 재현:
+//  - 입력창의 마지막 keydown 이벤트를 저장해 두고, 채점할 때 isTrusted 를 확인한다.
+//    값만 바꿔 넣으면 "event is not trusted" 로 제출이 거부된다.
+var study_data = [
+  { front: 'apple', back: '사과' }, { front: 'book', back: '책' }, { front: 'water', back: '물' }
+];
+var idx = 0, results = [], rejected = 0;
+function render(){
+  var c = study_data[idx];
+  document.getElementById('cards').innerHTML =
+    '<div class="CardItem current showing" data-idx="'+idx+'">' +
+      '<div class="spell-answer"><div class="spell-content">'+c.back+'</div></div>' +
+      '<input type="text" name="input_answer" autocomplete="off">' +
+    '</div>';
+  var el = document.querySelector('input[name="input_answer"]');
+  el.__lastEvent = null;
+  el.addEventListener('keydown', function(e){
+    if (!e.isTrusted) { el.__lastEvent = null; e.preventDefault(); return false; }  // 합성 키 거부
+    el.__lastEvent = e;
+    if (e.key === 'Enter') submit();
+  });
+}
+function submit(){
+  var el = document.querySelector('input[name="input_answer"]');
+  var value = el.value.trim();
+  if (value.length > 0 && (!el.__lastEvent || !el.__lastEvent.isTrusted)) {
+    rejected++;                       // 실제 사이트와 같이 제출 거부
+    return;
+  }
+  var c = study_data[idx];
+  results.push(value.toLowerCase() === c.front.toLowerCase() ? '정답' : ('오답(' + value + ')'));
+  idx++;
+  if (idx >= study_data.length) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('study_end').classList.add('active');
+    document.getElementById('done').style.display='block';
+    document.getElementById('stat').textContent = results.join(' / ') + ' · 거부된 제출 ' + rejected;
+    return;
+  }
+  render();
+  document.querySelector('input[name="input_answer"]').focus();
+}
+render();
+</script></body></html>

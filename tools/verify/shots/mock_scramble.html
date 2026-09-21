@@ -1,0 +1,62 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>문장 스크램블</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .top{padding:14px 22px;font-weight:700}
+ .wrap{max-width:900px;margin:0 auto;padding:0 22px}
+ .quest-back{font-size:18px;margin:14px 0}
+ .user-input-body{min-height:40px;margin:10px 0}
+ .user-box{display:inline-block;margin:4px;padding:8px 12px;background:#e0f2fe;border-radius:8px}
+ .word-box{display:inline-block;margin:4px;padding:8px 12px;border:1px solid #94a3b8;border-radius:8px;cursor:pointer}
+ .word-box.clicked{display:none}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="top">점수 <span class="txt-total-score">0</span></div>
+<div class="wrap" id="page">
+  <div class="quest-back"></div>
+  <div class="user-input-body"></div>
+  <div class="suggest-body"></div>
+</div>
+<div id="done"><h2>🎉 스크램블 완료</h2><p id="stat"></p></div>
+<script>
+var study_data = [
+  { front: 'I like to play soccer', back: '나는 축구하는 걸 좋아한다.' },
+  { front: 'He studies hard every day', back: '그는 매일 열심히 공부한다.' },
+  { front: 'We will go to the library', back: '우리는 도서관에 갈 것이다.' }
+];
+var idx = 0, placed = [], score = 0, synthetic = 0, results = [];
+function shuffle(a){ a=a.slice(); for(var i=a.length-1;i>0;i--){var j=(i*5+2)%(i+1);var t=a[i];a[i]=a[j];a[j]=t;} return a; }
+function render(){
+  var c = study_data[idx];
+  document.querySelector('.quest-back').textContent = c.back;
+  document.querySelector('.user-input-body').innerHTML = '';
+  document.querySelector('.suggest-body').innerHTML =
+    shuffle(c.front.split(' ')).map(function(w){ return '<div class="word-box">'+w+'</div>'; }).join('');
+  placed = [];
+  [].forEach.call(document.querySelectorAll('.word-box'), function(el){
+    el.addEventListener('click', function(e){
+      if (!e.isTrusted) { synthetic++; return; }    // 합성 클릭 무시 (실제 사이트와 동일)
+      if (el.classList.contains('clicked')) return;
+      el.classList.add('clicked');
+      placed.push(el.textContent.trim());
+      document.querySelector('.user-input-body').innerHTML =
+        placed.map(function(w){ return '<span class="user-box">'+w+'</span>'; }).join('');
+      if (placed.length === study_data[idx].front.split(' ').length) setTimeout(grade, 200);
+    });
+  });
+}
+function grade(){
+  var c = study_data[idx];
+  var ok = placed.join(' ') === c.front;
+  results.push(ok ? '정답' : ('오답(' + placed.join(' ') + ')'));
+  if (ok) { score += 1000; document.querySelector('.txt-total-score').textContent = score; }
+  idx++;
+  if (idx >= study_data.length) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('done').style.display='block';
+    document.getElementById('stat').textContent = results.join(' / ') + ' · 무시된 합성 클릭 ' + synthetic;
+    return;
+  }
+  render();
+}
+render();
+</script></body></html>

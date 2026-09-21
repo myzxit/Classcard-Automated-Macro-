@@ -20,6 +20,7 @@ object SettingsStore {
     private const val KEY_ACCOUNT_GAP = "account_gap"
     private const val KEY_DARK_MODE = "dark_mode"
     private const val KEY_AUTO_UPDATE = "auto_update"
+    private const val KEY_AUTO_DICT = "auto_dict"
 
     /** 저장된 ID/PW로 브라우저를 열 때 바로 로그인. */
     fun autoLogin(c: Context): Boolean = prefs(c).getBoolean(KEY_AUTO_LOGIN, true)
@@ -54,6 +55,10 @@ object SettingsStore {
     /** 새 버전이 나오면 스스로 받아 설치 화면을 띄운다. 기본값은 켬. */
     fun autoUpdate(c: Context): Boolean = prefs(c).getBoolean(KEY_AUTO_UPDATE, true)
     fun setAutoUpdate(c: Context, v: Boolean) = put(c, KEY_AUTO_UPDATE, v)
+
+    /** 학습 페이지에 들어가면 그 페이지의 단어장을 알아서 가져온다. 기본값은 켬. */
+    fun autoDict(c: Context): Boolean = prefs(c).getBoolean(KEY_AUTO_DICT, true)
+    fun setAutoDict(c: Context, v: Boolean) = put(c, KEY_AUTO_DICT, v)
 
     private fun put(c: Context, key: String, value: Boolean) =
         prefs(c).edit().putBoolean(key, value).apply()

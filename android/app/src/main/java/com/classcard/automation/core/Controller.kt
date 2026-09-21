@@ -60,6 +60,7 @@ class Controller(
                 context, account, preloadScript, isolate,
             )
             session.onStateChanged = { onSessionsChanged?.invoke() }
+            session.onPageLoaded = { url -> maybeAutoDict(session, url) }
             sessionMap[account.id] = session
             session.setState(SessionState.OPENING, "브라우저 여는 중")
             attach(session)
@@ -293,6 +294,40 @@ class Controller(
         }
         if (!anyRunning) LogBus.dim("    현재 실행 중인 자동화가 없습니다.")
         onSessionsChanged?.invoke()
+    }
+
+    // ------------------------------------------------------------- 학습 페이지 자동 단어장
+
+    private val studyPathRe = Regex("classcard\\.net/(Memorize|Recall|Spell|Test|SetTest|Match|Scramble|Quiz|Learn)[A-Za-z]*/", RegexOption.IGNORE_CASE)
+    private val autoDictLast = HashMap<String, String>()   // 계정 -> 마지막으로 가져온 주소
+
+    /**
+     * 학습 페이지(암기·리콜·스펠·테스트·매칭…)에 들어가면 그 페이지의 단어장을 알아서 가져온다.
+     * (전에는 [단어장 가져오기]를 직접 눌러야 했다) 자동화가 도는 중에는 모드가 스스로 가져오므로 건드리지 않는다.
+     */
+    private fun maybeAutoDict(session: Session, url: String) {
+        if (!studyPathRe.containsMatchIn(url)) return
+        if (!SettingsStore.autoDict(context)) return
+        if (session.isRunning) return
+        if (autoDictLast[session.account.id] == url) return
+        autoDictLast[session.account.id] = url
+        scope.launch {
+            try {
+                kotlinx.coroutines.delay(1500)
+                val hasCards = session.driver.evalBool(
+                    "return !!document.querySelector('.CardItem, .flip-card, [name=\"card_idx[]\"], .speed_quiz_row') || (typeof study_data !== 'undefined' && !!study_data);"
+                )
+                if (!hasCards) { autoDictLast.remove(session.account.id); return@launch }
+                val data = HtmlParser.getData(session.driver, quiet = true)
+                val dict = HtmlParser.dictFromCards(data)
+                if (dict != null && dict.isNotEmpty()) {
+                    session.answerDict = dict
+                    session.log("학습 페이지 감지 — 단어장을 자동으로 가져왔습니다 (${dict.size}개)")
+                }
+            } catch (e: Throwable) {
+                // 페이지 전환 중이면 다음 로드 때 다시 시도한다
+            }
+        }
     }
 
     /** 파이썬 `html_parse` (Ctrl+M) 대응. */

@@ -1,0 +1,143 @@
+<!doctype html><meta charset="utf-8"><title>문법 짝맞추기(16)·분류(17) 모의</title>
+<style>
+ body{font-family:sans-serif;padding:18px}
+ .flip-card{display:none} .flip-card.showing{display:block}
+ .match-content{display:flex;gap:40px}
+ .match-body{min-width:170px}
+ .match-item{border:1px solid #999;padding:7px 12px;margin:5px 0;cursor:pointer}
+ .match-item.picked{background:#ffe9a8}
+ .match-item.end{background:#dff0d8;cursor:default}
+ .grouping-item{border:1px solid #ccc;padding:7px;margin:4px 0}
+ .grouping-item .radio-button{display:inline-block;margin-left:14px}
+ .grouping-item.correct{background:#dff0d8} .grouping-item.wrong{background:#f2dede}
+ .btn-next-card{display:inline-block;margin-top:14px;padding:9px 18px;background:#3388cc;color:#fff;cursor:pointer}
+ #stat{margin-top:20px;font-weight:bold}
+</style>
+
+<!-- ① 짝맞추기 (type 16) : 같은 줄의 왼쪽·오른쪽 data-idx 가 같아야 정답 -->
+<div class="flip-card showing" data-num="1" data-type="16">
+  <input type="hidden" class="card_idx" name="card_idx[]" value="301">
+  <input type="hidden" class="user_answer" name="user_answer[]" value="">
+  <div class="flip-card-inner">
+    <div class="gclass-q-item" data-idx="301">
+      <div class="gclass-q-dictation">알맞은 것끼리 짝지으시오.</div>
+      <div class="gclass-q-input"><div class="match-content">
+        <div class="match-body left">
+          <div class="match-item" data-idx="2">go</div>
+          <div class="match-item" data-idx="0">eat</div>
+          <div class="match-item" data-idx="1">see</div>
+        </div>
+        <div class="match-body right">
+          <div class="match-item" data-idx="0">ate</div>
+          <div class="match-item" data-idx="1">saw</div>
+          <div class="match-item" data-idx="2">went</div>
+        </div>
+      </div></div>
+    </div>
+    <div class="default-btn-body"><div class="btn btn-gclass btn-next-card">채점하기</div></div>
+  </div>
+</div>
+
+<!-- ② 분류 (type 17) : 줄의 data-key 와 고른 라디오 value 가 같아야 정답 -->
+<div class="flip-card" data-num="2" data-type="17">
+  <input type="hidden" class="card_idx" name="card_idx[]" value="302">
+  <input type="hidden" class="user_answer" name="user_answer[]" value="">
+  <div class="flip-card-inner">
+    <div class="gclass-q-item" data-idx="302">
+      <div class="gclass-q-dictation">셀 수 있는 명사와 셀 수 없는 명사로 분류하시오.</div>
+      <div class="gclass-q-input"><div class="grouping-body">
+        <div class="grouping-item" data-idx="0" data-key="0">
+          <span class="txt">apple</span>
+          <span class="radio-button"><input type="radio" class="chk_grouping" name="g0" id="g0_0" value="0"><label for="g0_0">셀 수 있음</label></span>
+          <span class="radio-button"><input type="radio" class="chk_grouping" name="g0" id="g0_1" value="1"><label for="g0_1">셀 수 없음</label></span>
+        </div>
+        <div class="grouping-item" data-idx="1" data-key="1">
+          <span class="txt">water</span>
+          <span class="radio-button"><input type="radio" class="chk_grouping" name="g1" id="g1_0" value="0"><label for="g1_0">셀 수 있음</label></span>
+          <span class="radio-button"><input type="radio" class="chk_grouping" name="g1" id="g1_1" value="1"><label for="g1_1">셀 수 없음</label></span>
+        </div>
+        <div class="grouping-item" data-idx="2" data-key="1">
+          <span class="txt">advice</span>
+          <span class="radio-button"><input type="radio" class="chk_grouping" name="g2" id="g2_0" value="0"><label for="g2_0">셀 수 있음</label></span>
+          <span class="radio-button"><input type="radio" class="chk_grouping" name="g2" id="g2_1" value="1"><label for="g2_1">셀 수 없음</label></span>
+        </div>
+      </div></div>
+    </div>
+    <div class="default-btn-body"><div class="btn btn-gclass btn-next-card">채점하기</div></div>
+  </div>
+</div>
+
+<div id="stat">아직</div>
+<script>
+// 이 화면의 정답은 사이트와 똑같이 화면 자체에 실려 있다(data-idx / data-key).
+// arr_answer 는 문장 형태로만 들어 있어, 그대로는 어느 줄이 어느 그룹인지 알 수 없다.
+var arr_answer = [
+  { card_idx: '301', answer: 'go - went; eat - ate; see - saw' },
+  { card_idx: '302', answer: '셀 수 있음: apple / 셀 수 없음: water, advice' }
+];
+var card_index = 0, graded = [], pairCount = 0;
+function cards(){ return document.querySelectorAll('.flip-card'); }
+function cur(){ return cards()[card_index]; }
+
+// 사이트와 같은 클릭 동작: 왼쪽 하나 -> 오른쪽 하나. 짝이 맞으면 같은 줄(s{n})에 놓인다.
+document.addEventListener('click', function (e) {
+  var mi = e.target.closest ? e.target.closest('.match-item') : null;
+  if (mi && cur().contains(mi) && !mi.classList.contains('end')) {
+    var side = mi.closest('.match-body').classList.contains('left') ? 'left' : 'right';
+    if (side === 'left') {
+      cur().querySelectorAll('.match-body.left .match-item').forEach(function(x){ x.classList.remove('picked'); });
+      mi.classList.add('picked');
+      return;
+    }
+    var pick = cur().querySelector('.match-body.left .match-item.picked');
+    if (!pick) return;
+    pick.classList.remove('picked');
+    if (pick.getAttribute('data-idx') === mi.getAttribute('data-idx')) {
+      pick.classList.add('end', 's' + pairCount);
+      mi.classList.add('end', 's' + pairCount);
+      pairCount += 1;
+    }
+    return;
+  }
+  var lb = e.target.closest ? e.target.closest('.grouping-item label') : null;
+  if (lb && cur().contains(lb)) {
+    var inp = document.getElementById(lb.getAttribute('for'));
+    if (inp) inp.checked = true;
+    return;
+  }
+  var btn = e.target.closest ? e.target.closest('.btn-next-card') : null;
+  if (btn && cur().contains(btn)) grade();
+});
+
+// 사이트(gclass_test.js)와 같은 채점
+function grade() {
+  var card = cur(), type = card.dataset.type, ok = true, detail = '';
+  if (type === '16') {
+    var cnt = card.querySelectorAll('.match-body.left .match-item').length;
+    for (var i = 0; i < cnt; i++) {
+      var l = card.querySelector('.match-body.left .match-item.s' + i);
+      var r = card.querySelector('.match-body.right .match-item.s' + i);
+      if (!l || !r) { ok = false; detail += '[' + i + '칸 비었음]'; continue; }
+      if (l.getAttribute('data-idx') !== r.getAttribute('data-idx')) {
+        ok = false; detail += '[' + l.textContent.trim() + '-' + r.textContent.trim() + ']';
+      }
+    }
+  } else {
+    card.querySelectorAll('.grouping-item').forEach(function (it) {
+      var sel = it.querySelector('.chk_grouping:checked');
+      if (!sel) { ok = false; it.classList.add('wrong'); detail += '[' + it.querySelector('.txt').textContent + ' 미선택]'; return; }
+      if (sel.value === it.getAttribute('data-key')) { it.classList.add('correct'); }
+      else { ok = false; it.classList.add('wrong'); detail += '[' + it.querySelector('.txt').textContent + '->' + sel.value + ']'; }
+    });
+  }
+  card.querySelector('.gclass-q-item').classList.add(ok ? 'correct' : 'wrong');
+  graded.push(card.dataset.num + (ok ? ':정답' : ':오답' + detail));
+  document.getElementById('stat').textContent = '결과: ' + graded.join(' / ');
+  setTimeout(function () {
+    if (card_index < cards().length - 1) {
+      card.classList.remove('showing'); card_index += 1; cards()[card_index].classList.add('showing');
+      pairCount = 0;
+    } else { document.getElementById('stat').setAttribute('data-done','1'); }
+  }, 600);
+}
+</script>

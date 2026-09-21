@@ -114,6 +114,10 @@
     <string name="msg_pick_mode">학습 모드를 먼저 선택하세요.</string>
     <string name="msg_log_saved">로그를 저장했습니다: %1$s</string>
 
+    <!-- 학습 페이지 자동 단어장 -->
+    <string name="set_auto_dict">학습 페이지 자동 단어장</string>
+    <string name="set_auto_dict_sub">학습 페이지에 들어가면 그 페이지의 단어장을 알아서 가져옴</string>
+
     <!-- 자동 업데이트 -->
     <string name="set_auto_update">자동 업데이트</string>
     <string name="set_auto_update_sub">새 버전이 나오면 스스로 받아 설치 화면을 띄움 (설치만 누르면 됨)</string>

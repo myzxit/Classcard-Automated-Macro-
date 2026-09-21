@@ -195,3 +195,34 @@ jobs:
             desktop/dist/latest.yml --clobber
           gh release upload "apk-latest" desktop/dist/version.json --clobber
           echo "- 💻 PC: https://github.com/${GITHUB_REPOSITORY}/releases/download/apk-latest/classcard-automation-portable.exe" >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------- 모의 화면 회귀 (확장 + 크로미움)
+  # 실제 사이트 규칙을 흉내 낸 21종의 화면에서 각 모드가 끝까지 도는지 본다. 산출물 배포와는 독립이다.
+  mocks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Playwright Chromium
+        working-directory: tools/verify
+        run: |
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund playwright@1.56
+          npx playwright install --with-deps chromium
+
+      - name: Run mock suite
+        run: bash tools/verify/run.sh
+
+      - name: Upload result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-suite-result
+          path: tools/verify/last_result.txt
+          if-no-files-found: ignore

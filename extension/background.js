@@ -30,6 +30,7 @@ let currentRun = null; // { queue, index, modeId, stopped }
 const DEFAULT_SETTINGS = {
   darkMode: true,
   autoUpdate: true,
+  autoDict: true,     // 학습 페이지에 들어가면 그 페이지의 단어장을 알아서 가져온다
   autoLogin: true,
   keepTab: true,
   sequential: true,
@@ -159,6 +160,16 @@ async function openTabForAccount(account, { forceLogin }) {
     session = null;
   }
 
+  // '지금 보는 탭 사용'으로 잡은 탭은 사용자가 이미 로그인해 둔 탭이다. 거기서 자동 로그인을 돌리면
+  // 로그인 페이지로 이동시켜 버려 학습 화면에서 튕긴다(실제 로그: '이미 로그인' 뒤 '로그인 폼을 찾지 못했습니다').
+  // 그 탭이 정말 로그인 화면일 때만 로그인한다.
+  if (session && session.manual) {
+    const url = await session.driver.currentUrl();
+    if (/\/Login/.test(url)) await autoLogin(session);
+    if (session.state !== 'error') setSessionState(session, 'ready', '현재 탭 사용');
+    return session;
+  }
+
   if (!session) {
     const tab = await chrome.tabs.create({ url: LOGIN_URL, active: false });
     const driver = new Driver(tab.id, `[${account.id}]`, log);
@@ -209,11 +220,14 @@ async function autoLogin(session) {
   }
 
   // 이미 로그인되어 있으면 그대로 둔다.
+  // 사이트는 로그인이 안 됐으면 어느 주소든 로그인 화면으로 돌려보낸다. 그래서 클래스카드 주소인데
+  // 로그인 입력창이 안 보이면 로그인된 것이다. (특정 메뉴 클래스만 찾으면 학습 화면에서 '안 됨'으로 오판한다)
   const url = await d.currentUrl();
-  if (!url.includes('/Login')) {
-    const loggedIn = await d.evalBool(
-      "return !!document.querySelector('.btn-top-menu, .set-item, .btn-summary');",
-    );
+  if (/classcard\.net/.test(url) && !/\/Login/.test(url)) {
+    const loggedIn = await d.evalBool(`
+      var ins = document.querySelectorAll('input[name="login_id"], input[name="login_pwd"], #login_id, #login_pwd');
+      for (var i = 0; i < ins.length; i++) { var r = ins[i].getBoundingClientRect(); if (r.width > 0 && r.height > 0) return false; }
+      return true;`);
     if (loggedIn) {
       d.log('이미 로그인되어 있습니다.');
       return;
@@ -517,6 +531,39 @@ chrome.runtime.onInstalled.addListener(() => { try { chrome.action.setBadgeText(
 chrome.runtime.onStartup.addListener(() => runUpdateCheck());
 runUpdateCheck();
 
+// ------------------------------------------------------------------ 학습 페이지 자동 단어장
+//
+// 세션 탭이 학습 페이지(암기·리콜·스펠·테스트·매칭…)로 들어가면 그 페이지의 단어장을 알아서 가져온다.
+// (전에는 [단어장 가져오기]를 직접 눌러야 했다) 자동화가 도는 중에는 모드가 스스로 가져오므로 건드리지 않는다.
+const STUDY_PATH_RE = /classcard\.net\/(Memorize|Recall|Spell|Test|SetTest|Match|Scramble|Quiz|Learn)[A-Za-z]*\//i;
+const autoDictLast = new Map();   // tabId -> 마지막으로 가져온 주소 (같은 페이지에서 두 번 안 한다)
+
+async function maybeAutoDict(tabId, url) {
+  if (!STUDY_PATH_RE.test(url || '')) return;
+  const settings = await getSettings();
+  if (settings.autoDict === false) return;
+  const session = Array.from(sessions.values()).find((s) => s.tabId === tabId);
+  if (!session || session.running) return;
+  if (autoDictLast.get(tabId) === url) return;
+  autoDictLast.set(tabId, url);
+  // 카드가 그려질 시간을 준다. 시작 화면이면 카드가 없으므로 조용히 넘어간다.
+  await new Promise((r) => setTimeout(r, 1500));
+  const hasCards = await session.driver.evalBool(
+    "return !!document.querySelector('.CardItem, .flip-card, [name=\"card_idx[]\"], .speed_quiz_row') || (typeof study_data !== 'undefined' && !!study_data);",
+  );
+  if (!hasCards) { autoDictLast.delete(tabId); return; }
+  const data = await Basic.getData(session.driver, { quiet: true });
+  const dict = Basic.dictFromCards(data);
+  if (dict && dict.size) {
+    session.answerDict = dict;
+    session.driver.log(`학습 페이지 감지 — 단어장을 자동으로 가져왔습니다 (${dict.size}개)`, 'success');
+  }
+}
+
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.status === 'complete') maybeAutoDict(tabId, (tab && tab.url) || '');
+});
+
 // 탭이 닫히면 세션도 정리
 chrome.tabs.onRemoved.addListener((tabId) => {
   for (const [id, session] of sessions) {
@@ -618,10 +665,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const driver = new Driver(tab.id, `[${account.id}]`, log);
         sessions.set(account.id, {
           account, tabId: tab.id, driver, state: 'ready', detail: '현재 탭 사용', running: false, stop: null,
+          manual: true,
         });
         log(`[${account.id}] 현재 탭을 사용합니다.`);
         notifyState();
         sendResponse({ ok: true });
+        // 학습 페이지면 단어장도 바로 가져온다
+        maybeAutoDict(tab.id, tab.url || '');
         break;
       }
       default:

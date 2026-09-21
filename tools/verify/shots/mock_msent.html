@@ -1,0 +1,66 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>문장 암기</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .wrap{max-width:900px;margin:24px auto;background:#fff;border-radius:12px;padding:22px;min-height:380px}
+ .CardItem{display:none}.CardItem.active{display:block}
+ .scramble-item{display:inline-block;margin:4px;padding:8px 12px;border:1px solid #94a3b8;border-radius:8px;cursor:pointer}
+ .scramble-item.clicked{opacity:.35}
+ .placed{margin:14px 0;color:#0f766e;font-weight:600;min-height:22px}
+ #study_end{display:none}#study_end.active{display:block;text-align:center;padding:30px}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="wrap" id="page"><div id="cards"></div></div>
+<div id="study_end"><div class="study-header"><a href="#">나가기</a></div>
+  <a class="btn-study-end-repeat" href="#">다시 학습</a></div>
+<div id="done"><h2>🎉 문장 암기 완료</h2><p id="stat"></p></div>
+<script>
+var CARDS = [
+  { ko: '나는 축구하는 걸 좋아한다.', en: 'I like to play soccer' },
+  { ko: '그는 매일 열심히 공부한다.', en: 'He studies hard every day' },
+  { ko: '우리는 내일 도서관에 갈 것이다.', en: 'We will go to the library tomorrow' }
+];
+var idx = 0, placed = [], results = [], synthetic = 0;
+function shuffle(a){ a = a.slice(); for (var i=a.length-1;i>0;i--){var j=(i*7+3)%(i+1);var t=a[i];a[i]=a[j];a[j]=t;} return a; }
+function render(){
+  var c = CARDS[idx];
+  var tiles = shuffle(c.en.split(' ')).map(function(w){
+    return '<span class="scramble-item">'+w+'</span>';
+  }).join('');
+  document.getElementById('cards').innerHTML =
+    '<div class="CardItem active" data-idx="'+idx+'">' +
+      '<div class="step s1"><div class="front"><div class="text">'+c.en+'</div></div></div>' +
+      '<div class="ko"><span class="para_item">'+c.ko+'</span></div>' +
+      '<div class="placed"></div><div class="tiles">'+tiles+'</div>' +
+    '</div>';
+  placed = [];
+  [].forEach.call(document.querySelectorAll('.scramble-item'), function(el){
+    el.addEventListener('click', function(e){
+      if (!e.isTrusted) { synthetic++; return; }     // 합성 클릭 무시 (실제 사이트와 동일)
+      if (el.classList.contains('clicked')) return;
+      el.classList.add('clicked');
+      placed.push(el.textContent.trim());
+      document.querySelector('.placed').textContent = placed.join(' ');
+    });
+  });
+}
+function advance(){
+  var c = CARDS[idx];
+  results.push(placed.join(' ') === c.en ? '정답' : ('오답(' + placed.join(' ') + ')'));
+  idx++;
+  if (idx >= CARDS.length) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('study_end').classList.add('active');
+    document.getElementById('done').style.display='block';
+    document.getElementById('stat').textContent = results.join(' / ') + ' · 무시된 합성 클릭 ' + synthetic + '회';
+    return;
+  }
+  render();
+}
+document.addEventListener('keydown', function(e){
+  if (e.key !== ' ' && e.code !== 'Space') return;
+  if (!e.isTrusted) return;                          // 합성 키 무시
+  // 모든 타일을 놓은 뒤에만 다음 카드로 (실제와 같이 배치가 끝나야 넘어간다)
+  if (placed.length === CARDS[idx].en.split(' ').length) advance();
+});
+render();
+</script></body></html>

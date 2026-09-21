@@ -1,0 +1,61 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>단어 테스트</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .wrap{max-width:900px;margin:24px auto;background:#fff;border-radius:12px;padding:22px;min-height:400px}
+ .flip-card{display:none}.flip-card.showing{display:block}
+ .flip-card-back{display:none}.flip-card.flip .flip-card-back{display:block}
+ .flip-card.flip .flip-card-front{opacity:.6}
+ label{display:block;margin:6px 0;padding:8px 12px;border:1px solid #94a3b8;border-radius:8px}
+ a.btn-go-result{display:none}#result.on a.btn-go-result{display:inline-block}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="wrap" id="page"><div id="cards"></div></div>
+<div id="result"><a class="btn-go-result" href="#">결과 보기</a>
+  <a href="https://www.classcard.net/set/1234" id="exit" style="display:none">나가기</a></div>
+<div id="done"><h2>🎉 단어 테스트 완료</h2><p id="stat"></p></div>
+<script>
+var study_data = [
+  { front: 'apple', back: '사과' }, { front: 'book', back: '책' },
+  { front: 'water', back: '물' }, { front: 'friend', back: '친구' },
+  { front: 'school', back: '학교' }
+];
+var idx = 0, results = [];
+function others(i){ return study_data.filter(function(_,j){return j!==i;}).slice(0,3).map(function(c){return c.back;}); }
+function render(){
+  var c = study_data[idx];
+  var opts = others(idx).concat([c.back]);            // 정답은 항상 4번
+  document.getElementById('cards').innerHTML =
+    '<div class="flip-card showing">' +
+    '<input type="hidden" name="test_question[]" value="q'+idx+'">' +
+    '<div class="flip-card-front"><div class="front-hidden">'+c.front+'</div></div>' +
+    '<div class="flip-card-back">' + opts.map(function(t,i){
+        return '<label for="radio_'+(i+1)+'"><span class="cc-table">'+t+'</span></label>'; }).join('') +
+    '</div></div>';
+}
+function answer(n){
+  var c = study_data[idx];
+  var opts = others(idx).concat([c.back]);
+  results.push(opts[n-1] === c.back ? '정답' : '오답');
+  idx++;
+  if (idx >= study_data.length) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('result').classList.add('on');
+    return;
+  }
+  render();
+}
+document.addEventListener('keydown', function(e){
+  if (!e.isTrusted) return;                            // 합성 키 무시
+  var card = document.querySelector('.flip-card.showing');
+  if (!card) return;
+  if (e.key === ' ' || e.code === 'Space') { card.classList.add('flip'); return; }
+  if (/^[1-9]$/.test(e.key) && card.classList.contains('flip')) answer(parseInt(e.key, 10));
+});
+document.querySelector('a.btn-go-result').addEventListener('click', function(e){
+  e.preventDefault();
+  document.getElementById('exit').style.display='inline';
+  document.getElementById('done').style.display='block';
+  document.getElementById('stat').textContent = results.join(' / ');
+});
+render();
+</script></body></html>

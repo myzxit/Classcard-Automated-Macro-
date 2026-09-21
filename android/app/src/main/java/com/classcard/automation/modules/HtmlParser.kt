@@ -20,7 +20,7 @@ object HtmlParser {
 
     private val STUDY_DATA_RE = Regex("var\\s+study_data\\s*=\\s*(\\[.*?\\]);", RegexOption.DOT_MATCHES_ALL)
 
-    suspend fun getData(d: Driver): List<Card>? {
+    suspend fun getData(d: Driver, quiet: Boolean = false): List<Card>? {
         // 1) 전역 study_data 직접 읽기
         val direct = d.evalArrayOrNull(
             "return (typeof study_data !== 'undefined' && study_data) ? study_data : null;"
@@ -48,7 +48,7 @@ object HtmlParser {
                 d.log("데이터 추출 완료! 총 ${'$'}{fromDom.size}개 카드 (화면에서 읽음)")
                 return fromDom
             }
-            d.log("[!] 단어 데이터를 찾지 못했습니다. 학습을 시작해 카드가 보이는 상태에서 다시 눌러 주세요.")
+            if (!quiet) d.log("[!] 단어 데이터를 찾지 못했습니다. 학습을 시작해 카드가 보이는 상태에서 다시 눌러 주세요.")
             return null
         }
         return try {

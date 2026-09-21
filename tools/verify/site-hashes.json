@@ -1,0 +1,37 @@
+{
+  "checkedAt": "2026-09-21T12:04:51.038Z",
+  "scripts": {
+    "/scripts/v2/gclass_test.js": {
+      "hash": "6b736b9e259a7559",
+      "bytes": 184147
+    },
+    "/scripts/v2/grammar_talk.js": {
+      "hash": "fe1f052ff613a62b",
+      "bytes": 61243
+    },
+    "/scripts/v3/gclass_main_std.js": {
+      "hash": "1b297bbc1e431a32",
+      "bytes": 11670
+    },
+    "/scripts/v2/recall.js": {
+      "hash": "8bd226af8f97a264",
+      "bytes": 67251
+    },
+    "/scripts/v2/memorize.js": {
+      "hash": "e8928c02a087d972",
+      "bytes": 57629
+    },
+    "/scripts/v2/spell.js": {
+      "hash": "15ed9ffda3b06472",
+      "bytes": 106457
+    },
+    "/scripts/v2/match.js": {
+      "hash": "36a340d674b47afc",
+      "bytes": 79229
+    },
+    "/scripts/v2/recall_sentence.js": {
+      "hash": "564268eb419a2208",
+      "bytes": 40499
+    }
+  }
+}

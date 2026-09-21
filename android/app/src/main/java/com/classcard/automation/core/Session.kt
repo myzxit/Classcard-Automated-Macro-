@@ -46,6 +46,9 @@ class Session(
     /** 상태가 바뀔 때마다 호출된다 (계정 리스트 갱신용). */
     var onStateChanged: (() -> Unit)? = null
 
+    /** 페이지 로드가 끝날 때(주소) — 학습 페이지 자동 단어장용. */
+    var onPageLoaded: ((String) -> Unit)? = null
+
     var job: Job? = null
         private set
 
@@ -216,6 +219,7 @@ class Session(
 
                 override fun onPageFinished(view: WebView?, url: String?) {
                     driver.onPageFinished()
+                    session.onPageLoaded?.invoke(url ?: "")
                     // 문서 시작 주입을 못 쓰는 기기용 폴백
                     if (!WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
                         view?.evaluateJavascript(preloadScript, null)

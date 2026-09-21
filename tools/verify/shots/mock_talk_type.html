@@ -1,0 +1,66 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>개념 톡(입력)</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#20262e;color:#e2e8f0}
+ .wrap{max-width:820px;margin:24px auto;padding:22px;min-height:420px}
+ .talk-card{display:flex;gap:12px;margin-bottom:14px}
+ .talk-card.hidden{display:none}
+ .card-content{background:#2c3540;border-radius:10px;padding:12px 14px;flex:1}
+ .user-text{background:#1b2029;color:#fff;border:1px solid #64748b;border-radius:6px;padding:4px 8px;width:120px}
+ .user-text.correct{border-color:#22c55e}
+ #cont{display:none;color:#60a5fa}
+ .result-body{display:none;text-align:center;padding:40px 0}
+</style></head><body>
+<div class="wrap" id="page">
+  <div id="cards">
+    <div class="talk-card" data-idx="1"><div class="card-content">그럼 예문을 볼까요?</div></div>
+    <div class="talk-card hidden" data-idx="2"><div class="card-content">
+      I <input type="text" class="user-text" data-cnt="0"> to play soccer.
+      <div style="font-size:12px;color:#94a3b8">나는 축구하는 걸 정말 좋아한다.</div>
+    </div></div>
+    <div class="talk-card hidden" data-idx="3"><div class="card-content">
+      You <input type="text" class="user-text" data-cnt="1"> to practice hard.
+      <div style="font-size:12px;color:#94a3b8">너는 열심히 연습해야만 한다.</div>
+    </div></div>
+    <div class="talk-card hidden" data-idx="4"><div class="card-content">잘 하셨어요! 끝입니다.</div></div>
+  </div>
+  <a href="#" id="cont">계속하기 (Enter)</a>
+</div>
+<div class="result-body" id="done"><h2>🎉 완료</h2><p id="stat"></p></div>
+<script>
+// 사이트와 같은 구조: 카드별 정답이 arr_card[i].answer 에 실려 온다
+var arr_card = [
+  { answer: '' },
+  { answer: 'do like;do have' },
+  { answer: 'do have;do like' },
+  { answer: '' }
+];
+var step = 0, typed = [];
+var cards = [...document.querySelectorAll('.talk-card')];
+function blank(){ return cards[step].querySelector('.user-text'); }
+function refresh(){ document.getElementById('cont').style.display = 'inline'; }
+function check(){
+  var b = blank();
+  if (!b) return true;                                  // 입력 칸 없는 카드는 그냥 넘어간다
+  // 사이트 규칙(grammar_talk.js setAnswer): 카드 안의 i번째 .user-text 는 정답의 i번째 조각과 비교한다
+  var ord = [...cards[step].querySelectorAll('.user-text')].indexOf(b);
+  var want = arr_card[step].answer.split(';')[ord] || '';
+  if (b.value.trim().toLowerCase() !== want.toLowerCase()) return false;   // 정확히 써야 넘어간다
+  b.classList.add('correct'); typed.push(b.value.trim());
+  return true;
+}
+function advance(){
+  if (!check()) return;
+  step++;
+  if (step >= cards.length) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('done').style.display='block';
+    document.getElementById('stat').textContent = '입력: ' + typed.join(' / ');
+    return;
+  }
+  cards[step].classList.remove('hidden');
+  refresh();
+}
+document.addEventListener('keydown', function(e){ if (e.key === 'Enter') advance(); });
+document.getElementById('cont').onclick = function(e){ e.preventDefault(); advance(); };
+refresh();
+</script></body></html>

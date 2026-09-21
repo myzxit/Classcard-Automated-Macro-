@@ -1,0 +1,79 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>개념 톡</title>
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .wrap{max-width:820px;margin:24px auto;background:#fff;border-radius:12px;padding:22px;min-height:420px}
+ .talk-card{display:flex;gap:12px;margin-bottom:14px}
+ .talk-card.hidden{display:none}
+ .left-cell{width:60px}
+ .card-content{background:#eef4fb;border-radius:10px;padding:12px 14px;flex:1}
+ .select-body{margin-top:16px;display:flex;gap:8px;flex-wrap:wrap}
+ .select-body.hidden{display:none}
+ .select-option{border:1px solid #cbd5e1;border-radius:8px;padding:8px 12px;cursor:pointer}
+ .select-option .select-num{display:inline-block;color:#369fff;font-weight:700;margin-right:6px}
+ .content-row.option-item{cursor:pointer;padding:6px 8px;border-radius:6px}
+ .content-row.option-item:hover{background:#dbeafe}
+ .result-body{display:none;text-align:center;padding:40px 0}
+ .hint{color:#64748b;font-size:13px;margin-bottom:12px}
+</style></head><body>
+<div class="wrap" id="page">
+  <div class="hint">설명을 잘 듣고 Enter를 눌러 다음으로 진행하세요</div>
+  <div id="cards">
+    <div class="talk-card" data-idx="1" data-type="0"><div class="left-cell">🧑‍🏫</div><div class="right-cell"><div class="card-content"><div class="content-row">오늘은 강조구문을 배워볼게요.</div></div></div></div>
+    <div class="talk-card hidden" data-idx="2" data-type="0"><div class="left-cell">🧑‍🏫</div><div class="right-cell"><div class="card-content"><div class="content-row">do(does, did)로 <input type="text" class="user-text choice" data-cnt="0">를 강조해요.</div></div></div></div>
+    <div class="talk-card hidden" data-idx="3" data-type="2"><div class="left-cell">🧑‍🏫</div><div class="right-cell"><div class="card-content">
+      <div class="content-row direct-msg"><span class="option-txt">다음 중 동사를 강조하는 문장을 고르세요.</span></div>
+      <div class="content-row option-item"><span class="option-num">1</span><span class="option-txt"> 나는 정말 많은 고기를 먹었다.</span></div>
+      <div class="content-row option-item"><span class="option-num">2</span><span class="option-txt"> 나는 시금치를 정말 싫어한다.</span></div>
+      <div class="content-row option-item"><span class="option-num">3</span><span class="option-txt"> 나는 엄청 느리게 달린다.</span></div>
+    </div></div></div>
+    <div class="talk-card hidden" data-idx="4" data-type="0"><div class="left-cell">🧑‍🏫</div><div class="right-cell"><div class="card-content"><div class="content-row">잘 하셨어요! 이제 끝입니다.</div></div></div></div>
+  </div>
+  <div class="select-body hidden" id="sel">
+    <div class="select-option"><div class="select-num">1</div>인칭</div>
+    <div class="select-option"><div class="select-num">2</div>동사</div>
+    <div class="select-option"><div class="select-num">3</div>부사구</div>
+  </div>
+</div>
+<div class="result-body" id="done"><h2>🎉 개념 톡 완료</h2><p id="stat"></p></div>
+<script>
+var SELECT_ANSWER = 1;   // '동사'
+var OPTION_ANSWER = 1;   // 2번
+var step = 0, enters = 0, picks = [];
+var cards = [...document.querySelectorAll('.talk-card')];
+function needsSelect(){ return step === 1; }   // 2번 카드 = 빈칸
+function needsOption(){ return step === 2; }   // 3번 카드 = 객관식
+function refresh(){
+  document.getElementById('sel').classList.toggle('hidden', !needsSelect());
+}
+function advance(){
+  if (needsSelect() || needsOption()) return;      // 답을 해야 넘어간다
+  step++;
+  if (step >= cards.length) {
+    document.getElementById('page').style.display='none';
+    document.getElementById('done').style.display='block';
+    document.getElementById('stat').textContent = 'Enter ' + enters + '회 · 선택 ' + picks.join(',');
+    return;
+  }
+  cards[step].classList.remove('hidden');
+  refresh();
+}
+document.addEventListener('keydown', function(e){
+  if (e.key === 'Enter' && e.isTrusted) { enters++; advance(); }
+});
+document.querySelectorAll('.select-option').forEach(function(o,i){
+  o.onclick=function(e){
+    if (!e.isTrusted) return;              // 합성 클릭 무시
+    if (!needsSelect()) return;
+    picks.push('빈칸'+(i+1));
+    if (i === SELECT_ANSWER) { step++; cards[step].classList.remove('hidden'); refresh(); }
+  };
+});
+document.querySelectorAll('.content-row.option-item').forEach(function(o,i){
+  o.onclick=function(e){
+    if (!e.isTrusted) return;              // 합성 클릭 무시
+    if (!needsOption()) return;
+    picks.push('객관식'+(i+1));
+    if (i === OPTION_ANSWER) { step++; cards[step].classList.remove('hidden'); refresh(); }
+  };
+});
+</script></body></html>
