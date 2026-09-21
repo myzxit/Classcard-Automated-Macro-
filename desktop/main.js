@@ -20,6 +20,7 @@ import { ElectronDriver, StopFlag } from './driver.js';
 import { checkForUpdate } from './app/engine/update.js';
 import * as Basic from './app/engine/modules/basic.js';
 import * as Sentence from './app/engine/modules/sentence.js';
+import * as Speaking from './app/engine/modules/speaking.js';
 import * as Games from './app/engine/modules/games.js';
 import * as Grammar from './app/engine/modules/grammar.js';
 import * as AutoAll from './app/engine/modules/autoall.js';
@@ -452,6 +453,14 @@ const MODES = {
   matching: { label: '단어 매칭', fn: Games.matching, noDict: true },
   scramble: { label: '문장 스크램블', fn: Games.scramble, noDict: true },
   grammar: { label: '문법', fn: Grammar.grammar, noDict: true },
+  speaking: {
+    label: '스피킹',
+    noDict: true,
+    fn: (d, dict, stop) => Speaking.speaking(d, dict, stop, {
+      includeMic: getSettings().speakingMic === true,
+      recordSec: Number(getSettings().speakingRecordSec) > 0 ? Number(getSettings().speakingRecordSec) : 6,
+    }),
+  },
 };
 
 async function fetchAnswerDict(s) {

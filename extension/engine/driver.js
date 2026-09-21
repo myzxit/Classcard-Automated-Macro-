@@ -97,9 +97,9 @@ export class Driver {
    * Selenium 과 동일하게 스크립트는 함수 본문으로 감싸지므로 `return` 을 그대로 쓴다.
    * 페이지 전역(study_data, card_list, window.__cc_answers)에 닿아야 하므로 MAIN world.
    */
-  async eval(script) {
+  async eval(script, timeoutMs = 10000) {
     try {
-      const results = await chrome.scripting.executeScript({
+      const exec = chrome.scripting.executeScript({
         target: { tabId: this.tabId },
         world: 'MAIN',
         args: [script],
@@ -112,6 +112,14 @@ export class Driver {
           }
         },
       });
+      // executeScript 는 탭이 응답하지 않으면 영원히 기다린다 — 그러면 자동화가 그 자리에서 멎는다.
+      // 제한 시간을 두고, 지나면 '못 읽음'(null)으로 보고 계속 돌게 한다.
+      const timed = new Promise((resolve) => setTimeout(() => resolve('__cc_timeout'), timeoutMs));
+      const results = await Promise.race([exec, timed]);
+      if (results === '__cc_timeout') {
+        this.log('[!] 페이지가 응답하지 않아 한 번 건너뜁니다', 'warn');
+        return null;
+      }
       const value = results && results[0] ? results[0].result : null;
       return value === undefined ? null : value;
     } catch (e) {
@@ -322,10 +330,23 @@ export class Driver {
     this.debuggerAttached = false;
   }
 
-  async sendCdp(method, params) {
+  /**
+   * CDP 명령 한 개를 보낸다.
+   *
+   * `chrome.debugger.sendCommand` 는 답이 오지 않으면 **영원히 기다린다**. 실제로 그런 일이 생기면
+   * 자동화 전체가 그 자리에서 멈춰 버린다(로그도 더 안 남는다). 그래서 제한 시간을 두고,
+   * 시간이 지나면 실패로 보고 부르는 쪽이 합성 클릭으로 넘어가게 한다.
+   */
+  async sendCdp(method, params, timeoutMs = 5000) {
     if (!this.debuggerAttached) return false;
     try {
-      await chrome.debugger.sendCommand({ tabId: this.tabId }, method, params);
+      const sent = chrome.debugger.sendCommand({ tabId: this.tabId }, method, params);
+      const timed = new Promise((resolve) => setTimeout(() => resolve('__cc_timeout'), timeoutMs));
+      const result = await Promise.race([sent.then(() => '__cc_ok'), timed]);
+      if (result === '__cc_timeout') {
+        this.log(`[!] 브라우저 응답이 없어 ${method} 를 건너뜁니다`, 'warn');
+        return false;
+      }
       return true;
     } catch (e) {
       return false;

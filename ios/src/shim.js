@@ -193,6 +193,8 @@ const IOS_MODES = [
   { id: 'matching', label: '🎴 단어 매칭', fn: () => __mod.games.matching, noDict: true },
   { id: 'test', label: '🃏 단어 테스트', fn: () => __mod.games.test },
   { id: 'memorize', label: '🗂 암기', fn: () => __mod.basic.memorize, noDict: true },
+  // 스피킹: 낭독·쉐도잉·녹음은 마이크가 필요해 아이폰 사파리에서는 못 돌린다. 나머지 단계만 한다.
+  { id: 'speaking', label: '🎤 스피킹 (녹음 빼고)', fn: () => __mod.speaking.speakingNoMic, noDict: true },
   { id: 'fetch', label: '⤵ 단어장 가져오기', special: 'fetch' },
   { id: 'recall', label: '🔁 리콜', needsTrusted: true },
   { id: 'spell', label: '⌨ 스펠', needsTrusted: true },

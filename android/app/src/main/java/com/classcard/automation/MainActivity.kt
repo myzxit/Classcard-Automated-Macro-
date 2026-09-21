@@ -41,6 +41,7 @@ import com.classcard.automation.modules.Recall
 import com.classcard.automation.modules.RecallSentence
 import com.classcard.automation.modules.Scramble
 import com.classcard.automation.modules.Spell
+import com.classcard.automation.modules.Speaking
 import com.classcard.automation.modules.SpellSentence
 import com.classcard.automation.modules.Test
 import com.classcard.automation.modules.TestSentence
@@ -111,6 +112,11 @@ class MainActivity : AppCompatActivity() {
             ),
             Mode.Single(  // 페이지 데이터 폴백이 있다
                 "scramble", R.string.mode_scramble, Scramble.run, needsDict = false,
+            ),
+            Mode.Single(  // 스피킹: 입해석·입영작·집중듣기는 끝까지, 낭독·쉐도잉·녹음은 설정을 켜야 진행
+                "speaking", R.string.mode_speaking,
+                { d, _, stop -> Speaking.run(d, stop, SettingsStore.speakingMic(this), SettingsStore.speakingRecordSec(this)) },
+                needsDict = false,
             ),
             Mode.Single(
                 "grammar", R.string.mode_grammar, Grammar.run,

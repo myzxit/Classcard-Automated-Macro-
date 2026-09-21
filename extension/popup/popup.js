@@ -22,6 +22,7 @@ const MODES = [
   { id: 'matching', label: '🎴 단어 매칭', help: '매칭 게임 화면에서 실행하세요. 목표 점수에 도달하면 중도 종료합니다.' },
   { id: 'scramble', label: '✳ 문장 스크램블', help: '스크램블 게임 화면에서 실행하세요. 목표 점수에 도달하면 종료합니다.' },
   { id: 'grammar', label: '📐 문법', help: '문법훈련 클래스 페이지에서 실행하면 유닛의 단계를 순서대로 진행합니다. 문제 화면에서 바로 실행해도 됩니다.' },
+  { id: 'speaking', label: '🎤 스피킹', help: '세트의 [스피킹] 화면에서 실행하세요. 입해석·입영작·집중듣기를 끝까지 대신 합니다. 낭독·쉐도잉·녹음은 목소리를 직접 말해야 해서 고급 설정에서 켜야 합니다.' },
   { id: 'fetch', label: '⤵ 단어장 가져오기', help: '현재 열린 학습 페이지에서 단어/뜻 데이터를 추출해 저장합니다.' },
 ];
 
@@ -34,6 +35,8 @@ const SETTINGS = [
   { key: 'autoUpdate', title: '자동 업데이트', sub: '새 버전이 나오면 알려 주고 한 번의 클릭으로 받음 (PC 앱은 스스로 설치)', type: 'toggle' },
   { key: 'autoLogin', title: '자동 로그인', sub: '저장된 ID/PW로 탭을 열 때 바로 로그인', type: 'toggle' },
   { key: 'autoDict', title: '학습 페이지 자동 단어장', sub: '학습 페이지에 들어가면 그 페이지의 단어장을 알아서 가져옴', type: 'toggle' },
+  { key: 'speakingMic', title: '스피킹 녹음 단계 (시험 중)', sub: '낭독·쉐도잉·녹음까지 진행(직접 말해야 함). 마지막 카드에서 멈추는 문제가 남아 기본은 꺼짐', type: 'toggle' },
+  { key: 'speakingRecordSec', title: '스피킹 녹음 시간 (초)', sub: '카드마다 말할 시간. 이 시간이 지나면 녹음을 멈추고 다음 카드로', type: 'number' },
   { key: 'keepTab', title: '자동화 후 탭 유지', sub: '끄면 자동화가 끝날 때 탭을 닫음', type: 'toggle' },
   { key: 'sequential', title: '다계정 순차 실행', sub: '크롬은 쿠키를 공유하므로 계정을 하나씩 실행 (끌 수 없음)', type: 'toggle', disabled: true, fixed: true },
   { key: 'hotkey', title: '전역 단축키 사용', sub: 'Ctrl+A / Ctrl+I / Ctrl+E … (확장프로그램 미지원)', type: 'toggle', disabled: true, fixed: false },

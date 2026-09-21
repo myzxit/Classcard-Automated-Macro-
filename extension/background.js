@@ -10,6 +10,7 @@
 import { Driver, StopFlag } from './engine/driver.js';
 import * as Basic from './engine/modules/basic.js';
 import * as Sentence from './engine/modules/sentence.js';
+import * as Speaking from './engine/modules/speaking.js';
 import * as Games from './engine/modules/games.js';
 import * as Grammar from './engine/modules/grammar.js';
 import * as AutoAll from './engine/modules/autoall.js';
@@ -36,6 +37,9 @@ const DEFAULT_SETTINGS = {
   sequential: true,
   startDelaySec: 0,
   accountGapSec: 0,
+
+  speakingMic: false,     // 낭독·쉐도잉·녹음 단계까지 진행할지 (아직 마지막 카드에서 멈추는 문제가 있어 기본 꺼짐)
+  speakingRecordSec: 6,   // 스피킹 녹음 단계에서 카드마다 말할 시간(초)
 };
 
 // ------------------------------------------------------------------ 저장소
@@ -395,6 +399,9 @@ async function closeSession(accountId) {
 
 // ------------------------------------------------------------------ 모드
 
+// 스피킹 설정은 실행할 때 읽어 넣는다 (고급 설정에서 바꾼다)
+let speakingSettings = { includeMic: true, recordSec: 6 };
+
 const MODES = {
   auto_all: { label: '전체 자동화', flow: AutoAll.runFullAutomation },
   one_set: { label: '한 세트 자동화', flow: AutoAll.runSingleSet },
@@ -417,6 +424,15 @@ const MODES = {
   scramble: { label: '문장 스크램블', fn: Games.scramble, noDict: true },   // 페이지 데이터 폴백
   // 문법훈련은 단어장 없이도 (보기를 확인해 가며) 풀 수 있다.
   grammar: { label: '문법', fn: Grammar.grammar, noDict: true },
+  // 스피킹: 입해석·입영작·집중듣기는 끝까지 대신 하고, 낭독·쉐도잉·녹음은 소리 재생과 녹음 시작/정지만 대신한다
+  // (목소리는 사용자 본인 것이 올라간다 — 지어내지 않는다).
+  speaking: {
+    label: '스피킹',
+    noDict: true,
+    fn: (d, dict, stop) => Speaking.speaking(d, dict, stop, {
+      includeMic: speakingSettings.includeMic, recordSec: speakingSettings.recordSec,
+    }),
+  },
 };
 
 /** 현재 페이지에서 단어장을 뽑아 세션에 저장 (Ctrl+M 대응). */
@@ -435,6 +451,12 @@ async function fetchAnswerDict(session) {
 async function runModeOnSession(session, modeId) {
   const mode = MODES[modeId];
   if (!mode) return;
+
+  const settings0 = await getSettings();
+  speakingSettings = {
+    includeMic: settings0.speakingMic === true,
+    recordSec: Number(settings0.speakingRecordSec) > 0 ? Number(settings0.speakingRecordSec) : 6,
+  };
 
   const stop = new StopFlag();
   session.stop = stop;

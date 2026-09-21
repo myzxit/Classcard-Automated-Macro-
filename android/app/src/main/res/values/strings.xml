@@ -59,6 +59,7 @@
     <string name="mode_memorize_sentence">📖 문장 암기</string>
     <string name="mode_recall_sentence">📝 문장 리콜</string>
     <string name="mode_spell_sentence">✍ 문장 스펠</string>
+    <string name="mode_speaking">🎤 스피킹</string>
     <string name="mode_test">🃏 단어 테스트</string>
     <string name="mode_test_sentence">📕 문장 테스트</string>
     <string name="mode_matching">🎴 단어 매칭</string>

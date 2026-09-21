@@ -5,7 +5,7 @@
 ## 모의 화면 회귀 (인터넷·계정 불필요)
 
 ```bash
-bash tools/verify/run.sh                 # 24종 전부 (약 11분)
+bash tools/verify/run.sh                 # 25종 전부 (약 12분)
 bash tools/verify/run.sh run_gstreak     # 하나만
 ```
 
