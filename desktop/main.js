@@ -558,6 +558,13 @@ async function startRun(modeId, accountIds) {
     currentRun = null;
     notifyState();
     log('실행이 끝났습니다.');
+    // 자동화 중에는 앱을 다시 켤 수 없어 미뤄 뒀다 — 끝난 지금 바로 갈아 끼운다
+    if (updateInfo && updateInfo.downloaded) {
+      log(`[업데이트] 자동화가 끝났습니다 — v${updateInfo.version} 을 지금 설치합니다.`);
+      setTimeout(installNow, 1500);
+    } else {
+      runUpdateCheck().catch(() => {});
+    }
   }
 }
 

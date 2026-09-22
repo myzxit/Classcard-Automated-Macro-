@@ -45,6 +45,8 @@ import com.classcard.automation.modules.Speaking
 import com.classcard.automation.modules.SpellSentence
 import com.classcard.automation.modules.Test
 import com.classcard.automation.modules.TestSentence
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 파이썬 main.py 의 콘솔 컨트롤러를 화면으로 옮긴 것.
@@ -199,7 +201,13 @@ class MainActivity : AppCompatActivity() {
         controller.setPreloadScript(
             assets.open("preload.js").bufferedReader().use { it.readText() }
         )
-        controller.onSessionsChanged = { runOnUiThread { renderAccounts(); renderStatus(); renderProgress() } }
+        controller.onSessionsChanged = {
+            runOnUiThread {
+                renderAccounts(); renderStatus(); renderProgress()
+                // 자동화 중에는 설치 화면을 미뤄 뒀다 — 다 끝난 지금 바로 연다
+                if (controller.runningCount == 0 && Updater.hasPending()) Updater.installPendingIfAny(this)
+            }
+        }
 
         versionBadge.text = "v" + BuildConfig.VERSION_NAME
 
@@ -234,8 +242,25 @@ class MainActivity : AppCompatActivity() {
         LogBus.info("클래스카드 자동화 v${BuildConfig.VERSION_NAME} 시작")
         if (accounts.isEmpty()) LogBus.warn(getString(R.string.msg_no_accounts))
 
-        // 자동 업데이트: 켜 두면 앱을 열 때(6시간에 한 번) 새 버전을 확인해 받아 온다.
-        if (SettingsStore.autoUpdate(this)) Updater.checkAndInstall(this, lifecycleScope)
+        // 자동 업데이트: 켜 두면 앱이 켜져 있는 동안 한 시간마다 새 버전을 확인해 받아 오고
+        // 자동화가 돌고 있지 않으면 곧바로 설치 화면을 연다 (안드로이드는 '설치' 한 번을 요구한다).
+        startUpdateWatch()
+    }
+
+    /** 앱을 오래 켜 둬도 새 버전을 놓치지 않게 주기적으로 확인한다. */
+    private fun startUpdateWatch() {
+        lifecycleScope.launch {
+            while (true) {
+                if (SettingsStore.autoUpdate(this@MainActivity)) {
+                    Updater.checkAndInstall(
+                        this@MainActivity,
+                        lifecycleScope,
+                        canInstallNow = { controller.runningCount == 0 },
+                    )
+                }
+                delay(15 * 60 * 1000L)   // 확인 자체는 Updater 가 한 시간으로 조인다
+            }
+        }
     }
 
     private fun bindViews() {

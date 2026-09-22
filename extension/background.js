@@ -14,7 +14,7 @@ import * as Speaking from './engine/modules/speaking.js';
 import * as Games from './engine/modules/games.js';
 import * as Grammar from './engine/modules/grammar.js';
 import * as AutoAll from './engine/modules/autoall.js';
-import { checkForUpdate } from './engine/update.js';
+import { checkForUpdate, compareVersion } from './engine/update.js';
 
 const LOGIN_URL = 'https://www.classcard.net/Login';
 const MAX_LOG_LINES = 3000;
@@ -571,6 +571,9 @@ async function startRun(modeId, accountIds) {
     keepAlive(false);
     notifyState();
     log('실행이 끝났습니다.');
+    // 자동화가 끝난 지금이 갈아 끼우기 가장 좋은 때다
+    runUpdateCheck().catch(() => {});
+    reloadIfFolderChanged().catch(() => {});
   }
 }
 
@@ -603,20 +606,31 @@ function keepAlive(on) {
 
 chrome.alarms.onAlarm.addListener((alarm) => {
   // keepalive 알람은 아무것도 하지 않아도 워커가 깨어난다.
-  if (alarm && alarm.name === 'cc-update-check') runUpdateCheck();
+  if (!alarm) return;
+  if (alarm.name === 'cc-update-check') runUpdateCheck();
+  if (alarm.name === 'cc-folder-check') reloadIfFolderChanged();
 });
 
 // ------------------------------------------------------------------ 자동 업데이트
 //
-// 개발자 모드로 넣은 확장은 크롬이 스스로 갈아 끼우지 못한다(웹스토어 확장만 자동 갱신).
-// 그래서 여기서는 새 버전을 스스로 **확인해서 알리고, 한 번의 클릭으로 zip 을 받아** 준다.
-// (PC 앱은 완전 자동, 안드로이드는 받아서 설치 화면까지 자동)
+// 새 버전이 올라오면 **기다리지 않고 바로** 갈아 끼우는 것이 목표다.
+//  - PC 앱: 받아서 스스로 설치 (완전 자동)
+//  - 안드로이드: 받아서 설치 화면까지 자동 (안드로이드가 '설치' 한 번을 요구한다)
+//  - 크롬 확장: 개발자 모드로 넣은 확장은 크롬이 파일을 갈아 끼워 주지 않는다(웹스토어 확장만 자동 갱신).
+//    그래서 여기서는 **새 버전을 찾는 즉시 zip 을 알아서 받아 두고**, 크롬이 사람 손을 요구하는
+//    마지막 두 단계(압축 풀어 덮어쓰기 → chrome://extensions 새로고침)만 안내한다.
+//    폴더만 덮어쓰면 그 다음 재로드는 아래 reloadIfFolderChanged 가 알아서 한다.
 
-let updateInfo = null;   // { version, url, notes, checkedAt }
+const UPDATE_CHECK_MIN = 60;          // 한 시간마다
+const UPDATE_STALE_MS = 15 * 60 * 1000;   // 팝업을 열었을 때 이보다 오래됐으면 다시 확인
+
+let updateInfo = null;   // { version, url, notes, checkedAt, downloaded }
+let lastUpdateCheck = 0;
 
 async function runUpdateCheck(force = false) {
   const settings = await getSettings();
   if (!force && settings.autoUpdate === false) return;
+  lastUpdateCheck = Date.now();
   const current = chrome.runtime.getManifest().version;
   const r = await checkForUpdate(current);
   if (r.error) {
@@ -625,11 +639,14 @@ async function runUpdateCheck(force = false) {
   }
   if (!r.available) {
     updateInfo = null;
+    try { chrome.action.setBadgeText({ text: '' }); } catch (e) { /* 무시 */ }
     if (force) log(`[업데이트] 지금이 최신 버전입니다 (v${current}).`);
   } else if (!updateInfo || updateInfo.version !== r.latest.version) {
-    updateInfo = { version: r.latest.version, url: r.latest.extension, notes: r.latest.notes || '', checkedAt: Date.now() };
-    log(`[업데이트] 새 버전 v${r.latest.version} 이 나왔습니다 — 팝업 위의 '업데이트 받기'를 누르세요.`, 'warn');
+    updateInfo = { version: r.latest.version, url: r.latest.extension, notes: r.latest.notes || '', checkedAt: Date.now(), downloaded: false };
+    log(`[업데이트] 새 버전 v${r.latest.version} 이 나왔습니다 — 받는 중…`, 'warn');
     try { chrome.action.setBadgeText({ text: 'NEW' }); chrome.action.setBadgeBackgroundColor({ color: '#ec4899' }); } catch (e) { /* 무시 */ }
+    // 누르기를 기다리지 않는다 — 찾는 즉시 받아 둔다.
+    if (settings.autoUpdate !== false) await downloadUpdate();
   }
   chrome.runtime.sendMessage({ type: 'update', update: updateInfo }).catch(() => {});
 }
@@ -639,7 +656,10 @@ async function downloadUpdate() {
   if (!updateInfo) return { ok: false };
   try {
     await chrome.downloads.download({ url: updateInfo.url, filename: `classcard-automation-extension-v${updateInfo.version}.zip` });
-    log(`[업데이트] v${updateInfo.version} zip 을 받고 있습니다. 압축을 풀어 지금 폴더에 덮어쓴 뒤 chrome://extensions 에서 새로고침(↻)하세요.`);
+    updateInfo = { ...updateInfo, downloaded: true };
+    log(`[업데이트] v${updateInfo.version} zip 을 받았습니다 — 압축을 풀어 지금 확장 폴더에 덮어쓰기만 하세요. ` +
+        '덮어쓰면 확장은 스스로 새 버전으로 다시 켜집니다.');
+    chrome.runtime.sendMessage({ type: 'update', update: updateInfo }).catch(() => {});
     return { ok: true };
   } catch (e) {
     log(`[업데이트] 받기 실패: ${e.message}`, 'error');
@@ -647,7 +667,25 @@ async function downloadUpdate() {
   }
 }
 
-chrome.alarms.create('cc-update-check', { periodInMinutes: 6 * 60 });
+// 폴더를 덮어쓴 것을 스스로 알아채고 다시 켠다.
+// 크롬은 개발자 모드 확장의 파일을 자동으로 갈아 끼우지 않지만, **이미 바뀐 파일은**
+// chrome.runtime.reload() 한 번으로 읽어 들인다. 그래서 manifest 를 주기적으로 다시 읽어
+// 디스크의 버전이 지금 돌고 있는 버전보다 새로우면 자동화가 쉬는 틈에 알아서 재시작한다.
+// (사용자가 해야 할 일은 '압축 풀어 덮어쓰기' 하나로 줄어든다)
+async function reloadIfFolderChanged() {
+  if (runningCount() > 0) return;             // 자동화 중에는 절대 다시 켜지 않는다
+  try {
+    const res = await fetch(chrome.runtime.getURL('manifest.json') + `?t=${Date.now()}`, { cache: 'no-store' });
+    const onDisk = (await res.json()).version;
+    if (compareVersion(onDisk, chrome.runtime.getManifest().version) > 0) {
+      log(`[업데이트] 폴더가 v${onDisk} 으로 바뀐 것을 확인했습니다 — 확장을 다시 켭니다.`);
+      setTimeout(() => chrome.runtime.reload(), 500);
+    }
+  } catch (e) { /* 무시 */ }
+}
+
+chrome.alarms.create('cc-update-check', { periodInMinutes: UPDATE_CHECK_MIN });
+chrome.alarms.create('cc-folder-check', { periodInMinutes: 1 });
 chrome.runtime.onInstalled.addListener(() => { try { chrome.action.setBadgeText({ text: '' }); } catch (e) { /* 무시 */ } runUpdateCheck(); });
 chrome.runtime.onStartup.addListener(() => runUpdateCheck());
 runUpdateCheck();
@@ -703,6 +741,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     switch (msg.type) {
       case 'getState': {
         await loadLogs();
+        // 팝업을 열 때마다 최신인지 다시 본다 (서비스 워커는 자주 잠들어 알람만으로는 늦을 수 있다)
+        if (Date.now() - lastUpdateCheck > UPDATE_STALE_MS) runUpdateCheck().catch(() => {});
+        reloadIfFolderChanged().catch(() => {});
         sendResponse({
           accounts: await getAccounts(),
           settings: await getSettings(),

@@ -134,7 +134,7 @@
 
     <!-- 자동 업데이트 -->
     <string name="set_auto_update">자동 업데이트</string>
-    <string name="set_auto_update_sub">새 버전이 나오면 스스로 받아 설치 화면을 띄움 (설치만 누르면 됨)</string>
+    <string name="set_auto_update_sub">새 버전이 올라오면 한 시간 안에 스스로 받아 설치 화면을 띄움 (설치만 누르면 됨)</string>
 
     <!-- 서비스 -->
     <string name="service_channel">자동화 실행 중</string>

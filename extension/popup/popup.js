@@ -32,7 +32,7 @@ const SETTINGS = [
     type: 'choice', labelOn: '🌙 밤', labelOff: '☀ 낮',
   },
   { key: 'animeTheme', title: '이세계 테마', sub: '배경 그림과 캐릭터(유메·푸딩) 표시. 끄면 단색 화면', type: 'toggle' },
-  { key: 'autoUpdate', title: '자동 업데이트', sub: '새 버전이 나오면 알려 주고 한 번의 클릭으로 받음 (PC 앱은 스스로 설치)', type: 'toggle' },
+  { key: 'autoUpdate', title: '자동 업데이트', sub: '새 버전이 올라오면 한 시간 안에 알아서 받음 (PC 앱은 스스로 설치, 안드로이드는 설치 화면까지 자동)', type: 'toggle' },
   { key: 'autoLogin', title: '자동 로그인', sub: '저장된 ID/PW로 탭을 열 때 바로 로그인', type: 'toggle' },
   { key: 'autoDict', title: '학습 페이지 자동 단어장', sub: '학습 페이지에 들어가면 그 페이지의 단어장을 알아서 가져옴', type: 'toggle' },
   { key: 'speakingMic', title: '스피킹 녹음 단계 (시험 중)', sub: '낭독·쉐도잉·녹음까지 진행(직접 말해야 함). 마지막 카드에서 멈추는 문제가 남아 기본은 꺼짐', type: 'toggle' },
@@ -98,8 +98,19 @@ async function init() {
 function renderUpdate(update) {
   const banner = $('updateBanner');
   if (!update) { banner.classList.add('hidden'); return; }
-  $('updateText').textContent = `✦ 새 버전 v${update.version} 이 나왔어요 (지금 v${chrome.runtime.getManifest().version})`;
-  $('btnUpdate').textContent = IS_DESKTOP ? '⬇ 지금 설치' : '⬇ 업데이트 받기';
+  const now = chrome.runtime.getManifest().version;
+  if (IS_DESKTOP) {
+    $('updateText').textContent = update.downloaded
+      ? `✦ 새 버전 v${update.version} 을 받았어요 — 설치만 하면 끝 (지금 v${now})`
+      : `✦ 새 버전 v${update.version} 을 받는 중이에요 (지금 v${now})`;
+    $('btnUpdate').textContent = '⬇ 지금 설치';
+  } else {
+    // 확장은 새 버전을 찾는 즉시 zip 을 알아서 받아 둔다. 크롬이 사람 손을 요구하는 건 덮어쓰기 하나뿐이다.
+    $('updateText').textContent = update.downloaded
+      ? `✦ v${update.version} zip 을 받아 뒀어요 — 압축을 풀어 확장 폴더에 덮어쓰면 알아서 새 버전으로 켜져요 (지금 v${now})`
+      : `✦ 새 버전 v${update.version} 을 받는 중이에요 (지금 v${now})`;
+    $('btnUpdate').textContent = update.downloaded ? '⬇ 다시 받기' : '⬇ 업데이트 받기';
+  }
   banner.classList.remove('hidden');
 }
 
