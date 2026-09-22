@@ -12,9 +12,10 @@ const ctx = await chromium.launchPersistentContext('/tmp/shots/profileSPEAK', {
 await ctx.route('https://www.classcard.net/**', (r) =>
   r.fulfill({ status: 200, contentType: 'text/html; charset=utf-8', body: mock }));
 
-const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker', { timeout: 20000 });
+let sw = ctx.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+for (let t = 0; t < 40 && !sw; t++) { await new Promise((r) => setTimeout(r, 500)); sw = ctx.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://')); }
 const id = new URL(sw.url()).host;
-await sw.evaluate(() => chrome.storage.local.set({ settings: { autoLogin: false, keepTab: true } }));
+for (let t = 0; t < 20; t++) { try { await sw.evaluate(() => chrome.storage.local.set({ settings: { autoLogin: false, keepTab: true } })); break; } catch (e) { await new Promise((r) => setTimeout(r, 500)); } }
 
 const page = await ctx.newPage();
 page.on('pageerror', (e) => console.log('PAGEERR', String(e).slice(0,140)));
@@ -23,7 +24,7 @@ await page.setViewportSize({ width: 1000, height: 760 });
 await page.goto('https://www.classcard.net/Paragraph/30378310/0/0/1994042');
 await page.waitForTimeout(700);
 // 녹음 시간을 짧게 (기본 6초면 모의에서 너무 오래 걸린다)
-await sw.evaluate(() => chrome.storage.local.set({ settings: { autoLogin: false, keepTab: true, speakingRecordSec: 2 } }));
+for (let t = 0; t < 20; t++) { try { await sw.evaluate(() => chrome.storage.local.set({ settings: { autoLogin: false, keepTab: true, speakingRecordSec: 2 } })); break; } catch (e) { await new Promise((r) => setTimeout(r, 500)); } }
 
 const popup = await ctx.newPage();
 await popup.setViewportSize({ width: 800, height: 640 });
