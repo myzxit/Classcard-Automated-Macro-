@@ -10,10 +10,11 @@
 import { Driver, StopFlag } from './engine/driver.js';
 import * as Basic from './engine/modules/basic.js';
 import * as Sentence from './engine/modules/sentence.js';
+import * as Speaking from './engine/modules/speaking.js';
 import * as Games from './engine/modules/games.js';
 import * as Grammar from './engine/modules/grammar.js';
 import * as AutoAll from './engine/modules/autoall.js';
-import { checkForUpdate } from './engine/update.js';
+import { checkForUpdate, compareVersion } from './engine/update.js';
 
 const LOGIN_URL = 'https://www.classcard.net/Login';
 const MAX_LOG_LINES = 3000;
@@ -36,6 +37,9 @@ const DEFAULT_SETTINGS = {
   sequential: true,
   startDelaySec: 0,
   accountGapSec: 0,
+
+  speakingMic: false,     // 낭독·쉐도잉·녹음 단계까지 진행할지 (크롬이 배경 작업을 재워 30초쯤에 서는 일이 있어 기본 꺼짐)
+  speakingRecordSec: 6,   // 스피킹 녹음 단계에서 카드마다 말할 시간(초)
 };
 
 // ------------------------------------------------------------------ 저장소
@@ -117,7 +121,153 @@ function sessionSummary() {
     state: s.state,
     detail: s.detail,
     tabId: s.tabId,
+    running: !!s.running,
+    paused: !!(s.stop && s.stop.isPaused),
+    modeId: s.modeId || null,
+    progress: s.progress || null,
   }));
+}
+
+// ------------------------------------------------------------------ 진행률 · 일시정지 · 진행 위치 저장
+//
+// 모듈은 driver.progress({current,total,ok,fail,skipped}) 로 진행률을 알린다(카드 화면은 data-status 로 센다).
+// 일시정지는 StopFlag.pause(): 모든 모듈이 stop.await() 로 쉬므로 그 자리에서 멈춘다.
+// '진행 위치'는 {계정: {modeId, url, progress}} 로 저장해 두고, 새로고침·재시작 뒤 '이어하기'가 같은 페이지에서 같은 모드를 다시 돌린다
+// (학습 진행 자체는 사이트가 계정에 저장하므로, 같은 화면에서 다시 시작하면 그 자리부터 이어진다).
+
+const RESUME_KEY = 'resume';
+// 지금 돌고 있는 실행. 워커가 꺼지면 이 기록만 남고 실행은 사라진다 — 다시 켜질 때 이걸 보고 이어한다.
+const ACTIVE_KEY = 'activeRun';
+const ACTIVE_MAX_TRIES = 20;      // 끝없이 되살리지 않는다
+const ACTIVE_MAX_AGE_MS = 2 * 60 * 60 * 1000;
+let lastResumeSaveAt = 0;
+
+async function getResumeAll() {
+  const r = await chrome.storage.local.get(RESUME_KEY);
+  return (r && r[RESUME_KEY]) || {};
+}
+
+async function saveResume(session, { explicit = false } = {}) {
+  if (!session || !session.modeId) return null;
+  if (!explicit && Date.now() - lastResumeSaveAt < 5000) return null;
+  lastResumeSaveAt = Date.now();
+  let url = '';
+  try { url = await session.driver.currentUrl(); } catch (e) { url = ''; }
+  const all = await getResumeAll();
+  const entry = { modeId: session.modeId, url, progress: session.progress || null, savedAt: Date.now() };
+  all[session.account.id] = entry;
+  await chrome.storage.local.set({ [RESUME_KEY]: all });
+  if (explicit) {
+    const p = session.progress;
+    session.driver.log(`진행 위치를 저장했습니다 — ${MODES[session.modeId]?.label || session.modeId}${p ? ` ${p.current}/${p.total}` : ''} · ${url.replace('https://www.classcard.net', '')}`, 'success');
+  }
+  return entry;
+}
+
+async function clearResume(accountId) {
+  const all = await getResumeAll();
+  if (all[accountId]) { delete all[accountId]; await chrome.storage.local.set({ [RESUME_KEY]: all }); }
+}
+
+function hookProgress(session) {
+  session.driver.onProgress = (p) => {
+    session.progress = p;
+    notifyState();
+    saveResume(session).catch(() => {});
+  };
+}
+
+function pauseAll() {
+  let any = false;
+  for (const session of sessions.values()) {
+    if (session.running && session.stop && !session.stop.isPaused) { session.stop.pause(); any = true; session.driver.log('일시정지 — 재개를 누를 때까지 멈춥니다.', 'warn'); }
+  }
+  if (!any) log('    일시정지할 자동화가 없습니다.', 'dim');
+  notifyState();
+}
+
+function resumeAll() {
+  let any = false;
+  for (const session of sessions.values()) {
+    if (session.running && session.stop && session.stop.isPaused) { session.stop.resume(); any = true; session.driver.log('재개합니다.', 'success'); }
+  }
+  if (!any) log('    재개할 자동화가 없습니다.', 'dim');
+  notifyState();
+}
+
+// ---------------------------------------------------- 워커가 꺼져도 이어서 하기
+//
+// MV3 의 배경 스크립트(서비스 워커)는 크롬이 언제든 꺼 버린다. 30초 가까이 크롬 쪽 이벤트가
+// 없으면 그냥 끝내 버리는데, 자동화는 그 사이에도 프로미스로 계속 돌고 있을 뿐이라
+// 크롬이 보기에는 '놀고 있는 워커'다. 꺼지면 실행 중이던 것이 **로그도 오류도 없이** 사라진다.
+//
+// 스피킹이 특히 잘 걸렸다. 다른 모드는 학습을 시작할 때 페이지를 옮겨 다녀 탭 이벤트가 계속 생기는데,
+// 스피킹은 한 페이지 안에서만 움직여 30초 동안 이벤트가 하나도 없는 구간이 생긴다.
+// (오래 '마지막 카드에서 멈춘다'고 본 것은 착각이었다 — 카드를 5장으로 늘리면 두 번째 카드에서 멈춘다.
+//  마지막 카드가 아니라 '시작하고 30초쯤'이 기준이었다.)
+//
+// 깨어 있게 붙잡아 두는 것만으로는 확실하지 않아서, **꺼져도 스스로 이어서 하도록** 만든다.
+// 실행을 시작할 때 무엇을 돌리고 있었는지 남겨 두고, 워커가 다시 켜질 때 그 기록이 남아 있으면
+// (= 제대로 끝나지 않았다는 뜻) 저장해 둔 진행 위치에서 이어한다.
+// 학습 페이지의 content/keepalive.js 가 10초마다 말을 걸어 주므로 워커는 곧 다시 켜진다.
+
+async function markRunActive(modeId, accountIds) {
+  const prev = (await chrome.storage.local.get(ACTIVE_KEY))[ACTIVE_KEY];
+  const tries = prev && prev.modeId === modeId ? (prev.tries || 0) : 0;
+  await chrome.storage.local.set({
+    [ACTIVE_KEY]: { modeId, accountIds, startedAt: Date.now(), tries },
+  });
+}
+
+async function clearRunActive() {
+  await chrome.storage.local.remove(ACTIVE_KEY);
+}
+
+/** 워커가 다시 켜졌을 때: 끝나지 않은 실행이 남아 있으면 저장된 위치에서 이어한다. */
+async function recoverInterruptedRun() {
+  let active;
+  try { active = (await chrome.storage.local.get(ACTIVE_KEY))[ACTIVE_KEY]; } catch (e) { return; }
+  if (!active || !active.modeId || !(active.accountIds || []).length) return;
+  if (currentRun) return;                                  // 이미 돌고 있다
+  if (Date.now() - (active.startedAt || 0) > ACTIVE_MAX_AGE_MS) { await clearRunActive(); return; }
+  const tries = (active.tries || 0) + 1;
+  if (tries > ACTIVE_MAX_TRIES) {
+    await clearRunActive();
+    log('[복구] 여러 번 이어했는데도 계속 끊깁니다 — 자동 이어하기를 멈춥니다. 직접 다시 실행해 주세요.', 'warn');
+    return;
+  }
+  await chrome.storage.local.set({ [ACTIVE_KEY]: { ...active, tries } });
+
+  // 이어할 탭이 아직 살아 있어야 의미가 있다
+  const all = await getResumeAll();
+  const ids = active.accountIds.filter((id) => all[id]);
+  if (!ids.length) { await clearRunActive(); return; }
+
+  log(`[복구] 브라우저가 배경 작업을 잠깐 껐습니다 — ${MODES[active.modeId]?.label || active.modeId} 을 저장된 위치에서 이어합니다 (${tries}번째).`, 'warn');
+  await resumeRun(ids);
+}
+
+/** 저장해 둔 진행 위치에서 이어하기: 같은 페이지로 가서 같은 모드를 다시 돌린다. */
+async function resumeRun(accountIds) {
+  const all = await getResumeAll();
+  const ids = (accountIds || []).filter((id) => all[id]);
+  if (!ids.length) { log('[이어하기] 저장된 진행 위치가 없습니다. 먼저 [진행 위치 저장]을 누르거나 자동화를 한 번 돌리세요.', 'warn'); return; }
+  const accounts = await getAccounts();
+  for (const id of ids) {
+    const entry = all[id];
+    const account = accounts.find((a) => a.id === id) || { id, pw: '' };
+    let session = sessions.get(id);
+    if (!session || !(await tabAlive(session.tabId))) session = await openTabForAccount(account, { forceLogin: false });
+    if (entry.url && session && !session.manual) {
+      const cur = await session.driver.currentUrl();
+      if (cur !== entry.url) { await session.driver.loadUrl(entry.url); await session.driver.waitForLoad(); }
+    } else if (entry.url && session) {
+      const cur = await session.driver.currentUrl();
+      if (cur !== entry.url) { await session.driver.loadUrl(entry.url); await session.driver.waitForLoad(); }
+    }
+    log(`[${id}] 저장된 위치에서 이어합니다 — ${MODES[entry.modeId]?.label || entry.modeId}${entry.progress ? ` (${entry.progress.current}/${entry.progress.total})` : ''}`);
+    await startRun(entry.modeId, [id]);
+  }
 }
 
 function notifyState() {
@@ -183,6 +333,7 @@ async function openTabForAccount(account, { forceLogin }) {
       stop: null,
     };
     sessions.set(account.id, session);
+    hookProgress(session);
     notifyState();
     await driver.waitForLoad();
   }
@@ -304,6 +455,9 @@ async function closeSession(accountId) {
 
 // ------------------------------------------------------------------ 모드
 
+// 스피킹 설정은 실행할 때 읽어 넣는다 (고급 설정에서 바꾼다)
+let speakingSettings = { includeMic: true, recordSec: 6 };
+
 const MODES = {
   auto_all: { label: '전체 자동화', flow: AutoAll.runFullAutomation },
   one_set: { label: '한 세트 자동화', flow: AutoAll.runSingleSet },
@@ -317,6 +471,8 @@ const MODES = {
   memorize_sentence: { label: '문장 암기', fn: Sentence.memorizeSentence, noDict: true },
   // 문장 리콜은 페이지가 로그하는 정답을 캡처한다.
   recall_sentence: { label: '문장 리콜', fn: Sentence.recallSentence, noDict: true },
+  // 문장 스펠은 카드 데이터(정답 문장)를 화면에서 읽는다 — 어순배열은 타일 클릭, 입력형은 진짜 키 입력.
+  spell_sentence: { label: '문장 스펠', fn: Sentence.spellSentence, noDict: true },
   test: { label: '단어 테스트', fn: Games.test },                          // 단어장 필수
   // 문장 테스트는 페이지 카드 목록(study_data)에서 정답을 읽으므로 단어장이 없어도 된다.
   test_sentence: { label: '문장 테스트', fn: Games.testSentence, noDict: true },
@@ -324,6 +480,15 @@ const MODES = {
   scramble: { label: '문장 스크램블', fn: Games.scramble, noDict: true },   // 페이지 데이터 폴백
   // 문법훈련은 단어장 없이도 (보기를 확인해 가며) 풀 수 있다.
   grammar: { label: '문법', fn: Grammar.grammar, noDict: true },
+  // 스피킹: 입해석·입영작·집중듣기는 끝까지 대신 하고, 낭독·쉐도잉·녹음은 소리 재생과 녹음 시작/정지만 대신한다
+  // (목소리는 사용자 본인 것이 올라간다 — 지어내지 않는다).
+  speaking: {
+    label: '스피킹',
+    noDict: true,
+    fn: (d, dict, stop) => Speaking.speaking(d, dict, stop, {
+      includeMic: speakingSettings.includeMic, recordSec: speakingSettings.recordSec,
+    }),
+  },
 };
 
 /** 현재 페이지에서 단어장을 뽑아 세션에 저장 (Ctrl+M 대응). */
@@ -343,9 +508,18 @@ async function runModeOnSession(session, modeId) {
   const mode = MODES[modeId];
   if (!mode) return;
 
+  const settings0 = await getSettings();
+  speakingSettings = {
+    includeMic: settings0.speakingMic === true,
+    recordSec: Number(settings0.speakingRecordSec) > 0 ? Number(settings0.speakingRecordSec) : 6,
+  };
+
   const stop = new StopFlag();
   session.stop = stop;
   session.running = true;
+  session.modeId = modeId;
+  session.progress = null;
+  session.driver.progressState = null;
   setSessionState(session, 'running', mode.label);
 
   // 문장 테스트의 스크램블 버튼은 신뢰된 입력만 받는다 -> CDP 연결
@@ -384,9 +558,12 @@ async function runModeOnSession(session, modeId) {
       setSessionState(session, 'error', '자동화 오류');
     }
   } finally {
+    const finished = !!(session.progress && session.progress.total > 0 && session.progress.current >= session.progress.total);
     stop.set();
     session.running = false;
     await session.driver.detachDebugger();
+    if (finished) await clearResume(session.account.id).catch(() => {});   // 끝까지 했으면 이어할 게 없다
+    else await saveResume(session, { explicit: false }).catch(() => {});   // 중간에 멈췄으면 그 자리를 남긴다
     if (session.state !== 'error') setSessionState(session, 'ready', '');
     notifyState();
   }
@@ -415,6 +592,7 @@ async function startRun(modeId, accountIds) {
   currentRun = { stopped: false };
 
   keepAlive(true);
+  await markRunActive(modeId, accountIds);
 
   try {
     if (settings.startDelaySec > 0) {
@@ -448,14 +626,19 @@ async function startRun(modeId, accountIds) {
   } finally {
     currentRun = null;
     keepAlive(false);
+    await clearRunActive();                 // 제대로 끝났다 — 되살릴 것이 없다
     notifyState();
     log('실행이 끝났습니다.');
+    // 자동화가 끝난 지금이 갈아 끼우기 가장 좋은 때다
+    runUpdateCheck().catch(() => {});
+    reloadIfFolderChanged().catch(() => {});
   }
 }
 
 function stopAll() {
   log('[중지] 모든 계정 자동화를 중지합니다...');
   if (currentRun) currentRun.stopped = true;
+  clearRunActive().catch(() => {});   // 사람이 멈춘 것 — 되살리지 않는다
   let any = false;
   for (const session of sessions.values()) {
     if (session.running) {
@@ -480,22 +663,40 @@ function keepAlive(on) {
   }
 }
 
+// 알람만으로는 모자랐다 — 아래 onConnect 주석과 engine/modules/speaking.js 의 머리말 참고.
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'cc-keepalive') return;
+  port.onMessage.addListener(() => {});
+  port.onDisconnect.addListener(() => { /* 페이지가 닫힌 것 — 그냥 둔다 */ });
+});
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   // keepalive 알람은 아무것도 하지 않아도 워커가 깨어난다.
-  if (alarm && alarm.name === 'cc-update-check') runUpdateCheck();
+  if (!alarm) return;
+  if (alarm.name === 'cc-update-check') runUpdateCheck();
+  if (alarm.name === 'cc-folder-check') reloadIfFolderChanged();
 });
 
 // ------------------------------------------------------------------ 자동 업데이트
 //
-// 개발자 모드로 넣은 확장은 크롬이 스스로 갈아 끼우지 못한다(웹스토어 확장만 자동 갱신).
-// 그래서 여기서는 새 버전을 스스로 **확인해서 알리고, 한 번의 클릭으로 zip 을 받아** 준다.
-// (PC 앱은 완전 자동, 안드로이드는 받아서 설치 화면까지 자동)
+// 새 버전이 올라오면 **기다리지 않고 바로** 갈아 끼우는 것이 목표다.
+//  - PC 앱: 받아서 스스로 설치 (완전 자동)
+//  - 안드로이드: 받아서 설치 화면까지 자동 (안드로이드가 '설치' 한 번을 요구한다)
+//  - 크롬 확장: 개발자 모드로 넣은 확장은 크롬이 파일을 갈아 끼워 주지 않는다(웹스토어 확장만 자동 갱신).
+//    그래서 여기서는 **새 버전을 찾는 즉시 zip 을 알아서 받아 두고**, 크롬이 사람 손을 요구하는
+//    마지막 두 단계(압축 풀어 덮어쓰기 → chrome://extensions 새로고침)만 안내한다.
+//    폴더만 덮어쓰면 그 다음 재로드는 아래 reloadIfFolderChanged 가 알아서 한다.
 
-let updateInfo = null;   // { version, url, notes, checkedAt }
+const UPDATE_CHECK_MIN = 60;          // 한 시간마다
+const UPDATE_STALE_MS = 15 * 60 * 1000;   // 팝업을 열었을 때 이보다 오래됐으면 다시 확인
+
+let updateInfo = null;   // { version, url, notes, checkedAt, downloaded }
+let lastUpdateCheck = 0;
 
 async function runUpdateCheck(force = false) {
   const settings = await getSettings();
   if (!force && settings.autoUpdate === false) return;
+  lastUpdateCheck = Date.now();
   const current = chrome.runtime.getManifest().version;
   const r = await checkForUpdate(current);
   if (r.error) {
@@ -504,11 +705,14 @@ async function runUpdateCheck(force = false) {
   }
   if (!r.available) {
     updateInfo = null;
+    try { chrome.action.setBadgeText({ text: '' }); } catch (e) { /* 무시 */ }
     if (force) log(`[업데이트] 지금이 최신 버전입니다 (v${current}).`);
   } else if (!updateInfo || updateInfo.version !== r.latest.version) {
-    updateInfo = { version: r.latest.version, url: r.latest.extension, notes: r.latest.notes || '', checkedAt: Date.now() };
-    log(`[업데이트] 새 버전 v${r.latest.version} 이 나왔습니다 — 팝업 위의 '업데이트 받기'를 누르세요.`, 'warn');
+    updateInfo = { version: r.latest.version, url: r.latest.extension, notes: r.latest.notes || '', checkedAt: Date.now(), downloaded: false };
+    log(`[업데이트] 새 버전 v${r.latest.version} 이 나왔습니다 — 받는 중…`, 'warn');
     try { chrome.action.setBadgeText({ text: 'NEW' }); chrome.action.setBadgeBackgroundColor({ color: '#ec4899' }); } catch (e) { /* 무시 */ }
+    // 누르기를 기다리지 않는다 — 찾는 즉시 받아 둔다.
+    if (settings.autoUpdate !== false) await downloadUpdate();
   }
   chrome.runtime.sendMessage({ type: 'update', update: updateInfo }).catch(() => {});
 }
@@ -518,7 +722,10 @@ async function downloadUpdate() {
   if (!updateInfo) return { ok: false };
   try {
     await chrome.downloads.download({ url: updateInfo.url, filename: `classcard-automation-extension-v${updateInfo.version}.zip` });
-    log(`[업데이트] v${updateInfo.version} zip 을 받고 있습니다. 압축을 풀어 지금 폴더에 덮어쓴 뒤 chrome://extensions 에서 새로고침(↻)하세요.`);
+    updateInfo = { ...updateInfo, downloaded: true };
+    log(`[업데이트] v${updateInfo.version} zip 을 받았습니다 — 압축을 풀어 지금 확장 폴더에 덮어쓰기만 하세요. ` +
+        '덮어쓰면 확장은 스스로 새 버전으로 다시 켜집니다.');
+    chrome.runtime.sendMessage({ type: 'update', update: updateInfo }).catch(() => {});
     return { ok: true };
   } catch (e) {
     log(`[업데이트] 받기 실패: ${e.message}`, 'error');
@@ -526,10 +733,31 @@ async function downloadUpdate() {
   }
 }
 
-chrome.alarms.create('cc-update-check', { periodInMinutes: 6 * 60 });
+// 폴더를 덮어쓴 것을 스스로 알아채고 다시 켠다.
+// 크롬은 개발자 모드 확장의 파일을 자동으로 갈아 끼우지 않지만, **이미 바뀐 파일은**
+// chrome.runtime.reload() 한 번으로 읽어 들인다. 그래서 manifest 를 주기적으로 다시 읽어
+// 디스크의 버전이 지금 돌고 있는 버전보다 새로우면 자동화가 쉬는 틈에 알아서 재시작한다.
+// (사용자가 해야 할 일은 '압축 풀어 덮어쓰기' 하나로 줄어든다)
+async function reloadIfFolderChanged() {
+  if (runningCount() > 0) return;             // 자동화 중에는 절대 다시 켜지 않는다
+  try {
+    const res = await fetch(chrome.runtime.getURL('manifest.json') + `?t=${Date.now()}`, { cache: 'no-store' });
+    const onDisk = (await res.json()).version;
+    if (compareVersion(onDisk, chrome.runtime.getManifest().version) > 0) {
+      log(`[업데이트] 폴더가 v${onDisk} 으로 바뀐 것을 확인했습니다 — 확장을 다시 켭니다.`);
+      setTimeout(() => chrome.runtime.reload(), 500);
+    }
+  } catch (e) { /* 무시 */ }
+}
+
+chrome.alarms.create('cc-update-check', { periodInMinutes: UPDATE_CHECK_MIN });
+chrome.alarms.create('cc-folder-check', { periodInMinutes: 1 });
 chrome.runtime.onInstalled.addListener(() => { try { chrome.action.setBadgeText({ text: '' }); } catch (e) { /* 무시 */ } runUpdateCheck(); });
 chrome.runtime.onStartup.addListener(() => runUpdateCheck());
 runUpdateCheck();
+
+// 워커가 꺼졌다 다시 켜진 것이면, 끝나지 않은 실행을 저장된 위치에서 이어한다
+recoverInterruptedRun().catch(() => {});
 
 // ------------------------------------------------------------------ 학습 페이지 자동 단어장
 //
@@ -580,8 +808,14 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     switch (msg.type) {
+      case 'keepalive':
+        sendResponse({ ok: true });
+        break;
       case 'getState': {
         await loadLogs();
+        // 팝업을 열 때마다 최신인지 다시 본다 (서비스 워커는 자주 잠들어 알람만으로는 늦을 수 있다)
+        if (Date.now() - lastUpdateCheck > UPDATE_STALE_MS) runUpdateCheck().catch(() => {});
+        reloadIfFolderChanged().catch(() => {});
         sendResponse({
           accounts: await getAccounts(),
           settings: await getSettings(),
@@ -590,6 +824,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           logs: logsByDate,
           today: todayString(),
           update: updateInfo,
+          resume: await getResumeAll(),
         });
         break;
       }
@@ -636,6 +871,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         stopAll();
         sendResponse({ ok: true });
         break;
+      case 'pause':
+        pauseAll();
+        sendResponse({ ok: true });
+        break;
+      case 'resume':
+        resumeAll();
+        sendResponse({ ok: true });
+        break;
+      case 'saveProgress': {
+        let saved = 0;
+        for (const session of sessions.values()) {
+          if ((msg.accountIds || []).includes(session.account.id) && session.modeId) {
+            if (await saveResume(session, { explicit: true })) saved += 1;
+          }
+        }
+        if (!saved) log('[진행 위치 저장] 저장할 진행 중인(또는 방금 돌린) 자동화가 없습니다.', 'warn');
+        sendResponse({ ok: true, resume: await getResumeAll() });
+        break;
+      }
+      case 'resumeRun':
+        resumeRun(msg.accountIds);
+        sendResponse({ ok: true });
+        break;
       case 'fetchDict': {
         const accounts = (await getAccounts()).filter((a) => msg.accountIds.includes(a.id));
         for (const account of accounts) {
@@ -667,6 +925,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           account, tabId: tab.id, driver, state: 'ready', detail: '현재 탭 사용', running: false, stop: null,
           manual: true,
         });
+        hookProgress(sessions.get(account.id));
         log(`[${account.id}] 현재 탭을 사용합니다.`);
         notifyState();
         sendResponse({ ok: true });

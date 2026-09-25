@@ -253,6 +253,24 @@ object Test {
         return (1..total).shuffled().take(nWrong).toSet()
     }
 
+    /**
+     * 점수가 [minScore, maxScore] 안에 들도록 일부러 틀릴 문항 순번을 고른다
+     * (확장 games.js 의 planWrongIndicesRange 와 같다).
+     *
+     * 한 문항의 값은 100/total 점이라, 틀릴 수 있는 최대 개수는
+     * `floor(total * (100 - minScore) / 100)` 이다. 그 범위 안에서 매번 다른 개수를 골라
+     * 늘 같은 점수가 나오지 않게 하되 minScore 밑으로는 내려가지 않는다.
+     * (예: 18문항이면 한 개만 틀려도 94.4점이라 하나도 틀리면 안 된다. 20문항이면 한 개까지 된다.)
+     */
+    fun planWrongIndicesRange(total: Int?, minScore: Int, maxScore: Int): Set<Int> {
+        if (total == null || total <= 0) return emptySet()
+        val maxWrong = (total * (100 - minScore) / 100.0).toInt().coerceIn(0, total)
+        val minWrong = kotlin.math.ceil(total * (100 - maxScore) / 100.0).toInt().coerceIn(0, maxWrong)
+        val nWrong = if (maxWrong <= minWrong) minWrong else (minWrong..maxWrong).random()
+        if (nWrong <= 0) return emptySet()
+        return (1..total).shuffled().take(nWrong).toSet()
+    }
+
     val run: ModeFn = { d, answerDict, stop ->
         d.log("[테스트] 시작")
 
@@ -275,6 +293,11 @@ object Test {
             try {
                 while (!stop.isSet) {
                     if (checkEndAndStop(d, stop)) break
+                    if (TestSentence.testModalOpen(d)) {
+                        if (TestSentence.handleTestModals(d)) d.log("[테스트] 확인 모달을 눌렀습니다 (이전 응시 이어받기/새로 시작)")
+                        if (stop.await(900)) break
+                        continue
+                    }
                     if (Memorize.startStudyIfNeeded(d, stop)) continue
 
                     val q = readQuestion(d)
@@ -309,6 +332,7 @@ object Test {
 
                     // 6개 보기 활성 -> 답 선택
                     answeredCount++
+                    d.progress(answeredCount, total ?: 0, answeredCount - wrongIdx.size, wrongIdx.size, maxOf(0, (total ?: 0) - answeredCount), "테스트")
                     val makeWrong = answeredCount in wrongIdx
                     val allNums = q.options.map { it.num }
 

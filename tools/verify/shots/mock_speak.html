@@ -1,0 +1,132 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>스피킹 (모의)</title>
+<!--
+  스피킹 화면 /Paragraph/{set}/0/0/{class} 의 규칙을 흉내 낸다 (scripts/v3/paragraph_v2.js 확인):
+   - 시작 화면 .start-opt-body 에 단계 버튼 .btn-start-study[data-mode=read|comp|listen|aloud|shadow|record]
+   - 단계를 고르면 .study-wrapper 클래스가 그 단계 이름이 되고 .study-body > div.<단계> 가 .active 가 된다
+   - 카드는 .study-body .CardItem(.active), 이동은 .btn-next-card
+   - 소리는 .btn-bottom-audio 로 재생(전역 audio), 다 들으면 ended
+   - 낭독/쉐도잉/녹음은 getUserMedia 가 성공해야 열리고, 안내 모달(#alertModal)이 한 번 뜬다
+   - 녹음은 .btn-bottom-record 로 시작해 .btn-bottom-audio-stop 으로 멈춘다 (녹음된 길이를 기록한다)
+   - 마지막 카드에서 다음을 누르면 시작 화면으로 돌아간다
+-->
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .study-wrapper{max-width:900px;margin:24px auto;background:#fff;border-radius:12px;padding:22px;min-height:380px}
+ .study-body>div{display:none}.study-body>div.active{display:block}
+ .CardItem{display:none}.CardItem.active{display:block}
+ .btn{display:inline-block;padding:8px 14px;border-radius:8px;background:#2563eb;color:#fff;margin:4px 6px 0;cursor:pointer}
+ .btn-start-study{display:inline-block;padding:10px 16px;border-radius:9px;background:#7c3aed;color:#fff;margin:5px;cursor:pointer}
+ .hidden{display:none}
+ #alertModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4)}
+ #alertModal .modal-content{background:#fff;margin:140px auto;width:380px;padding:20px;border-radius:10px;text-align:center}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="study-wrapper" id="wrap">
+  <div class="start-opt-body" id="opt">
+    <h3>스피킹 학습</h3>
+    <a class="btn-start-study" data-mode="read" data-cnt="0">입해석</a>
+    <a class="btn-start-study" data-mode="comp" data-cnt="0">입영작</a>
+    <a class="btn-start-study" data-mode="listen" data-cnt="0">집중듣기</a>
+    <a class="btn-start-study" data-mode="aloud" data-cnt="0">낭독</a>
+    <a class="btn-start-study" data-mode="shadow" data-cnt="0">쉐도잉</a>
+    <a class="btn-start-study" data-mode="record" data-cnt="0">녹음</a>
+  </div>
+  <div class="study-body" id="body"></div>
+  <div class="study-footer" id="footer" style="display:none">
+    <a class="btn btn-bottom-audio">🔊 듣기</a>
+    <a class="btn btn-bottom-record">⏺ 녹음</a>
+    <a class="btn btn-bottom-audio-stop">⏹ 정지</a>
+    <a class="btn btn-next-card">다음</a>
+  </div>
+</div>
+<div id="alertModal"><div class="modal-content"><div id="alertMsg"></div><a class="btn btn-ok">확인</a></div></div>
+<div id="done"><h2>🎤 스피킹 완료</h2><p id="stat"></p></div>
+<script>
+var MODES = ['read', 'comp', 'listen', 'aloud', 'shadow', 'record'];
+var MIC = ['aloud', 'shadow', 'record'];
+var CARDS = ['I am a boy.', 'Where are you going?', 'It is a nice day.'];
+// 사이트처럼 전역 audio 로 재생한다 (매크로는 ended 를 보고 끝까지 듣는다)
+window.audio = { src: '', paused: true, ended: true };
+var AUDIO_MS = 700;
+function playAudio() {
+  audio.src = 'x.mp3'; audio.paused = false; audio.ended = false;
+  setTimeout(function () { audio.paused = true; audio.ended = true; }, AUDIO_MS);
+}
+// 가짜 마이크 — 실제 페이지처럼 getUserMedia 가 성공해야 마이크 단계가 열린다
+navigator.mediaDevices = navigator.mediaDevices || {};
+navigator.mediaDevices.getUserMedia = function () {
+  return Promise.resolve({ getAudioTracks: function () { return [{ stop: function () {} }]; } });
+};
+
+var curMode = null, curIdx = 0, recStart = 0;
+var stats = {};           // mode -> {cards, heard, recorded: [ms]}
+MODES.forEach(function (m) { stats[m] = { cards: 0, heard: 0, rec: [] }; });
+var wrap = document.getElementById('wrap'), body = document.getElementById('body'), footer = document.getElementById('footer');
+var $alert = document.getElementById('alertModal');
+
+function showAlert(msg) { document.getElementById('alertMsg').textContent = msg; $alert.style.display = 'block'; }
+document.querySelector('#alertModal .btn-ok').addEventListener('click', function () { $alert.style.display = 'none'; });
+
+function renderMode(mode) {
+  curMode = mode; curIdx = 0;
+  wrap.className = 'study-wrapper ' + mode;
+  document.getElementById('opt').classList.add('hidden');
+  footer.style.display = 'block';
+  body.innerHTML = '<div class="' + mode + ' active">' + CARDS.map(function (t, i) {
+    return '<div class="CardItem' + (i === 0 ? ' active' : '') + '" data-idx="c' + i + '">' +
+      '<div class="text">' + t + '</div></div>';
+  }).join('') + '</div>';
+  // 마이크 단계는 안내 모달이 한 번 뜬다 (실제와 같다)
+  if (MIC.indexOf(mode) >= 0) showAlert('마이크 가까이 또박또박 녹음해 주세요.');
+}
+function backToOpt() {
+  var btn = document.querySelector('.btn-start-study[data-mode="' + curMode + '"]');
+  if (btn) btn.setAttribute('data-cnt', String(parseInt(btn.getAttribute('data-cnt'), 10) + 1));
+  curMode = null;
+  wrap.className = 'study-wrapper';
+  body.innerHTML = '';
+  footer.style.display = 'none';
+  document.getElementById('opt').classList.remove('hidden');
+  if (MODES.every(function (m) { return parseInt(document.querySelector('.btn-start-study[data-mode="' + m + '"]').getAttribute('data-cnt'), 10) > 0; })) finish();
+}
+function finish() {
+  document.getElementById('wrap').style.display = 'none';
+  document.getElementById('done').style.display = 'block';
+  var parts = MODES.map(function (m) {
+    var s = stats[m];
+    var rec = s.rec.length ? ' 녹음' + s.rec.length + '회(최소' + Math.min.apply(null, s.rec) + 'ms)' : '';
+    return m + ':' + s.cards + '장/들음' + s.heard + rec;
+  });
+  document.getElementById('stat').textContent = parts.join(' · ');
+}
+[].forEach.call(document.querySelectorAll('.btn-start-study'), function (b) {
+  b.addEventListener('click', function (e) {
+    e.preventDefault();
+    var mode = b.getAttribute('data-mode');
+    if (MIC.indexOf(mode) >= 0) {
+      navigator.mediaDevices.getUserMedia({ audio: true }).then(function () { renderMode(mode); });
+    } else renderMode(mode);
+  });
+});
+document.querySelector('.btn-bottom-audio').addEventListener('click', function (e) {
+  e.preventDefault(); if (!curMode) return; stats[curMode].heard++; playAudio();
+});
+document.querySelector('.btn-bottom-record').addEventListener('click', function (e) {
+  e.preventDefault(); if (!curMode) return;
+  if (recStart) { stats[curMode].rec.push(Date.now() - recStart); recStart = 0; }
+  else recStart = Date.now();
+});
+document.querySelector('.btn-bottom-audio-stop').addEventListener('click', function (e) {
+  e.preventDefault();
+  if (recStart) { stats[curMode].rec.push(Date.now() - recStart); recStart = 0; }
+});
+document.querySelector('.btn-next-card').addEventListener('click', function (e) {
+  e.preventDefault(); if (!curMode) return;
+  stats[curMode].cards++;
+  var cards = body.querySelectorAll('.CardItem');
+  cards[curIdx].classList.remove('active');
+  curIdx++;
+  if (curIdx >= cards.length) { backToOpt(); return; }
+  cards[curIdx].classList.add('active');
+});
+</script></body></html>

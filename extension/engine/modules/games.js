@@ -10,7 +10,10 @@ import { ratio } from '../similarity.js';
 /** 모듈별 목표 점수/기준값 — 원본 상수를 그대로 옮겼고 설정에서 바꿀 수 있다. */
 export const CONFIG = {
   testTargetScore: 90,           // Test.py TARGET_SCORE
-  testSentenceTargetScore: 100,  // TestSentence.py TARGET_SCORE
+  // 문장 테스트는 **95점 이상 100점 이하**가 되게 한다.
+  // 늘 100점이면 티가 나므로, 95점 밑으로는 절대 안 내려가는 선에서 매번 다르게 고른다.
+  testSentenceMinScore: 95,
+  testSentenceMaxScore: 100,
   // 이 범위에서 목표 점수를 뽑아, 도달하면 게임 도중에 빠져나간다(점수는 서버에 저장됨).
   matchExitMin: 7000,            // 단어 매칭 목표 점수 (7000~8500)
   matchExitMax: 8500,
@@ -24,6 +27,30 @@ const GO_RESULT_SELECTOR = 'a.btn-go-result';
  * TARGET_SCORE 이상이 나오도록 일부러 틀릴 문항 순번(1-based) 집합.
  * 틀릴 개수 = floor(total * (100 - target) / 100) — 내림이라 점수는 항상 목표 이상.
  */
+/**
+ * 점수가 [minScore, maxScore] 안에 들도록 일부러 틀릴 문항 번호를 고른다.
+ *
+ * 한 문항의 값은 100/total 점이다. 그래서 틀릴 수 있는 최대 개수는
+ * `floor(total * (100 - minScore) / 100)` 이고, 이 개수를 넘기면 minScore 밑으로 떨어진다.
+ * (예: 18문항이면 한 개만 틀려도 94.4점이라 95점을 지키려면 **하나도 틀리면 안 된다**.
+ *  20문항이면 한 개까지 틀려도 95점이다.)
+ * 그 범위 안에서 매번 다른 개수를 골라, 늘 같은 점수가 나오지 않게 한다.
+ */
+export function planWrongIndicesRange(total, minScore, maxScore, rand = Math.random) {
+  if (!total || total <= 0) return new Set();
+  const maxWrong = Math.max(0, Math.min(total, Math.floor((total * (100 - minScore)) / 100)));
+  const minWrong = Math.max(0, Math.min(maxWrong, Math.ceil((total * (100 - maxScore)) / 100)));
+  const nWrong = minWrong + Math.floor(rand() * (maxWrong - minWrong + 1));
+  if (nWrong <= 0) return new Set();
+  const pool = [];
+  for (let i = 1; i <= total; i++) pool.push(i);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return new Set(pool.slice(0, nWrong));
+}
+
 export function planWrongIndices(total, targetScore) {
   if (!total || total <= 0) return new Set();
   let nWrong = Math.floor((total * (100 - targetScore)) / 100);
@@ -236,6 +263,11 @@ export async function test(d, answerDict, stop) {
   try {
     while (!stop.isSet) {
       if (await testCheckEndAndStop(d, stop)) break;
+      if (await testModalOpen(d)) {
+        if (await handleTestModals(d)) d.log('[테스트] 확인 모달을 눌렀습니다 (이전 응시 이어받기/새로 시작)');
+        if (await stop.await(900)) break;
+        continue;
+      }
       if (await startStudyIfNeeded(d, stop)) continue;
 
       const q = await readQuestion(d);
@@ -264,6 +296,7 @@ export async function test(d, answerDict, stop) {
       }
 
       answeredCount++;
+      d.progress({ current: answeredCount, total, ok: answeredCount - wrongIdx.size, fail: wrongIdx.size, skipped: Math.max(0, total - answeredCount), label: '테스트' });
       const makeWrong = wrongIdx.has(answeredCount);
       const allNums = q.options.map((o) => o.num);
 
@@ -330,6 +363,15 @@ async function pageCards(d) {
 }
 
 /**
+ * 클래스 테스트가 문제마다 싣고 바로 지우는 정답 (`.answer.hidden`) — preload 가 지워지기 전에 챙겨 둔 것.
+ * 문제 id 로 바로 찾으므로 제시문 매칭이 필요 없다(= 항상 100점).
+ */
+async function pageTestAnswers(d) {
+  const obj = await d.eval('return window.__cc_test_answers || null;');
+  return obj && typeof obj === 'object' ? obj : null;
+}
+
+/**
  * 정답 후보 영어 문장들 — 페이지가 로그한 정답(preload 캡처) + 지금까지 모은 카드 목록.
  */
 async function answerCandidates(d, maps) {
@@ -349,12 +391,35 @@ async function answerCandidates(d, maps) {
 async function pickByTiles(d, candidates) {
   if (!candidates || !candidates.length) return null;
   const tiles = await listButtons(d);
-  const bag = (arr) => arr.map((t) => N.normEn(String(t).replace(/\*$/, ''))).filter(Boolean).sort().join('|');
-  const want = bag(tiles);
-  if (!want) return null;
+  return pickByTileBag(tiles, candidates);
+}
+
+/**
+ * 타일 낱말 묶음과 정확히 같은 후보를 먼저, 없으면 (타일이 여러 낱말 묶음이거나 기호가 다를 때) 낱말 집합이
+ * 가장 비슷한 후보를 고른다 — 후보끼리 구분이 안 될 만큼 비슷하면 고르지 않는다.
+ */
+export function pickByTileBag(tiles, candidates) {
+  const words = (arr) => [].concat(...arr.map((t) => N.parseEnglishWords(String(t).replace(/\*$/, ''))))
+    .map((w) => N.normEn(w)).filter(Boolean);
+  const tileWords = words(tiles);
+  if (!tileWords.length) return null;
+  const want = tileWords.slice().sort().join('|');
   for (const cand of candidates) {
-    if (bag(N.parseEnglishWords(cand)) === want) return cand;
+    if (words([cand]).sort().join('|') === want) return cand;
   }
+  const setA = new Set(tileWords);
+  let best = null, bestScore = 0, second = 0;
+  for (const cand of candidates) {
+    const cw = words([cand]);
+    if (!cw.length) continue;
+    const setB = new Set(cw);
+    let inter = 0;
+    for (const w of setA) if (setB.has(w)) inter += 1;
+    const score = inter / Math.max(setA.size, setB.size);
+    if (score > bestScore) { second = bestScore; bestScore = score; best = cand; }
+    else if (score > second) second = score;
+  }
+  if (best && bestScore >= 0.75 && bestScore > second) return best;
   return null;
 }
 
@@ -394,6 +459,9 @@ const WORD_SELECTORS = [
   '.test-sentence-words .btn-sentence-word',
   '.sentence-tab-box .btn-sentence-word',
   '.test-sentence-words .btn',
+  // 클래스 테스트(/ClassTest)는 낱말 타일의 클래스 이름을 페이지마다 난수로 바꾼다
+  // (scripts/v2/class_test_sentence.js 의 cheat_scramble_class). 그래서 이름 대신 자리로 찾는다.
+  '.test-sentence-words a',
 ];
 const PLACED_SELECTORS = [
   '.test-sentence-input span',
@@ -430,10 +498,34 @@ var flipped = card.classList.contains('flip') || words > 0;
 
 var prompt = '';
 var pSel = ['.flip-card-front .front-hidden', '.flip-card-front .cc-table',
-            '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body'];
+            '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body',
+            // 클래스 테스트: 제시문은 카드 바로 아래 .front-hidden(숨김) 과 .quest-direction .para_item3 에 있다
+            '.front-hidden', '.quest-direction .para_item3', '.para_item3',
+            '.test-sentence-mean', '.sentence-mean', '.quest-back', '.q-body', '.question'];
 for (var i = 0; i < pSel.length && !prompt; i++) {
     var el = card.querySelector(pSel[i]);
-    if (el) prompt = (el.textContent || '').replace(/\\s+/g, ' ').trim();
+    if (el) prompt = (el.textContent || '').replace(/[ \\t\\r\\n]+/g, ' ').trim();
+}
+if (!prompt) {
+    // 화면 구조가 바뀌어 위 자리에 없으면: 카드 안의 글 중 낱말 버튼·놓인 낱말·버튼 글을 뺀 나머지에서
+    // 한글이 든 줄을 제시문으로 본다 (제시문은 항상 우리말 뜻이다)
+    var skip = [];
+    for (var a = 0; a < WORD_SEL.length; a++) skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll(WORD_SEL[a])));
+    for (var b = 0; b < PLACED_SEL.length; b++) skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll(PLACED_SEL[b])));
+    skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll('a.btn, button, .btn, script, style')));
+    var lines = [];
+    var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+    var node;
+    while ((node = walker.nextNode())) {
+        var t = (node.nodeValue || '').replace(/[ \\t\\r\\n]+/g, ' ').trim();
+        if (!t || !/[가-힣]/.test(t)) continue;
+        var p = node.parentElement, skipped = false;
+        for (var k = 0; k < skip.length && !skipped; k++) if (skip[k] === p || skip[k].contains(p)) skipped = true;
+        if (skipped) continue;
+        if (p && p.offsetParent === null && !card.classList.contains('flip')) continue;
+        lines.push(t);
+    }
+    prompt = lines.join(' ').trim();
 }
 
 return { found: true, qid: qid, flipped: flipped, prompt: prompt,
@@ -647,8 +739,51 @@ async function clickToken(d, token, stop) {
 }
 
 /** 영어 문장을 어순대로 클릭. makeWrong 이면 마지막 두 토큰을 바꿔 클릭. */
+/**
+ * 타일이 낱말 하나가 아니라 여러 낱말 묶음("in righteousness")일 때, 문장 어순대로 어떤 타일을 눌러야 하는지 계획한다.
+ * 각 자리에서 가장 긴 묶음부터 맞춰 본다. 맞는 타일이 없는 자리는 낱말 하나(기존 방식)로 둔다.
+ */
+export function planChunks(tokens, tileTexts) {
+  const words = (t) => N.parseEnglishWords(t).map((w) => N.normEn(w)).filter(Boolean);
+  const tiles = tileTexts.map((t) => ({ text: t, words: words(t), used: false }));
+  const toks = tokens.map((t) => N.normEn(t));
+  const plan = [];
+  let pos = 0;
+  while (pos < tokens.length) {
+    if (!toks[pos]) { pos += 1; continue; }            // 순수 구두점
+    let best = null;
+    for (const tile of tiles) {
+      if (tile.used || !tile.words.length) continue;
+      const n = tile.words.length;
+      if (best && n <= best.words.length) continue;
+      let ok = true, k = pos, m = 0;
+      while (m < n && k < tokens.length) {
+        if (!toks[k]) { k += 1; continue; }
+        if (toks[k] !== tile.words[m]) { ok = false; break; }
+        k += 1; m += 1;
+      }
+      if (ok && m === n) best = tile;
+    }
+    if (best) {
+      best.used = true;
+      plan.push(best.text);
+      let m = 0;
+      while (m < best.words.length && pos < tokens.length) { if (toks[pos]) m += 1; pos += 1; }
+    } else {
+      plan.push(tokens[pos]);
+      pos += 1;
+    }
+  }
+  return plan;
+}
+
 async function clickSentence(d, english, makeWrong, stop) {
-  const tokens = N.parseEnglishWords(english);
+  let tokens = N.parseEnglishWords(english);
+  // 타일이 여러 낱말 묶음이면 묶음 단위로 누른다
+  const tileTexts = (await listButtons(d)).filter((t) => !/\*$/.test(t));
+  if (tileTexts.some((t) => N.parseEnglishWords(t).length > 1)) {
+    tokens = planChunks(tokens, tileTexts);
+  }
 
   const order = tokens.map((_, i) => i);
   if (makeWrong && order.length >= 2) {
@@ -680,6 +815,40 @@ async function clickSentence(d, english, makeWrong, stop) {
   return true;
 }
 
+
+/**
+ * 테스트 화면의 확인 모달을 처리한다.
+ *
+ * 클래스 테스트는 이전 응시가 남아 있으면 `showConfirm` 으로 두 번 묻는다
+ * (scripts/v2/class_test_sentence.js 의 checkOnTest -> checkOnTestReConfirm):
+ *   1) "…에 시작한 테스트가 진행 중입니다. 테스트에 새로 응시하시겠습니까?"  [취소][응시]
+ *   2) "테스트를 다시 시작하면 기존 테스트는 무효화됩니다. 새로 시작할까요?" [취소][새로 시작]
+ * 이 모달이 떠 있는 동안 '테스트 시작' 버튼은 가려져 있어, 처리하지 않으면 시작 버튼만 계속 누르게 된다.
+ * @returns {Promise<boolean>} 모달을 눌렀으면 true
+ */
+export async function handleTestModals(d) {
+  return d.clickSmart(`
+    var sels = ['#confirmModal .btn-ok', '#alertModal .btn-ok', '#alertModal2 .btn-ok',
+                '.modal-content .btn-ok'];
+    for (var i = 0; i < sels.length && !el; i++) {
+        var btns = document.querySelectorAll(sels[i]);
+        for (var j = 0; j < btns.length; j++) {
+            if (btns[j].offsetParent !== null && !btns[j].classList.contains('close-pos')) { el = btns[j]; break; }
+        }
+    }`);
+}
+
+/** 확인 모달이 떠 있는지 (떠 있으면 시작 버튼을 눌러도 소용없다). */
+async function testModalOpen(d) {
+  return d.evalBool(`
+    var ids = ['#confirmModal', '#alertModal', '#alertModal2'];
+    for (var i = 0; i < ids.length; i++) {
+        var m = document.querySelector(ids[i]);
+        if (m && window.getComputedStyle(m).display === 'block') return true;
+    }
+    return false;`);
+}
+
 /** TestSentence.py — 문장 어순 배열 테스트 자동 풀이 */
 export async function testSentence(d, answerDict, stop) {
   d.log('[문장 테스트] 시작');
@@ -700,11 +869,23 @@ export async function testSentence(d, answerDict, stop) {
     d.log('[문장 테스트] 카드 목록·단어장이 없습니다 — 페이지가 남기는 정답으로 풉니다.', 'warn');
   }
 
+  // 클래스 테스트는 문제마다 정답을 싣고 바로 지운다 — preload 가 챙겨 둔 것을 쓴다 (문제 id 로 바로 찾음)
+  let testAnswers = await pageTestAnswers(d);
+  if (testAnswers && Object.keys(testAnswers).length) {
+    d.log(`[문장 테스트] 페이지 정답 ${Object.keys(testAnswers).length}개를 확보했습니다 (문제별 정답 — 100점)`);
+  }
+
   const total = await countTotal(d);
-  const wrongIdx = planWrongIndices(total, CONFIG.testSentenceTargetScore);
+  const wrongIdx = planWrongIndicesRange(total, CONFIG.testSentenceMinScore, CONFIG.testSentenceMaxScore);
+  if (total) {
+    const expected = Math.round(((total - wrongIdx.size) / total) * 1000) / 10;
+    d.log(`[문장 테스트] 총 ${total}문항 · 일부러 틀릴 문항 ${wrongIdx.size}개 -> 예상 ${expected}점 ` +
+      `(${CONFIG.testSentenceMinScore}~${CONFIG.testSentenceMaxScore}점 사이로 맞춥니다)`);
+  }
 
   const flipAttempts = new Map();
   const answeredQids = new Set();
+  let dumpedEmptyPrompt = false;
   let answeredCount = 0;
   let lastQid = null;
   let noProgress = 0;
@@ -712,6 +893,11 @@ export async function testSentence(d, answerDict, stop) {
   try {
     while (!stop.isSet) {
       if (await testSentenceCheckEndAndStop(d, stop)) break;
+      if (await testModalOpen(d)) {
+        if (await handleTestModals(d)) d.log('[문장 테스트] 확인 모달을 눌렀습니다 (이전 응시 이어받기/새로 시작)');
+        if (await stop.await(900)) break;
+        continue;
+      }
       if (await startStudyIfNeeded(d, stop)) continue;
 
       const q = await readCard(d);
@@ -756,7 +942,13 @@ export async function testSentence(d, answerDict, stop) {
         continue;
       }
 
-      let english = matchEnglish(q.prompt, maps);
+      // 1순위: 그 문제의 정답 그대로 (클래스 테스트)
+      let english = (testAnswers && q.qid && testAnswers['q' + q.qid]) || null;
+      if (!english && testAnswers === null) {
+        testAnswers = await pageTestAnswers(d);          // 늦게 실린 경우 한 번 더
+        english = (testAnswers && q.qid && testAnswers['q' + q.qid]) || null;
+      }
+      if (!english) english = matchEnglish(q.prompt, maps);
       if (!english) {
         // 화면이 바뀌어 카드 목록이 새로 실렸을 수 있다 — 한 번 다시 읽어 본다.
         const fresh = await pageCards(d);
@@ -773,12 +965,18 @@ export async function testSentence(d, answerDict, stop) {
       }
       if (!english) {
         d.log(`[문장 테스트] 매칭 실패(건너뜀): '${q.prompt}'`, 'warn');
+        if (!q.prompt && !dumpedEmptyPrompt) {
+          dumpedEmptyPrompt = true;
+          const dump = await d.eval(DUMP_CARD_JS);
+          d.log('[문장 테스트] 제시문을 읽지 못했습니다. 화면 구조: ' + JSON.stringify(dump).slice(0, 400), 'warn');
+        }
         answeredQids.add(q.qid);
         if (await stop.await(300)) break;
         continue;
       }
 
       answeredCount++;
+      d.progress({ current: answeredCount, total, ok: answeredCount - wrongIdx.size, fail: wrongIdx.size, skipped: Math.max(0, total - answeredCount), label: '테스트' });
       const makeWrong = wrongIdx.has(answeredCount);
 
       const ok = await clickSentence(d, english, makeWrong, stop);

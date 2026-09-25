@@ -285,7 +285,8 @@ object RecallSentence {
         }
     }
 
-    val run: ModeFn = { d, answerDict, stop ->
+    /** 예전 문장 리콜 화면(콘솔 정답 캡처 + .btn-scramble) 흐름. 지금 사이트가 아니면 이걸로 폴백한다. */
+    private val runLegacy: ModeFn = { d, answerDict, stop ->
         d.log("[문장 리콜] 시작")
 
         // 페이지가 정답을 로그할 때까지 잠깐 대기 (console.log 후킹 캡처)
@@ -448,6 +449,101 @@ object RecallSentence {
                     d.log("[문장 리콜] 종료")
                 }
             }
+        }
+    }
+
+    // ============================================================ 지금 사이트 (scripts/v3/recall_sentence.js) — 확장 sentence.js 의 recallSentence 와 같은 규칙
+    //
+    //   - `.CardItem.active .front .input-box` 에 앞부분 낱말이 미리 채워져 있고, 빈칸은 `.btn-scramble.now`('?') 로 표시된다.
+    //     빈칸 정답은 그 input-box 의 jQuery data('arr_answer') (순서대로). 콘솔 캡처가 필요 없다.
+    //   - 보기 타일은 footer 의 `.scramble-body .btn-scramble` (한 번에 최대 4개). 놓은 수 = `.input-box .btn-scramble:not(.now)`.
+    //   - 한 묶음을 다 놓으면 채점: 틀리면 `.study-wrapper.wrong`(정답 표시), 맞으면 다음 묶음. 다 맞추면 `.study-wrapper.correct`.
+    //     어느 쪽이든 `.feedback .btn-next-card`(다음카드) 로 넘어간다 (재시도 없음 — 틀린 카드는 다음 바퀴에).
+
+    private suspend fun clickRecallTile(d: Driver, index: Int): Boolean = d.clickSmart(
+        """
+        var tiles = document.querySelectorAll('.scramble-body .btn-scramble');
+        el = tiles[$index] || null;
+        """
+    )
+
+    val run: ModeFn = { d, answerDict, stop ->
+        d.log("[문장 리콜] 시작")
+        var rounds = 0
+        var sameCount = 0
+        var lastSig = ""
+        var wrongLogged: String? = null
+        var handedToLegacy = false
+        try {
+            loop@ while (!stop.isSet) {
+                val s = SpellSentence.state(d)
+                if (s == null) { if (stop.await(400)) break; continue }
+                if (s.card) Memorize.reportCardProgress(d, "문장 리콜")
+
+                if (s.end) {
+                    if (s.unknown > 0 && rounds < SpellSentence.MAX_ROUNDS) {
+                        rounds += 1
+                        d.log("[문장 리콜] 모르는 카드 ${s.unknown}개 — 다시 학습합니다 ($rounds/${SpellSentence.MAX_ROUNDS})")
+                        d.clickFirstVisible("#study_end .btn-study-end-unknow")
+                        if (stop.await(1500)) break
+                        continue
+                    }
+                    d.log("[문장 리콜] 학습 완료")
+                    d.exec("""var a = document.querySelectorAll("#study_end.active .study-header a"); if (a.length) a[0].click();""")
+                    d.exec("""var a = document.querySelectorAll(".btn-top-menu a"); if (a.length) a[0].click();""")
+                    stop.sleep(500)
+                    d.exec("""var a = document.querySelectorAll(".close_o"); if (a.length) a[0].click();""")
+                    stop.set()
+                    break
+                }
+                if (s.modal) { SpellSentence.closeModal(d); if (stop.await(700)) break; continue }
+                if (s.round) { if (stop.await(500)) break; continue }
+                if (s.start) { Memorize.startStudyIfNeeded(d, stop); if (stop.await(800)) break; continue }
+                if (!s.card) { if (stop.await(400)) break; continue }
+
+                if (s.legacy) {
+                    d.log("[문장 리콜] 예전 화면 구조입니다 — 이전 방식으로 진행합니다")
+                    handedToLegacy = true
+                    runLegacy(d, answerDict, stop)
+                    break
+                }
+
+                val sig = "${s.key}|${s.correct}|${s.wrong}|${s.rPlaced}|${s.rTiles.count { !it.clicked }}"
+                if (sig == lastSig) {
+                    sameCount += 1
+                    if (sameCount == 60) {
+                        d.log("[문장 리콜] 진행이 멈췄습니다 — 화면: key=${s.key} recall=${s.recall} placed=${s.rPlaced} words=${s.rWords.size} tiles=${s.rTiles.size}")
+                        SpellSentence.clickFeedback(d, ".btn-next-card")
+                    }
+                } else { sameCount = 0; lastSig = sig }
+
+                if (s.correct || s.wrong) {
+                    if (s.wrong && wrongLogged != s.key) { wrongLogged = s.key; d.log("[문장 리콜] 오답 처리된 카드 — 다음 바퀴에 다시 나옵니다") }
+                    SpellSentence.clickFeedback(d, ".btn-next-card")
+                    val r = SpellSentence.waitCardChange(d, stop, s.key, 3000)
+                    if (r == SpellSentence.Wait.STOPPED) break
+                    if (r == SpellSentence.Wait.STUCK) { d.blurActiveElement(); d.pressSpace() }
+                    continue
+                }
+
+                if (!s.recall || s.rWords.isEmpty()) { if (stop.await(300)) break; continue }
+                if (s.rPlaced >= s.rWords.size) { if (stop.await(300)) break; continue }
+                val expected = s.rWords[s.rPlaced]
+                var hit = s.rTiles.indexOfFirst { !it.clicked && it.input == expected }
+                if (hit < 0) {
+                    // 사이트는 < > 를 &lt; &gt; 로 바꿔 비교한다 — 표시 글자가 다를 수 있으니 공백·기호를 뺀 비교로 한 번 더
+                    fun norm(t: String) = t.lowercase().replace(Regex("[^a-z0-9가-힣]"), "")
+                    val ne = norm(expected)
+                    if (ne.isNotEmpty()) hit = s.rTiles.indexOfFirst { !it.clicked && norm(it.input) == ne }
+                }
+                if (hit < 0) { if (stop.await(250)) break; continue }
+                clickRecallTile(d, hit)
+                if (stop.await(150)) break
+            }
+        } catch (e: Throwable) {
+            if (!stop.isSet) d.log("[문장 리콜] 오류: ${e.message}")
+        } finally {
+            if (!handedToLegacy) d.log("[문장 리콜] 종료")
         }
     }
 }

@@ -16,14 +16,27 @@ class StopFlag(private val parent: StopFlag? = null) {
     @Volatile
     private var stopped = false
 
+    @Volatile
+    private var paused = false
+
     val isSet: Boolean
         get() = stopped || (parent?.isSet ?: false)
+
+    /** 일시정지 중인지 (부모가 멈추면 자식도 멈춘다) */
+    val isPaused: Boolean
+        get() = paused || (parent?.isPaused ?: false)
 
     fun set() {
         stopped = true
     }
 
-    /** [ms] 밀리초 동안 대기. 중지되면 즉시 true 를 반환하고 깨어난다. */
+    fun pause() { paused = true }
+    fun resume() { paused = false }
+
+    /**
+     * [ms] 밀리초 동안 대기. 중지되면 즉시 true 를 반환하고 깨어난다.
+     * 일시정지 중이면 재개될 때까지 여기서 멈춘다 — 모든 모듈이 이 함수로 쉬므로 어느 모드든 이 한 곳에서 멈춘다.
+     */
     suspend fun await(ms: Long): Boolean {
         if (isSet) return true
         var left = ms
@@ -33,6 +46,7 @@ class StopFlag(private val parent: StopFlag? = null) {
             left -= slice
             if (isSet) return true
         }
+        while (isPaused && !isSet) delay(100)
         return isSet
     }
 

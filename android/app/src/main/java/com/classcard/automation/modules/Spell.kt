@@ -209,6 +209,7 @@ object Spell {
             var loggedSource = false
             try {
                 loop@ while (!stop.isSet) {
+                    Memorize.reportCardProgress(d, "스펠")
                     if (checkStep2SuccessAndStop(d, stop)) break
                     if (Memorize.startStudyIfNeeded(d, stop)) continue
 

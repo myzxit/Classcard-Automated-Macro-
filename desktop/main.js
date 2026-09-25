@@ -20,6 +20,7 @@ import { ElectronDriver, StopFlag } from './driver.js';
 import { checkForUpdate } from './app/engine/update.js';
 import * as Basic from './app/engine/modules/basic.js';
 import * as Sentence from './app/engine/modules/sentence.js';
+import * as Speaking from './app/engine/modules/speaking.js';
 import * as Games from './app/engine/modules/games.js';
 import * as Grammar from './app/engine/modules/grammar.js';
 import * as AutoAll from './app/engine/modules/autoall.js';
@@ -231,12 +232,17 @@ async function maybeAutoDict(win, url) {
   if (!s || s.running) return;
   if (autoDictLast.get(win.id) === url) return;
   autoDictLast.set(win.id, url);
-  await new Promise((r) => setTimeout(r, 1500));
-  if (!winAlive(win)) return;
-  const hasCards = await s.driver.evalBool(
-    "return !!document.querySelector('.CardItem, .flip-card, [name=\"card_idx[]\"], .speed_quiz_row') || (typeof study_data !== 'undefined' && !!study_data);",
-  );
-  if (!hasCards) { autoDictLast.delete(win.id); return; }
+  // 카드 목록이 실릴 시간을 준다 (시작 화면이어도 preload 가 챙긴 __cc_study_data 는 있다)
+  for (let i = 0; i < 6; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    if (!winAlive(win)) return;
+    const hasCards = await s.driver.evalBool(
+      "return !!(window.__cc_study_data && window.__cc_study_data.length) || (typeof study_data !== 'undefined' && !!study_data) || " +
+      "!!document.querySelector('.CardItem, .flip-card, [name=\"card_idx[]\"], .speed_quiz_row');",
+    );
+    if (hasCards) break;
+    if (i === 5) { autoDictLast.delete(win.id); return; }
+  }
   const data = await Basic.getData(s.driver, { quiet: true });
   const dict = Basic.dictFromCards(data);
   if (dict && dict.size) {
@@ -250,7 +256,74 @@ async function maybeAutoDict(win, url) {
 function sessionSummary() {
   return Array.from(sessions.values()).filter((s) => winAlive(s.win)).map((s) => ({
     id: s.account.id, state: s.state, detail: s.detail, tabId: s.win.id,
+    running: !!s.running, paused: !!(s.stop && s.stop.isPaused), modeId: s.modeId || null, progress: s.progress || null,
   }));
+}
+
+// ------------------------------------------------------------------ 진행률 · 일시정지 · 진행 위치 저장 (확장 background.js 와 같은 규칙)
+
+let lastResumeSaveAt = 0;
+const getResumeAll = () => store.resume || {};
+
+async function saveResume(s, { explicit = false } = {}) {
+  if (!s || !s.modeId) return null;
+  if (!explicit && Date.now() - lastResumeSaveAt < 5000) return null;
+  lastResumeSaveAt = Date.now();
+  let url = '';
+  try { url = await s.driver.currentUrl(); } catch (e) { url = ''; }
+  store.resume = store.resume || {};
+  const entry = { modeId: s.modeId, url, progress: s.progress || null, savedAt: Date.now() };
+  store.resume[s.account.id] = entry;
+  scheduleSave();
+  if (explicit) {
+    const p = s.progress;
+    s.driver.log(`진행 위치를 저장했습니다 — ${MODES[s.modeId]?.label || s.modeId}${p ? ` ${p.current}/${p.total}` : ''} · ${url.replace('https://www.classcard.net', '')}`, 'success');
+  }
+  return entry;
+}
+
+function clearResume(accountId) {
+  if (store.resume && store.resume[accountId]) { delete store.resume[accountId]; scheduleSave(); }
+}
+
+function hookProgress(s) {
+  s.driver.onProgress = (p) => { s.progress = p; notifyState(); saveResume(s).catch(() => {}); };
+}
+
+function pauseAll() {
+  let any = false;
+  for (const s of sessions.values()) {
+    if (s.running && s.stop && !s.stop.isPaused) { s.stop.pause(); any = true; s.driver.log('일시정지 — 재개를 누를 때까지 멈춥니다.', 'warn'); }
+  }
+  if (!any) log('    일시정지할 자동화가 없습니다.', 'dim');
+  notifyState();
+}
+
+function resumeAll() {
+  let any = false;
+  for (const s of sessions.values()) {
+    if (s.running && s.stop && s.stop.isPaused) { s.stop.resume(); any = true; s.driver.log('재개합니다.', 'success'); }
+  }
+  if (!any) log('    재개할 자동화가 없습니다.', 'dim');
+  notifyState();
+}
+
+async function resumeRun(accountIds) {
+  const all = getResumeAll();
+  const ids = (accountIds || []).filter((id) => all[id]);
+  if (!ids.length) { log('[이어하기] 저장된 진행 위치가 없습니다. 먼저 [진행 위치 저장]을 누르거나 자동화를 한 번 돌리세요.', 'warn'); return; }
+  for (const id of ids) {
+    const entry = all[id];
+    const account = getAccounts().find((a) => a.id === id) || { id, pw: '' };
+    let s = sessions.get(id);
+    if (!s || !winAlive(s.win)) s = await openWindowForAccount(account, { forceLogin: false });
+    if (entry.url && s) {
+      const cur = await s.driver.currentUrl();
+      if (cur !== entry.url) { await s.driver.loadUrl(entry.url); await s.driver.waitForLoad(); }
+    }
+    log(`[${id}] 저장된 위치에서 이어합니다 — ${MODES[entry.modeId]?.label || entry.modeId}${entry.progress ? ` (${entry.progress.current}/${entry.progress.total})` : ''}`);
+    await startRun(entry.modeId, [id]);
+  }
 }
 
 const runningCount = () => Array.from(sessions.values()).filter((s) => s.running).length;
@@ -283,6 +356,7 @@ async function openWindowForAccount(account, { forceLogin }) {
     const driver = new ElectronDriver(win, `[${account.id}]`, log);
     s = { account, win, driver, state: 'opening', detail: '창 여는 중', running: false, stop: null };
     sessions.set(account.id, s);
+    hookProgress(s);
     notifyState();
     await driver.loadUrl(process.env.CC_SMOKE_MOCK ? 'https://www.classcard.net/Main' : LOGIN_URL);
   }
@@ -373,11 +447,20 @@ const MODES = {
   spell: { label: '스펠', fn: Basic.spell, noDict: true },
   memorize_sentence: { label: '문장 암기', fn: Sentence.memorizeSentence, noDict: true },
   recall_sentence: { label: '문장 리콜', fn: Sentence.recallSentence, noDict: true },
+  spell_sentence: { label: '문장 스펠', fn: Sentence.spellSentence, noDict: true },
   test: { label: '단어 테스트', fn: Games.test },
   test_sentence: { label: '문장 테스트', fn: Games.testSentence, noDict: true },
   matching: { label: '단어 매칭', fn: Games.matching, noDict: true },
   scramble: { label: '문장 스크램블', fn: Games.scramble, noDict: true },
   grammar: { label: '문법', fn: Grammar.grammar, noDict: true },
+  speaking: {
+    label: '스피킹',
+    noDict: true,
+    fn: (d, dict, stop) => Speaking.speaking(d, dict, stop, {
+      includeMic: getSettings().speakingMic === true,
+      recordSec: Number(getSettings().speakingRecordSec) > 0 ? Number(getSettings().speakingRecordSec) : 6,
+    }),
+  },
 };
 
 async function fetchAnswerDict(s) {
@@ -398,6 +481,10 @@ async function runModeOnSession(s, modeId) {
   const stop = new StopFlag();
   s.stop = stop;
   s.running = true;
+  s.modeId = modeId;
+  s.progress = null;
+  s.driver.progressState = null;
+  if (!s.driver.onProgress) hookProgress(s);
   setSessionState(s, 'running', mode.label);
   await s.driver.attachDebugger();
   try {
@@ -425,9 +512,11 @@ async function runModeOnSession(s, modeId) {
       setSessionState(s, 'error', '자동화 오류');
     }
   } finally {
+    const finished = !!(s.progress && s.progress.total > 0 && s.progress.current >= s.progress.total);
     stop.set();
     s.running = false;
     await s.driver.detachDebugger();
+    if (finished) clearResume(s.account.id); else await saveResume(s).catch(() => {});
     if (s.state !== 'error') setSessionState(s, 'ready', '');
     notifyState();
   }
@@ -469,6 +558,13 @@ async function startRun(modeId, accountIds) {
     currentRun = null;
     notifyState();
     log('실행이 끝났습니다.');
+    // 자동화 중에는 앱을 다시 켤 수 없어 미뤄 뒀다 — 끝난 지금 바로 갈아 끼운다
+    if (updateInfo && updateInfo.downloaded) {
+      log(`[업데이트] 자동화가 끝났습니다 — v${updateInfo.version} 을 지금 설치합니다.`);
+      setTimeout(installNow, 1500);
+    } else {
+      runUpdateCheck().catch(() => {});
+    }
   }
 }
 
@@ -493,7 +589,7 @@ function stopAll() {
 // autoUpdater 는 처음 손대는 순간 electron 의 app 을 잡는다 — 앱이 준비된 뒤에만 쓴다(느긋하게 꺼낸다)
 let _autoUpdater = null;
 const getAutoUpdater = () => (_autoUpdater ||= electronUpdater.autoUpdater);
-const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000;
+const UPDATE_CHECK_MS = 60 * 60 * 1000;   // 한 시간마다 (새 버전이 나오면 바로 받아 설치한다)
 const isPortable = !!process.env.PORTABLE_EXECUTABLE_FILE;
 let updateInfo = null;        // { version, url, notes, downloaded, file }
 let updaterErrorLogged = false;
@@ -533,8 +629,8 @@ function setupInstalledUpdater() {
   autoUpdater.on('update-downloaded', (info) => {
     setUpdateInfo({ version: info.version, url: '', notes: '', downloaded: true });
     if (runningCount() === 0 && !currentRun) {
-      log(`[업데이트] v${info.version} 을 받았습니다 — 5초 뒤 다시 시작해서 설치합니다.`);
-      setTimeout(installNow, 5000);
+      log(`[업데이트] v${info.version} 을 받았습니다 — 바로 다시 시작해서 설치합니다.`);
+      setTimeout(installNow, 1500);
     } else {
       log(`[업데이트] v${info.version} 을 받았습니다 — 자동화가 끝나고 앱을 닫으면 설치됩니다 (팝업의 '지금 설치'로 바로 할 수도 있습니다).`);
     }
@@ -564,7 +660,7 @@ async function checkPortableUpdate(force) {
     writeFileSync(file, buf);
     setUpdateInfo({ ...updateInfo, downloaded: true, file });
     log(`[업데이트] v${r.latest.version} 을 받았습니다: ${file}`);
-    if (runningCount() === 0 && !currentRun) { log('[업데이트] 5초 뒤 새 버전을 엽니다.'); setTimeout(installNow, 5000); }
+    if (runningCount() === 0 && !currentRun) { log('[업데이트] 바로 새 버전을 엽니다.'); setTimeout(installNow, 1500); }
     else log("[업데이트] 자동화가 끝나면 팝업의 '지금 설치'를 누르세요.");
   } catch (e) {
     log(`[업데이트] 받기 실패: ${String((e && e.message) || e).slice(0, 120)}`, 'error');
@@ -603,6 +699,7 @@ ipcMain.handle('msg', async (_event, msg) => {
         logs: store.logs,
         today: todayString(),
         update: updateInfo,
+        resume: getResumeAll(),
       };
     case 'checkUpdate':
       await runUpdateCheck(true);
@@ -630,6 +727,23 @@ ipcMain.handle('msg', async (_event, msg) => {
       return { ok: true };
     case 'stop':
       stopAll();
+      return { ok: true };
+    case 'pause':
+      pauseAll();
+      return { ok: true };
+    case 'resume':
+      resumeAll();
+      return { ok: true };
+    case 'saveProgress': {
+      let saved = 0;
+      for (const s of sessions.values()) {
+        if ((msg.accountIds || []).includes(s.account.id) && s.modeId && (await saveResume(s, { explicit: true }))) saved += 1;
+      }
+      if (!saved) log('[진행 위치 저장] 저장할 진행 중인(또는 방금 돌린) 자동화가 없습니다.', 'warn');
+      return { ok: true, resume: getResumeAll() };
+    }
+    case 'resumeRun':
+      resumeRun(msg.accountIds);
       return { ok: true };
     case 'fetchDict': {
       const accounts = getAccounts().filter((a) => msg.accountIds.includes(a.id));

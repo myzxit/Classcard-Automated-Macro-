@@ -30,15 +30,36 @@ object Updater {
     private const val PREFS = "classcard_update"
     private const val KEY_PROMPTED = "prompted_code"
     private const val KEY_LAST_CHECK = "last_check"
-    private const val CHECK_INTERVAL_MS = 6L * 60 * 60 * 1000
+    const val CHECK_INTERVAL_MS = 60L * 60 * 1000   // 한 시간마다 (앱이 켜져 있는 동안 계속)
 
     data class Latest(val version: String, val versionCode: Int, val apkUrl: String, val notes: String)
+
+    /** 자동화 중에 설치 화면이 튀어나오면 진행하던 학습이 끊긴다 — 받아만 두고 기다린다. */
+    private var pending: File? = null
+    private var pendingVersion: String = ""
+
+    /** 미뤄 둔 설치가 있으면 지금 연다 (자동화가 끝났을 때 부른다). */
+    fun installPendingIfAny(context: Context): Boolean {
+        val apk = pending ?: return false
+        pending = null
+        LogBus.info("[업데이트] 자동화가 끝났습니다 — v$pendingVersion 설치 화면을 엽니다.")
+        openInstaller(context.applicationContext, apk)
+        return true
+    }
+
+    fun hasPending(): Boolean = pending != null
 
     /**
      * 새 버전을 확인하고, 있으면 받아서 설치 화면을 띄운다.
      * @param force 설정에서 직접 눌렀을 때처럼 간격과 '이미 안내함' 기억을 무시하고 확인
+     * @param canInstallNow 자동화가 돌고 있지 않을 때만 true — false 면 받아 두기만 한다
      */
-    fun checkAndInstall(context: Context, scope: CoroutineScope, force: Boolean = false) {
+    fun checkAndInstall(
+        context: Context,
+        scope: CoroutineScope,
+        force: Boolean = false,
+        canInstallNow: () -> Boolean = { true },
+    ) {
         val app = context.applicationContext
         val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
@@ -64,6 +85,12 @@ object Updater {
                 return@launch
             }
             prefs.edit().putInt(KEY_PROMPTED, latest.versionCode).apply()
+            if (!canInstallNow()) {
+                pending = apk
+                pendingVersion = latest.version
+                LogBus.info("[업데이트] v${latest.version} 을 받아 뒀습니다 — 자동화가 끝나면 바로 설치 화면을 엽니다.")
+                return@launch
+            }
             LogBus.info("[업데이트] v${latest.version} 을 받았습니다 — 설치 화면을 엽니다. '설치'를 누르면 끝납니다.")
             withContext(Dispatchers.Main) { openInstaller(app, apk) }
         }

@@ -423,6 +423,39 @@
                     android:textColor="#FFFFFFFF"
                     android:textSize="14sp"
                     android:textStyle="bold" />
+
+                <!-- 일시정지 · 재개 · 중지 · 진행 위치 저장 · 이어하기 (코드에서 채운다) -->
+                <LinearLayout
+                    android:id="@+id/controlRows"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <!-- 진행률 -->
+                <LinearLayout
+                    android:id="@+id/progressCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:background="@drawable/card_bg"
+                    android:orientation="vertical"
+                    android:padding="10dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/progress_title"
+                        android:textColor="@color/text_primary"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+
+                    <LinearLayout
+                        android:id="@+id/progressList"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:orientation="vertical" />
+                </LinearLayout>
             </LinearLayout>
         </LinearLayout>
 

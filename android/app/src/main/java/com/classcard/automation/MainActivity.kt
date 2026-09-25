@@ -29,6 +29,7 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.classcard.automation.core.Controller
+import com.classcard.automation.core.Driver
 import com.classcard.automation.core.Session
 import com.classcard.automation.core.SessionState
 import com.classcard.automation.modules.Grammar
@@ -40,8 +41,12 @@ import com.classcard.automation.modules.Recall
 import com.classcard.automation.modules.RecallSentence
 import com.classcard.automation.modules.Scramble
 import com.classcard.automation.modules.Spell
+import com.classcard.automation.modules.Speaking
+import com.classcard.automation.modules.SpellSentence
 import com.classcard.automation.modules.Test
 import com.classcard.automation.modules.TestSentence
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 파이썬 main.py 의 콘솔 컨트롤러를 화면으로 옮긴 것.
@@ -96,6 +101,10 @@ class MainActivity : AppCompatActivity() {
                 "recall_sentence", R.string.mode_recall_sentence, RecallSentence.run,
                 needsDict = false,
             ),
+            Mode.Single(  // 카드 데이터(정답 문장)를 화면에서 읽는다 — 어순배열은 타일 클릭, 입력형은 진짜 키 입력
+                "spell_sentence", R.string.mode_spell_sentence, SpellSentence.run,
+                needsDict = false,
+            ),
             Mode.Single("test", R.string.mode_test, Test.run),      // 단어장 필수
             Mode.Single(  // 페이지 카드 목록·로그된 정답으로 푼다
                 "test_sentence", R.string.mode_test_sentence, TestSentence.run, needsDict = false,
@@ -105,6 +114,11 @@ class MainActivity : AppCompatActivity() {
             ),
             Mode.Single(  // 페이지 데이터 폴백이 있다
                 "scramble", R.string.mode_scramble, Scramble.run, needsDict = false,
+            ),
+            Mode.Single(  // 스피킹: 입해석·입영작·집중듣기는 끝까지, 낭독·쉐도잉·녹음은 설정을 켜야 진행
+                "speaking", R.string.mode_speaking,
+                { d, _, stop -> Speaking.run(d, stop, SettingsStore.speakingMic(this), SettingsStore.speakingRecordSec(this)) },
+                needsDict = false,
             ),
             Mode.Single(
                 "grammar", R.string.mode_grammar, Grammar.run,
@@ -144,6 +158,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var advancedCard: View
     private lateinit var advancedList: LinearLayout
     private lateinit var btnRun: TextView
+    private lateinit var controlRows: LinearLayout
+    private lateinit var progressList: LinearLayout
+    private val shownPw = HashSet<String>()   // 비밀번호를 보이게 한 계정
 
     // 로그
     private lateinit var logDateSpinner: Spinner
@@ -184,7 +201,13 @@ class MainActivity : AppCompatActivity() {
         controller.setPreloadScript(
             assets.open("preload.js").bufferedReader().use { it.readText() }
         )
-        controller.onSessionsChanged = { runOnUiThread { renderAccounts(); renderStatus() } }
+        controller.onSessionsChanged = {
+            runOnUiThread {
+                renderAccounts(); renderStatus(); renderProgress()
+                // 자동화 중에는 설치 화면을 미뤄 뒀다 — 다 끝난 지금 바로 연다
+                if (controller.runningCount == 0 && Updater.hasPending()) Updater.installPendingIfAny(this)
+            }
+        }
 
         versionBadge.text = "v" + BuildConfig.VERSION_NAME
 
@@ -207,6 +230,7 @@ class MainActivity : AppCompatActivity() {
                 if (advancedCard.visibility == View.VISIBLE) View.GONE else View.VISIBLE
         }
         btnRun.setOnClickListener { onRunClicked() }
+        buildControlRows()
 
         requestNotificationPermissionIfNeeded()
 
@@ -218,8 +242,25 @@ class MainActivity : AppCompatActivity() {
         LogBus.info("클래스카드 자동화 v${BuildConfig.VERSION_NAME} 시작")
         if (accounts.isEmpty()) LogBus.warn(getString(R.string.msg_no_accounts))
 
-        // 자동 업데이트: 켜 두면 앱을 열 때(6시간에 한 번) 새 버전을 확인해 받아 온다.
-        if (SettingsStore.autoUpdate(this)) Updater.checkAndInstall(this, lifecycleScope)
+        // 자동 업데이트: 켜 두면 앱이 켜져 있는 동안 한 시간마다 새 버전을 확인해 받아 오고
+        // 자동화가 돌고 있지 않으면 곧바로 설치 화면을 연다 (안드로이드는 '설치' 한 번을 요구한다).
+        startUpdateWatch()
+    }
+
+    /** 앱을 오래 켜 둬도 새 버전을 놓치지 않게 주기적으로 확인한다. */
+    private fun startUpdateWatch() {
+        lifecycleScope.launch {
+            while (true) {
+                if (SettingsStore.autoUpdate(this@MainActivity)) {
+                    Updater.checkAndInstall(
+                        this@MainActivity,
+                        lifecycleScope,
+                        canInstallNow = { controller.runningCount == 0 },
+                    )
+                }
+                delay(15 * 60 * 1000L)   // 확인 자체는 Updater 가 한 시간으로 조인다
+            }
+        }
     }
 
     private fun bindViews() {
@@ -247,6 +288,8 @@ class MainActivity : AppCompatActivity() {
         advancedCard = findViewById(R.id.advancedCard)
         advancedList = findViewById(R.id.advancedList)
         btnRun = findViewById(R.id.btnRun)
+        controlRows = findViewById(R.id.controlRows)
+        progressList = findViewById(R.id.progressList)
 
         logDateSpinner = findViewById(R.id.logDateSpinner)
         logScroll = findViewById(R.id.logScroll)
@@ -337,8 +380,18 @@ class MainActivity : AppCompatActivity() {
             val name = row.findViewById<TextView>(R.id.accountName)
             val state = row.findViewById<TextView>(R.id.accountState)
             val chip = row.findViewById<TextView>(R.id.accountChip)
+            val pw = row.findViewById<TextView>(R.id.accountPw)
+            val eye = row.findViewById<TextView>(R.id.accountEye)
 
             name.text = account.id
+            // 비밀번호: 가려 두고 👁 로 보기/숨기기
+            val shown = shownPw.contains(account.id)
+            pw.text = if (account.pw.isEmpty()) getString(R.string.pw_hidden) else if (shown) account.pw else "•".repeat(minOf(12, account.pw.length))
+            eye.text = if (shown) "🙈" else "👁"
+            eye.setOnClickListener {
+                if (shown) shownPw.remove(account.id) else shownPw.add(account.id)
+                renderAccounts()
+            }
             check.isChecked = account.enabled
             check.setOnCheckedChangeListener { _, checked ->
                 val index = accounts.indexOfFirst { it.id == account.id }
@@ -356,7 +409,8 @@ class MainActivity : AppCompatActivity() {
                 SessionState.OPENING -> getString(R.string.acc_state_opening)
                 SessionState.READY -> session?.detail?.takeIf { it.isNotEmpty() }
                     ?: getString(R.string.acc_state_ready)
-                SessionState.RUNNING -> getString(R.string.acc_state_running, session?.detail ?: "")
+                SessionState.RUNNING -> getString(R.string.acc_state_running, session?.detail ?: "") +
+                    (if (session?.isPaused == true) " · 일시정지" else "")
                 SessionState.ERROR -> session?.detail?.takeIf { it.isNotEmpty() }
                     ?: getString(R.string.acc_state_error)
             }
@@ -765,15 +819,93 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val sessions = selectedSessions()
+        startModeOn(mode, selectedSessions())
+        renderStatus()
+    }
+
+    private fun startModeOn(mode: Mode, sessions: List<Session>) {
         when (mode) {
             is Mode.Flow -> mode.start(controller, sessions)
             is Mode.Single -> controller.startMode(
-                getString(mode.labelRes), mode.fn, sessions, mode.needsDict,
+                getString(mode.labelRes), mode.fn, sessions, mode.needsDict, modeId = mode.id,
             )
             is Mode.Fetch -> controller.refreshAnswerDicts(sessions)
         }
-        renderStatus()
+    }
+
+    // ============================================================ 일시정지 · 진행률
+
+    private fun buildControlRows() {
+        controlRows.removeAllViews()
+        fun button(labelRes: Int, danger: Boolean = false, action: () -> Unit) = TextView(this).apply {
+            text = getString(labelRes)
+            textSize = 11f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(color(if (danger) R.color.danger else R.color.text_primary))
+            setBackgroundResource(R.drawable.tool_button_bg)
+            setOnClickListener { action() }
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = dp(6) }
+        }
+        val buttons = listOf(
+            button(R.string.btn_pause) { controller.pauseAll(); renderProgress() },
+            button(R.string.btn_resume) { controller.resumePaused(); renderProgress() },
+            button(R.string.btn_stop, danger = true) { controller.stopAll(); renderStatus(); renderProgress() },
+            button(R.string.btn_save_pos) { controller.saveProgress(selectedSessions()); renderProgress() },
+        )
+        buttons.forEachIndexed { i, b ->
+            row.addView(b, LinearLayout.LayoutParams(0, dp(34), 1f).apply { if (i > 0) marginStart = dp(5) })
+        }
+        controlRows.addView(row)
+        val resumeBtn = button(R.string.btn_resume_run) {
+            val targets = selectedAccounts()
+            val notOpen = targets.filter { controller.sessionFor(it.id) == null }
+            if (notOpen.isNotEmpty()) controller.openBrowsers(notOpen) { session -> attachWebView(session) }
+            controller.resumeRun(selectedSessions()) { modeId, session ->
+                val mode = modes.firstOrNull { it.id == modeId }
+                if (mode == null) LogBus.warn("[이어하기] 모르는 모드: $modeId") else startModeOn(mode, listOf(session))
+                renderStatus()
+            }
+        }
+        controlRows.addView(resumeBtn, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(34)).apply { topMargin = dp(5) })
+    }
+
+    /** 진행률 카드: 세션마다 현재/전체 · % · 막대 · 남은 수 · 성공/실패/미처리. 없으면 저장된 진행 위치. */
+    private fun renderProgress() {
+        progressList.removeAllViews()
+        val sessions = controller.sessions.filter { it.progress != null || it.isRunning }
+        for (s in sessions) {
+            val p = s.progress ?: Driver.Progress(0, 0, 0, 0, 0)
+            val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(6), 0, dp(6)) }
+            box.addView(TextView(this).apply {
+                text = "${s.account.id}  ·  ${p.label.ifEmpty { s.modeId }}${if (s.isPaused) "  ·  " + getString(R.string.progress_paused) else if (!s.isRunning) "  ·  끝남" else ""}  —  ${p.percent}%"
+                textSize = 12f; setTypeface(null, android.graphics.Typeface.BOLD); setTextColor(color(R.color.text_primary))
+            })
+            box.addView(TextView(this).apply {
+                text = getString(R.string.progress_line, p.current, p.total, p.percent, p.left)
+                textSize = 11f; setTextColor(color(R.color.text_secondary))
+            })
+            box.addView(android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                max = 100; progress = p.percent
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(10)).apply { topMargin = dp(4) })
+            box.addView(TextView(this).apply {
+                text = getString(R.string.progress_counts, p.ok, p.fail, p.skipped)
+                textSize = 10f; setTextColor(color(R.color.text_secondary))
+            })
+            progressList.addView(box)
+        }
+        if (sessions.isEmpty()) {
+            val saved = controller.resumeAll()
+            val text = if (saved.isEmpty()) getString(R.string.progress_empty) else getString(
+                R.string.progress_saved,
+                saved.entries.joinToString(" · ") { (id, e) -> "$id — ${e.modeId}${e.progress?.let { " ${it.current}/${it.total}" } ?: ""}" },
+            )
+            progressList.addView(TextView(this).apply { this.text = text; textSize = 11f; setTextColor(color(R.color.text_tertiary)) })
+        }
     }
 
     private fun renderStatus() {

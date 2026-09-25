@@ -6,9 +6,10 @@ const ctx = await chromium.launchPersistentContext('/tmp/shots/profileGMODAL',{h
   args:[`--disable-extensions-except=${EXT}`,`--load-extension=${EXT}`,'--no-sandbox']});
 await ctx.route('https://www.classcard.net/**', r =>
   r.fulfill({status:200, contentType:'text/html; charset=utf-8', body:mock}));
-const sw = ctx.serviceWorkers()[0] || await ctx.waitForEvent('serviceworker',{timeout:20000});
+let sw = ctx.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://'));
+for (let t = 0; t < 40 && !sw; t++) { await new Promise((r) => setTimeout(r, 500)); sw = ctx.serviceWorkers().find((w) => w.url().startsWith('chrome-extension://')); }
 const id = new URL(sw.url()).host;
-await sw.evaluate(() => chrome.storage.local.set({ settings:{ autoLogin:false, keepTab:true } }));
+for (let t = 0; t < 20; t++) { try { await sw.evaluate(() => chrome.storage.local.set({ settings:{ autoLogin:false, keepTab:true } })); break; } catch (e) { await new Promise((r) => setTimeout(r, 500)); } }
 const page = await ctx.newPage();
 await page.setViewportSize({width:1000,height:760});
 await page.goto('https://www.classcard.net/GClass/127657');

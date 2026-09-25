@@ -195,7 +195,8 @@ async function runModeIsolated(d, modeFn, answerDict, parentStop) {
  */
 async function processSetDetail(d, sentenceMode, stop) {
   const testPass = sentenceMode ? PASS.sentenceTest : PASS.test;
-  const spellRequired = !sentenceMode && (await isSpellRequired(d));
+  // 스펠은 선생님이 '필수'로 지정한 경우에만 (단어 세트는 단어 스펠, 문장 세트는 문장 스펠)
+  const spellRequired = await isSpellRequired(d);
 
   const memorizeDone = await isModeCompleted(d, MEMORIZE_BTN_SELECTOR);
   const recallDone = await isModeCompleted(d, RECALL_BTN_SELECTOR);
@@ -230,6 +231,7 @@ async function processSetDetail(d, sentenceMode, stop) {
     ['리콜', RECALL_BTN_SELECTOR, sentenceMode ? Sentence.recallSentence : Basic.recall],
   ];
   if (sentenceMode) {
+    if (spellRequired) steps.push(['스펠', SPELL_BTN_SELECTOR, Sentence.spellSentence]);
     steps.push(['스크램블', MATCH_BTN_SELECTOR, Games.scramble]);
   } else {
     if (spellRequired) steps.push(['스펠', SPELL_BTN_SELECTOR, Basic.spell]);
@@ -384,6 +386,7 @@ export async function runFullAutomation(d, stop) {
 
       sentenceMode = sentenceMode || (await isSentenceSetDetail(d));
       d.log(`[전체] [${sentenceMode ? '문장' : '단어'}] ${target.name}`);
+      d.progress({ current: processed.size + 1, total: sets.length, ok: processed.size, fail: 0, skipped: Math.max(0, sets.length - processed.size - 1), label: '전체 자동화' });
 
       await processSetDetail(d, sentenceMode, stop);
 

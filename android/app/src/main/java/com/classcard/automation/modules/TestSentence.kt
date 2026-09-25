@@ -15,7 +15,10 @@ object TestSentence {
     var DEBUG = false
 
     /** 테스트 목표 점수(0~100). 100 -> 다 맞음. */
-    var TARGET_SCORE = 100
+    // 문장 테스트는 **95점 이상 100점 이하**가 되게 한다.
+    // 늘 100점이면 티가 나므로, 95점 밑으로는 절대 안 내려가는 선에서 매번 다르게 고른다.
+    var MIN_SCORE = 95
+    var MAX_SCORE = 100
 
     private data class Card(
         val qid: String,
@@ -77,6 +80,55 @@ object TestSentence {
         }
     }
 
+    /**
+     * 클래스 테스트가 문제마다 싣고 바로 지우는 정답 (`.answer.hidden`) — preload 가 지워지기 전에 챙겨 둔 것.
+     * 문제 id 로 바로 찾으므로 제시문 매칭이 필요 없다(= 항상 100점).
+     */
+
+    /**
+     * 테스트 화면의 확인 모달을 처리한다 (확장 games.js 의 handleTestModals 와 같다).
+     *
+     * 클래스 테스트는 이전 응시가 남아 있으면 showConfirm 으로 두 번 묻는다
+     * (scripts/v2/class_test_sentence.js 의 checkOnTest -> checkOnTestReConfirm):
+     *   1) "…에 시작한 테스트가 진행 중입니다. 테스트에 새로 응시하시겠습니까?"  [취소][응시]
+     *   2) "테스트를 다시 시작하면 기존 테스트는 무효화됩니다. 새로 시작할까요?" [취소][새로 시작]
+     * 이 모달이 떠 있는 동안 '테스트 시작' 버튼은 가려져 있어, 처리하지 않으면 시작 버튼만 계속 누르게 된다.
+     */
+    internal suspend fun handleTestModals(d: Driver): Boolean = d.clickSmart(
+        """
+        var sels = ['#confirmModal .btn-ok', '#alertModal .btn-ok', '#alertModal2 .btn-ok',
+                    '.modal-content .btn-ok'];
+        for (var i = 0; i < sels.length && !el; i++) {
+            var btns = document.querySelectorAll(sels[i]);
+            for (var j = 0; j < btns.length; j++) {
+                if (btns[j].offsetParent !== null && !btns[j].classList.contains('close-pos')) { el = btns[j]; break; }
+            }
+        }
+        """
+    )
+
+    /** 확인 모달이 떠 있는지 (떠 있으면 시작 버튼을 눌러도 소용없다). */
+    internal suspend fun testModalOpen(d: Driver): Boolean = d.evalBool(
+        """
+        var ids = ['#confirmModal', '#alertModal', '#alertModal2'];
+        for (var i = 0; i < ids.length; i++) {
+            var m = document.querySelector(ids[i]);
+            if (m && window.getComputedStyle(m).display === 'block') return true;
+        }
+        return false;
+        """
+    )
+
+    private suspend fun pageTestAnswers(d: Driver): Map<String, String> {
+        val obj = d.evalObjectOrNull("return window.__cc_test_answers || null;") ?: return emptyMap()
+        val out = LinkedHashMap<String, String>()
+        for (k in obj.keys()) {
+            val v = obj.optString(k, "").trim()
+            if (v.isNotEmpty()) out[k] = v
+        }
+        return out
+    }
+
     /** 정답 후보 영어 문장 — 페이지가 로그한 정답(preload 캡처) + 지금까지 모은 카드 목록. */
     private suspend fun answerCandidates(d: Driver, maps: Maps): List<String> {
         val out = ArrayList<String>()
@@ -95,12 +147,72 @@ object TestSentence {
      */
     private suspend fun pickByTiles(d: Driver, candidates: List<String>): String? {
         if (candidates.isEmpty()) return null
-        fun bag(words: List<String>) =
-            words.map { Norm.normEn(it.removeSuffix("*")) }.filter { it.isNotEmpty() }.sorted()
-                .joinToString("|")
-        val want = bag(listButtons(d))
-        if (want.isEmpty()) return null
-        return candidates.firstOrNull { bag(Norm.parseEnglishWords(it)) == want }
+        return pickByTileBag(listButtons(d), candidates)
+    }
+
+    /**
+     * 타일 낱말 묶음과 정확히 같은 후보를 먼저, 없으면 (타일이 여러 낱말 묶음이거나 기호가 다를 때) 낱말 집합이
+     * 가장 비슷한 후보를 고른다 — 후보끼리 구분이 안 될 만큼 비슷하면 고르지 않는다. (확장 pickByTileBag 과 같다)
+     */
+    fun pickByTileBag(tiles: List<String>, candidates: List<String>): String? {
+        fun words(arr: List<String>) = arr.flatMap { Norm.parseEnglishWords(it.removeSuffix("*")) }
+            .map { Norm.normEn(it) }.filter { it.isNotEmpty() }
+        val tileWords = words(tiles)
+        if (tileWords.isEmpty()) return null
+        val want = tileWords.sorted().joinToString("|")
+        candidates.firstOrNull { words(listOf(it)).sorted().joinToString("|") == want }?.let { return it }
+        val setA = tileWords.toSet()
+        var best: String? = null
+        var bestScore = 0.0
+        var second = 0.0
+        for (cand in candidates) {
+            val cw = words(listOf(cand))
+            if (cw.isEmpty()) continue
+            val setB = cw.toSet()
+            val inter = setA.count { setB.contains(it) }
+            val score = inter.toDouble() / maxOf(setA.size, setB.size)
+            if (score > bestScore) { second = bestScore; bestScore = score; best = cand }
+            else if (score > second) second = score
+        }
+        return if (best != null && bestScore >= 0.75 && bestScore > second) best else null
+    }
+
+    /**
+     * 타일이 낱말 하나가 아니라 여러 낱말 묶음("in righteousness")일 때, 문장 어순대로 어떤 타일을 눌러야 하는지 계획한다.
+     * 각 자리에서 가장 긴 묶음부터 맞춰 본다. 맞는 타일이 없는 자리는 낱말 하나(기존 방식)로 둔다. (확장 planChunks 와 같다)
+     */
+    fun planChunks(tokens: List<String>, tileTexts: List<String>): List<String> {
+        class T(val text: String, val words: List<String>) { var used = false }
+        fun words(t: String) = Norm.parseEnglishWords(t).map { Norm.normEn(it) }.filter { it.isNotEmpty() }
+        val tiles = tileTexts.map { T(it, words(it)) }
+        val toks = tokens.map { Norm.normEn(it) }
+        val plan = ArrayList<String>()
+        var pos = 0
+        while (pos < tokens.size) {
+            if (toks[pos].isEmpty()) { pos += 1; continue }
+            var best: T? = null
+            for (tile in tiles) {
+                if (tile.used || tile.words.isEmpty()) continue
+                val n = tile.words.size
+                if (best != null && n <= best.words.size) continue
+                var ok = true; var k = pos; var m = 0
+                while (m < n && k < tokens.size) {
+                    if (toks[k].isEmpty()) { k += 1; continue }
+                    if (toks[k] != tile.words[m]) { ok = false; break }
+                    k += 1; m += 1
+                }
+                if (ok && m == n) best = tile
+            }
+            if (best != null) {
+                best.used = true
+                plan.add(best.text)
+                var m = 0
+                while (m < best.words.size && pos < tokens.size) { if (toks[pos].isNotEmpty()) m += 1; pos += 1 }
+            } else {
+                plan.add(tokens[pos]); pos += 1
+            }
+        }
+        return plan
     }
 
     /** 한글 프롬프트로 영어 정답 문장 조회. 실패 시 괄호 제거 폴백. */
@@ -123,6 +235,9 @@ object TestSentence {
         ".test-sentence-words .btn-sentence-word",
         ".sentence-tab-box .btn-sentence-word",
         ".test-sentence-words .btn",
+        // 클래스 테스트(/ClassTest)는 낱말 타일의 클래스 이름을 페이지마다 난수로 바꾼다
+        // (scripts/v2/class_test_sentence.js 의 cheat_scramble_class). 그래서 이름 대신 자리로 찾는다.
+        ".test-sentence-words a",
     )
     private val PLACED_SELECTORS = listOf(
         ".test-sentence-input span",
@@ -161,10 +276,34 @@ object TestSentence {
 
         var prompt = '';
         var pSel = ['.flip-card-front .front-hidden', '.flip-card-front .cc-table',
-                    '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body'];
+                    '.flip-card-front .text', '.q-mean-body', '.card-top .normal-body',
+                    // 클래스 테스트: 제시문은 카드 바로 아래 .front-hidden(숨김) 과 .quest-direction .para_item3 에 있다
+                    '.front-hidden', '.quest-direction .para_item3', '.para_item3',
+                    '.test-sentence-mean', '.sentence-mean', '.quest-back', '.q-body', '.question'];
         for (var i = 0; i < pSel.length && !prompt; i++) {
             var el = card.querySelector(pSel[i]);
-            if (el) prompt = (el.textContent || '').replace(/\s+/g, ' ').trim();
+            if (el) prompt = (el.textContent || '').replace(/[ \t\r\n]+/g, ' ').trim();
+        }
+        if (!prompt) {
+            // 화면 구조가 바뀌어 위 자리에 없으면: 카드 안의 글 중 낱말 버튼·놓인 낱말·버튼 글을 뺀 나머지에서
+            // 한글이 든 줄을 제시문으로 본다 (제시문은 항상 우리말 뜻이다)
+            var skip = [];
+            for (var a = 0; a < WORD_SEL.length; a++) skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll(WORD_SEL[a])));
+            for (var b = 0; b < PLACED_SEL.length; b++) skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll(PLACED_SEL[b])));
+            skip = skip.concat(Array.prototype.slice.call(card.querySelectorAll('a.btn, button, .btn, script, style')));
+            var lines = [];
+            var walker = document.createTreeWalker(card, NodeFilter.SHOW_TEXT, null);
+            var node;
+            while ((node = walker.nextNode())) {
+                var t = (node.nodeValue || '').replace(/[ \t\r\n]+/g, ' ').trim();
+                if (!t || !/[가-힣]/.test(t)) continue;
+                var p = node.parentElement, skipped = false;
+                for (var k = 0; k < skip.length && !skipped; k++) if (skip[k] === p || skip[k].contains(p)) skipped = true;
+                if (skipped) continue;
+                if (p && p.offsetParent === null && !card.classList.contains('flip')) continue;
+                lines.push(t);
+            }
+            prompt = lines.join(' ').trim();
         }
 
         return { found: true, qid: qid, flipped: flipped, prompt: prompt,
@@ -421,7 +560,10 @@ object TestSentence {
     private suspend fun clickSentence(
         d: Driver, english: String, makeWrong: Boolean, stop: StopFlag,
     ): Boolean {
-        val tokens = Norm.parseEnglishWords(english)
+        var tokens = Norm.parseEnglishWords(english)
+        // 타일이 여러 낱말 묶음이면 묶음 단위로 누른다
+        val tileTexts = listButtons(d).filter { !it.endsWith("*") }
+        if (tileTexts.any { Norm.parseEnglishWords(it).size > 1 }) tokens = planChunks(tokens, tileTexts)
 
         val order = tokens.indices.toMutableList()
         if (makeWrong && order.size >= 2) {
@@ -474,8 +616,18 @@ object TestSentence {
                 d.log("[문장 테스트] 카드 목록·단어장이 없습니다 — 페이지가 남기는 정답으로 풉니다.")
             }
 
+            var dumpedEmptyPrompt = false
+            // 클래스 테스트는 문제마다 정답을 싣고 바로 지운다 — preload 가 챙겨 둔 것을 쓴다 (문제 id 로 바로 찾음)
+            var testAnswers = pageTestAnswers(d)
+            if (testAnswers.isNotEmpty()) {
+                d.log("[문장 테스트] 페이지 정답 ${testAnswers.size}개를 확보했습니다 (문제별 정답 — 100점)")
+            }
             val total = countTotal(d)
-            val wrongIdx = Test.planWrongIndices(total, TARGET_SCORE)
+            val wrongIdx = Test.planWrongIndicesRange(total, MIN_SCORE, MAX_SCORE)
+            if (total != null && total > 0) {
+                val expected = kotlin.math.round((total - wrongIdx.size) * 1000.0 / total) / 10.0
+                d.log("[문장 테스트] 총 ${total}문항 · 일부러 틀릴 문항 ${wrongIdx.size}개 -> 예상 ${expected}점 ($MIN_SCORE~${MAX_SCORE}점 사이로 맞춥니다)")
+            }
             if (DEBUG && total != null) {
                 d.log("[문장 테스트] 총 ${total}문항 / 일부러 틀릴 순번: ${wrongIdx.sorted().ifEmpty { "없음" }}")
             }
@@ -490,6 +642,11 @@ object TestSentence {
             try {
                 while (!stop.isSet) {
                     if (checkEndAndStop(d, stop)) break
+                    if (testModalOpen(d)) {
+                        if (handleTestModals(d)) d.log("[문장 테스트] 확인 모달을 눌렀습니다 (이전 응시 이어받기/새로 시작)")
+                        if (stop.await(900)) break
+                        continue
+                    }
                     if (Memorize.startStudyIfNeeded(d, stop)) continue
 
                     val q = readCard(d)
@@ -537,7 +694,13 @@ object TestSentence {
                     }
 
                     // 뒷면(단어 배열) -> 정답 조회 후 클릭
-                    var english = matchEnglish(q.prompt, maps)
+                    // 1순위: 그 문제의 정답 그대로 (클래스 테스트)
+                    var english: String? = if (q.qid.isNotEmpty()) testAnswers["q" + q.qid] else null
+                    if (english == null && testAnswers.isEmpty()) {
+                        testAnswers = pageTestAnswers(d)          // 늦게 실린 경우 한 번 더
+                        if (q.qid.isNotEmpty()) english = testAnswers["q" + q.qid]
+                    }
+                    if (english == null) english = matchEnglish(q.prompt, maps)
                     if (english == null) {
                         // 화면이 바뀌어 카드 목록이 새로 실렸을 수 있다 — 한 번 다시 읽어 본다.
                         val fresh = pageCards(d)
@@ -555,12 +718,17 @@ object TestSentence {
                     }
                     if (english == null) {
                         d.log("[문장 테스트] 매칭 실패(건너뜀): '${q.prompt}'")
+                        if (q.prompt.isEmpty() && !dumpedEmptyPrompt) {
+                            dumpedEmptyPrompt = true
+                            d.log("[문장 테스트] 제시문을 읽지 못했습니다. 화면 구조: " + d.eval(DUMP_CARD_JS).take(400))
+                        }
                         answeredQids.add(q.qid)  // 건너뜀 (해당 문항 오답 처리)
                         if (stop.await(300)) break
                         continue
                     }
 
                     answeredCount++
+                    d.progress(answeredCount, total ?: 0, answeredCount - wrongIdx.size, wrongIdx.size, maxOf(0, (total ?: 0) - answeredCount), "문장 테스트")
                     val makeWrong = answeredCount in wrongIdx
 
                     if (DEBUG) {

@@ -22,7 +22,7 @@ import {
 } from '../engine/modules/sentence.js';
 import {
   buildLookups, solve, buildMaps, matchEnglish,
-  findPair, alignIndex, findNextIndex, planWrongIndices,
+  findPair, alignIndex, findNextIndex, planWrongIndices, planWrongIndicesRange,
 } from '../engine/modules/games.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -216,6 +216,38 @@ group('의도적 오답 개수', () => {
         failed++;
         console.error(`  FAIL 총 ${total} 문항에서 점수 ${score} 가 목표 ${target} 미만`);
       }
+    }
+  }
+});
+
+// ------------------------------------------------------------ 문장 테스트 점수 범위
+//
+// 문장 테스트는 늘 100점이면 티가 나므로 매번 다른 점수를 내되, **95점 밑으로는 절대 안 내려간다**.
+// 한 문항의 값은 100/total 점이라, 문항 수가 적으면 하나만 틀려도 95점 밑이 된다(그럴 땐 다 맞힌다).
+group('문장 테스트 점수 범위 (95~100점)', () => {
+  for (const total of [1, 3, 4, 5, 10, 18, 19, 20, 24, 25, 40, 50, 100]) {
+    let minScore = 101;
+    let maxScore = -1;
+    let bad = 0;
+    const sizes = new Set();
+    for (let i = 0; i < 300; i += 1) {
+      const wrong = planWrongIndicesRange(total, 95, 100);
+      sizes.add(wrong.size);
+      const score = ((total - wrong.size) / total) * 100;
+      if (score < 95 || score > 100) bad++;
+      if (wrong.size !== new Set(wrong).size) bad++;
+      for (const n of wrong) if (n < 1 || n > total) bad++;
+      if (score < minScore) minScore = score;
+      if (score > maxScore) maxScore = score;
+    }
+    eq(`${total}문항: 95~100점 벗어남 없음`, bad, 0);
+    eq(`${total}문항: 최고점 100`, maxScore, 100);
+    if (total < 20) {
+      // 20문항 미만은 한 개만 틀려도 95점 밑이라 하나도 틀리면 안 된다
+      eq(`${total}문항: 항상 100점`, [...sizes], [0]);
+    } else {
+      // 문항이 넉넉하면 점수가 매번 같지는 않아야 한다 (늘 100점이면 티가 난다)
+      eq(`${total}문항: 점수가 고정되지 않음`, sizes.size > 1, true);
     }
   }
 });
