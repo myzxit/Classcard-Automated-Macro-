@@ -1,7 +1,7 @@
 {
   "name": "classcard-automation-desktop",
   "productName": "클래스카드 자동화",
-  "version": "3.18.0",
+  "version": "3.18.1",
   "description": "클래스카드 자동화 — PC(윈도우) 버전. 크롬 확장·안드로이드 앱과 같은 엔진.",
   "private": true,
   "type": "module",

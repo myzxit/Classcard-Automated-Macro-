@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "클래스카드 자동화",
-  "version": "3.18.0",
+  "version": "3.18.1",
   "description": "클래스카드의 암기·리콜·스펠·매칭·스크램블·테스트 학습을 자동화합니다. (PC 파이썬 버전의 모든 기능)",
   "permissions": [
     "scripting",
@@ -34,6 +34,18 @@
       ],
       "run_at": "document_start",
       "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://www.classcard.net/*",
+        "https://classcard.net/*"
+      ],
+      "js": [
+        "content/keepalive.js"
+      ],
+      "run_at": "document_idle",
+      "world": "ISOLATED",
       "all_frames": false
     }
   ],

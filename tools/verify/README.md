@@ -31,3 +31,16 @@ CC_ID=아이디 CC_PW=비밀번호 node tools/verify/shots/run_live.mjs /Recall/
 ```bash
 cd desktop && CC_NO_SANDBOX=1 xvfb-run -a node test/smoke.mjs /tmp/shots/mock_recall2.html recall
 ```
+
+## 진단용 (기본 목록 밖)
+
+```bash
+cp tools/verify/shots/* /tmp/shots/ && cd /tmp/shots && xvfb-run -a node run_speakmic.mjs
+```
+
+스피킹의 마이크 단계까지 켜고 돌려, 크롬이 배경 작업(서비스 워커)을 재우는 바람에
+자동화가 로그도 오류도 없이 서는 문제를 재현한다. `SW CLOSED` 가 찍히는 시각을 본다 —
+카드 수나 녹음 시간을 바꿔도 언제나 **스피킹을 시작한 지 30초쯤**이다.
+`mock_speak.html` 의 `CARDS` 를 5장으로 늘리면 마지막이 아닌 **두 번째** 카드에서 서는 것이 보인다
+(그래서 오래 '마지막 카드' 문제로 본 것은 틀린 진단이었다).
+확장 페이지를 한 번 열어 워커를 깨우면 멈췄던 자리에서 그대로 이어진다.
