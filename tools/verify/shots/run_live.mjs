@@ -13,7 +13,8 @@ const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML,
 const cu = (a) => { try { return execFileSync('curl', a, { encoding: 'utf8', maxBuffer: 1 << 28 }); } catch (e) { return ''; } };
 execFileSync("rm", ["-rf", JAR, `/tmp/shots/profileLIVE_${MODE}`]); // 프로필을 지워야 확장의 새 코드가 실린다
 cu(['-sS', '-c', JAR, '-b', JAR, '-A', UA, 'https://www.classcard.net/Login', '-o', '/dev/null']);
-const login = cu(['-sS', '-c', JAR, '-b', JAR, '-A', UA, '-X', 'POST', 'https://www.classcard.net/LoginProc',
+// CC_ID 가 없으면 로그인 없이 연다 (공개 세트 페이지 검증용 — 학습 기록은 남지 않는다)
+const login = !process.env.CC_ID ? '{"result":"ok"}' : cu(['-sS', '-c', JAR, '-b', JAR, '-A', UA, '-X', 'POST', 'https://www.classcard.net/LoginProc',
   '-H', 'X-Requested-With: XMLHttpRequest', '-H', 'Referer: https://www.classcard.net/Login',
   '--data-urlencode', `login_id=${process.env.CC_ID}`, '--data-urlencode', `login_pwd=${process.env.CC_PW}`,
   '--data', 'redirect=&req_type=&req_url=']);
@@ -80,6 +81,8 @@ await page.setViewportSize({ width: 1280, height: 900 });
 await page.goto(`https://www.classcard.net${START}`, { waitUntil: 'domcontentloaded', timeout: 90000 });
 await page.waitForTimeout(3000);
 console.log('시작 페이지:', page.url(), '| 제목:', (await page.title()).slice(0, 40));
+// CC_INIT_JS 가 있으면 매크로를 시작하기 전에 페이지에서 한 번 실행한다 (예: 학습설정 전역 바꾸기)
+if (process.env.CC_INIT_JS) { try { console.log('초기 스크립트:', JSON.stringify(await page.evaluate(process.env.CC_INIT_JS))); } catch (e) { console.log('초기 스크립트 실패:', String(e).slice(0, 100)); } }
 
 const popup = await ctx.newPage();
 await popup.goto(`chrome-extension://${id}/popup/popup.html`);
@@ -94,9 +97,19 @@ await popup.click(`.mode-btn[data-id="${MODE}"]`); await popup.waitForTimeout(15
 await popup.click('#btnRun');
 await page.bringToFront();
 
+// CC_SAMPLE_JS 가 있으면 0.5초마다 그 식을 페이지에서 평가해, 값이 바뀔 때마다 기록한다 (화면 진행 확인용)
+const SAMPLE = process.env.CC_SAMPLE_JS || null;
+const samples = [];
 let audio = null;
 for (let i = 0; i < SECS; i++) {
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(SAMPLE ? 500 : 1000);
+  if (SAMPLE) {
+    try {
+      const v = JSON.stringify(await page.evaluate(SAMPLE));
+      if (!samples.length || samples[samples.length - 1].v !== v) samples.push({ t: new Date().toTimeString().slice(0, 8), v });
+    } catch (e) {}
+  }
+  if (SAMPLE) { await page.waitForTimeout(500); }
   try { const w = await page.evaluate(() => window.__w || null); if (w && w.order.length) audio = w; } catch (e) {}
   if (i % 30 === 29) { try { await page.screenshot({ path: `/tmp/shots/live_${MODE}_${i + 1}.png` }); } catch (e) {} }
 }
@@ -108,6 +121,7 @@ if (audio) {
   const judged = cards.slice(0, -1);
   console.log(`--- 소리: 해설 ${cards.length}개 · 끝까지 들은 것 ${judged.filter((c) => c.max >= c.dur - 0.9).length}/${judged.length} · 다시 튼 횟수 ${audio.restarts}`);
 }
+if (samples.length) { console.log('--- 표본', samples.length, '개'); console.log(samples.slice(0, 80).map((x) => `${x.t} ${x.v.slice(0, 200)}`).join('\n')); }
 if (pageErrors.length) { console.log('--- 페이지 오류', pageErrors.length); console.log(pageErrors.slice(0, 5).join('\n')); }
 await popup.bringToFront(); await popup.click('#tabLog'); await popup.waitForTimeout(400);
 const log = (await popup.textContent('#logConsole')).trim().split('\n');

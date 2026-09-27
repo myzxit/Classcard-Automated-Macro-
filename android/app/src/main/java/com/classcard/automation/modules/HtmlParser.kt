@@ -22,8 +22,10 @@ object HtmlParser {
 
     suspend fun getData(d: Driver, quiet: Boolean = false): List<Card>? {
         // 1) 전역 study_data 직접 읽기
+        // 전역 study_data (예전 화면) 또는 preload 가 지워지기 전에 챙겨 둔 카드 목록(지금 화면: __cc_study_data)
         val direct = d.evalArrayOrNull(
-            "return (typeof study_data !== 'undefined' && study_data) ? study_data : null;"
+            "if (typeof study_data !== 'undefined' && study_data && study_data.length) return study_data;" +
+                "return (window.__cc_study_data && window.__cc_study_data.length) ? window.__cc_study_data : null;"
         )
         if (direct != null && direct.length() > 0) {
             val cards = toCards(direct)

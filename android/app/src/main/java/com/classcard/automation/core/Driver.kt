@@ -53,6 +53,31 @@ class Driver(
 
     fun log(message: String) = logger("$tag $message")
 
+    /** 진행률 — {현재, 전체, 성공, 실패, 미처리, 설명}. 확장의 driver.progress() 와 같은 규칙. */
+    data class Progress(
+        val current: Int, val total: Int, val ok: Int, val fail: Int, val skipped: Int,
+        val label: String = "", val at: Long = System.currentTimeMillis(),
+    ) {
+        val percent: Int get() = if (total > 0) minOf(100, (current * 100) / total) else 0
+        val left: Int get() = maxOf(0, total - current)
+    }
+
+    @Volatile
+    var progressState: Progress? = null
+
+    /** 진행률이 바뀔 때 호출된다 (세션·화면 갱신용) */
+    var onProgress: ((Progress) -> Unit)? = null
+
+    /** 같은 값이면 다시 알리지 않는다 */
+    fun progress(current: Int, total: Int, ok: Int, fail: Int, skipped: Int, label: String = "") {
+        val next = Progress(current, total, ok, fail, skipped, label)
+        val prev = progressState
+        if (prev != null && prev.current == next.current && prev.total == next.total && prev.ok == next.ok &&
+            prev.fail == next.fail && prev.skipped == next.skipped && prev.label == next.label) return
+        progressState = next
+        try { onProgress?.invoke(next) } catch (_: Throwable) {}
+    }
+
     // ---------------------------------------------------------------- eval
 
     /**

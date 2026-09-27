@@ -40,6 +40,110 @@ class Controller(
     fun sessionFor(accountId: String): Session? = sessionMap[accountId]
 
     val runningCount: Int get() = sessionMap.values.count { it.isRunning }
+    val pausedCount: Int get() = sessionMap.values.count { it.isPaused }
+
+    // ------------------------------------------------------- 일시정지 · 진행 위치 저장 · 이어하기 (확장 background.js 와 같은 규칙)
+
+    /** 저장된 진행 위치 */
+    data class ResumeEntry(val modeId: String, val url: String, val progress: Driver.Progress?, val savedAt: Long)
+
+    private val resumePrefs by lazy { context.getSharedPreferences("classcard_resume", Context.MODE_PRIVATE) }
+    @Volatile private var lastResumeSaveAt = 0L
+
+    fun resumeAll(): Map<String, ResumeEntry> {
+        val out = LinkedHashMap<String, ResumeEntry>()
+        val raw = resumePrefs.getString("entries", null) ?: return out
+        try {
+            val obj = org.json.JSONObject(raw)
+            for (key in obj.keys()) {
+                val e = obj.getJSONObject(key)
+                val pj = e.optJSONObject("progress")
+                val p = pj?.let {
+                    Driver.Progress(it.optInt("current"), it.optInt("total"), it.optInt("ok"), it.optInt("fail"), it.optInt("skipped"), it.optString("label"))
+                }
+                out[key] = ResumeEntry(e.optString("modeId"), e.optString("url"), p, e.optLong("savedAt"))
+            }
+        } catch (_: Throwable) {}
+        return out
+    }
+
+    private fun writeResumeAll(all: Map<String, ResumeEntry>) {
+        val obj = org.json.JSONObject()
+        for ((k, e) in all) {
+            val ej = org.json.JSONObject().put("modeId", e.modeId).put("url", e.url).put("savedAt", e.savedAt)
+            e.progress?.let { p ->
+                ej.put("progress", org.json.JSONObject().put("current", p.current).put("total", p.total)
+                    .put("ok", p.ok).put("fail", p.fail).put("skipped", p.skipped).put("label", p.label))
+            }
+            obj.put(k, ej)
+        }
+        resumePrefs.edit().putString("entries", obj.toString()).apply()
+    }
+
+    fun saveResume(session: Session, explicit: Boolean = false) {
+        if (session.modeId.isEmpty()) return
+        val now = System.currentTimeMillis()
+        if (!explicit && now - lastResumeSaveAt < 5000) return
+        lastResumeSaveAt = now
+        scope.launch {
+            val url = try { session.driver.currentUrl() } catch (_: Throwable) { "" }
+            val all = LinkedHashMap(resumeAll())
+            all[session.account.id] = ResumeEntry(session.modeId, url, session.progress, now)
+            writeResumeAll(all)
+            if (explicit) {
+                val p = session.progress
+                session.log("진행 위치를 저장했습니다 — ${session.modeId}${if (p != null) " ${p.current}/${p.total}" else ""} · ${url.replace("https://www.classcard.net", "")}")
+                onSessionsChanged?.invoke()
+            }
+        }
+    }
+
+    fun clearResume(accountId: String) {
+        val all = LinkedHashMap(resumeAll())
+        if (all.remove(accountId) != null) writeResumeAll(all)
+    }
+
+    fun pauseAll() {
+        var any = false
+        for (s in sessionMap.values.toList()) if (s.pause()) any = true
+        if (!any) LogBus.dim("    일시정지할 자동화가 없습니다.")
+        onSessionsChanged?.invoke()
+    }
+
+    fun resumePaused() {
+        var any = false
+        for (s in sessionMap.values.toList()) if (s.resume()) any = true
+        if (!any) LogBus.dim("    재개할 자동화가 없습니다.")
+        onSessionsChanged?.invoke()
+    }
+
+    fun saveProgress(targets: List<Session>) {
+        val savable = targets.filter { it.modeId.isNotEmpty() }
+        if (savable.isEmpty()) { LogBus.warn("[진행 위치 저장] 저장할 진행 중인(또는 방금 돌린) 자동화가 없습니다."); return }
+        for (s in savable) saveResume(s, explicit = true)
+    }
+
+    /**
+     * 저장해 둔 진행 위치에서 이어하기: 같은 페이지로 가서 같은 모드를 다시 돌린다.
+     * (학습 진행 자체는 사이트가 계정에 저장하므로, 같은 화면에서 다시 시작하면 그 자리부터 이어진다)
+     */
+    fun resumeRun(targets: List<Session>, run: (modeId: String, session: Session) -> Unit) {
+        val all = resumeAll()
+        val ids = targets.filter { all.containsKey(it.account.id) }
+        if (ids.isEmpty()) { LogBus.warn("[이어하기] 저장된 진행 위치가 없습니다. 먼저 [진행 위치 저장]을 누르거나 자동화를 한 번 돌리세요."); return }
+        for (s in ids) {
+            val e = all[s.account.id] ?: continue
+            scope.launch {
+                if (e.url.isNotEmpty() && s.driver.currentUrl() != e.url) {
+                    s.driver.loadUrl(e.url)
+                    s.driver.waitForLoad()
+                }
+                val p = e.progress
+                s.log("저장된 위치에서 이어합니다 — ${e.modeId}${if (p != null) " (${p.current}/${p.total})" else ""}")
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) { run(e.modeId, s) }
+            }
+        }
+    }
 
     // ------------------------------------------------------- 브라우저 열기/닫기
 
@@ -60,6 +164,7 @@ class Controller(
                 context, account, preloadScript, isolate,
             )
             session.onStateChanged = { onSessionsChanged?.invoke() }
+            session.onProgressChanged = { onSessionsChanged?.invoke(); saveResume(session) }
             session.onPageLoaded = { url -> maybeAutoDict(session, url) }
             sessionMap[account.id] = session
             session.setState(SessionState.OPENING, "브라우저 여는 중")
@@ -219,9 +324,9 @@ class Controller(
      * 버튼 한 번으로 선택된 모든 계정에서 동시에 모드를 시작한다.
      * '시작 지연시간'과 '계정별 실행 간격' 설정을 반영한다.
      */
-    fun startMode(label: String, modeFn: ModeFn, targets: List<Session>, needsDict: Boolean = true) {
+    fun startMode(label: String, modeFn: ModeFn, targets: List<Session>, needsDict: Boolean = true, modeId: String = "") {
         launchStaggered(targets) { session ->
-            session.start(scope, label, onFinished = { finishSession(session) }) { stop ->
+            session.start(scope, label, onFinished = { finishSession(session) }, modeId = modeId) { stop ->
                 val dict = if (needsDict) {
                     var d = session.ensureAnswerDict()
                     if (d == null) {
@@ -246,19 +351,19 @@ class Controller(
     }
 
     /** 전체 자동화 / 한 세트 자동화처럼 단어장이 필요 없는 흐름. */
-    fun startFlow(label: String, flowFn: FlowFn, targets: List<Session>) {
+    fun startFlow(label: String, flowFn: FlowFn, targets: List<Session>, modeId: String = "") {
         launchStaggered(targets) { session ->
-            session.start(scope, label, onFinished = { finishSession(session) }) { stop ->
+            session.start(scope, label, onFinished = { finishSession(session) }, modeId = modeId) { stop ->
                 flowFn(session.driver, stop)
             }
         }
     }
 
     fun startFullAutomation(targets: List<Session>) =
-        startFlow("전체 자동화", AutoAll.runFullAutomation, targets)
+        startFlow("전체 자동화", AutoAll.runFullAutomation, targets, modeId = "auto_all")
 
     fun startSingleSet(targets: List<Session>) =
-        startFlow("한 세트 자동화", AutoAll.runSingleSet, targets)
+        startFlow("한 세트 자동화", AutoAll.runSingleSet, targets, modeId = "one_set")
 
     /** 시작 지연 + 계정 간격을 적용해 순서대로 띄운다. */
     private fun launchStaggered(targets: List<Session>, block: (Session) -> Unit) {
@@ -280,6 +385,9 @@ class Controller(
 
     /** 자동화 종료 후 '브라우저 유지' 설정에 따라 정리한다. */
     private fun finishSession(session: Session) {
+        // 끝까지 했으면 이어할 게 없고, 중간에 멈췄으면 그 자리를 남긴다
+        val p = session.progress
+        if (p != null && p.total > 0 && p.current >= p.total) clearResume(session.account.id) else saveResume(session)
         if (!SettingsStore.keepBrowser(context)) {
             closeBrowsers(listOf(session.account.id))
         }
@@ -313,10 +421,16 @@ class Controller(
         autoDictLast[session.account.id] = url
         scope.launch {
             try {
-                kotlinx.coroutines.delay(1500)
-                val hasCards = session.driver.evalBool(
-                    "return !!document.querySelector('.CardItem, .flip-card, [name=\"card_idx[]\"], .speed_quiz_row') || (typeof study_data !== 'undefined' && !!study_data);"
-                )
+                // 카드 목록이 실릴 시간을 준다 (시작 화면이어도 preload 가 챙긴 __cc_study_data 는 있다)
+                var hasCards = false
+                for (i in 0 until 6) {
+                    kotlinx.coroutines.delay(1000)
+                    hasCards = session.driver.evalBool(
+                        "return !!(window.__cc_study_data && window.__cc_study_data.length) || (typeof study_data !== 'undefined' && !!study_data) || " +
+                            "!!document.querySelector('.CardItem, .flip-card, [name=\"card_idx[]\"], .speed_quiz_row');"
+                    )
+                    if (hasCards) break
+                }
                 if (!hasCards) { autoDictLast.remove(session.account.id); return@launch }
                 val data = HtmlParser.getData(session.driver, quiet = true)
                 val dict = HtmlParser.dictFromCards(data)

@@ -164,7 +164,8 @@ object MemorizeSentence {
         return false
     }
 
-    val run: ModeFn = { d, answerDict, stop ->
+    /** 예전 문장 암기 화면(.sentence-word 타일 + SPACE) 흐름. 지금 사이트가 아니면 이걸로 폴백한다. */
+    private val runLegacy: ModeFn = { d, answerDict, stop ->
         d.log("[문장 암기] 시작")
         try {
             loop@ while (!stop.isSet) {
@@ -223,6 +224,107 @@ object MemorizeSentence {
             if (!stop.isSet) d.log("[문장 암기] 오류: ${e.message}")
         } finally {
             d.log("[문장 암기] 종료")
+        }
+    }
+
+    // ============================================================ 지금 사이트 (scripts/v3/mem_sentence.js) — 확장 sentence.js 의 memorizeSentence 와 같은 규칙
+    //
+    //   - 카드 `.CardItem.active` 는 1단계(.step.s1: 문장·뜻 보기, '영작 연습하기' .btn-go-step1)와
+    //     2단계(.step.s2: 어순배열 — 문장 스펠의 어순배열과 같은 .para_item data('arr') / .scramble-item data('input'))로 되어 있다.
+    //   - SPACE 는 1단계에서 2단계로, **2단계에서는 '나중에 다시'(.btn-next-card)** 를 누른다.
+    //     예전 흐름처럼 SPACE 를 먼저 두 번 누르면 문장을 만들기도 전에 카드를 건너뛴다 (실제 로그의 "안 만들어졌는데 건너뜀").
+    //   - 다 맞추면 `.study-wrapper.correct` + '다음 카드'(.btn-next-card). 카드가 나오면 0.6초 뒤 문장 소리가 난다 — 끝까지 듣고 2단계로.
+    //   - 끝: `#study_end.active`, 모르는 카드가 있으면 `.btn-study-end-unknow` 로 그 카드만 다시.
+
+    val run: ModeFn = { d, answerDict, stop ->
+        d.log("[문장 암기] 시작")
+        var rounds = 0
+        var sameCount = 0
+        var lastSig = ""
+        var waitedAudioFor: String? = null
+        var handedToLegacy = false
+        try {
+            loop@ while (!stop.isSet) {
+                val s = SpellSentence.state(d)
+                if (s == null) { if (stop.await(400)) break; continue }
+                if (s.card) Memorize.reportCardProgress(d, "문장 암기")
+
+                if (s.end) {
+                    if (s.unknown > 0 && rounds < SpellSentence.MAX_ROUNDS) {
+                        rounds += 1
+                        d.log("[문장 암기] 모르는 카드 ${s.unknown}개 — 다시 학습합니다 ($rounds/${SpellSentence.MAX_ROUNDS})")
+                        d.clickFirstVisible("#study_end .btn-study-end-unknow")
+                        if (stop.await(1500)) break
+                        continue
+                    }
+                    d.log("[문장 암기] 학습 완료")
+                    d.exec("""var a = document.querySelectorAll("#study_end.active .study-header a"); if (a.length) a[0].click();""")
+                    d.exec("""var a = document.querySelectorAll(".btn-top-menu a"); if (a.length) a[0].click();""")
+                    stop.sleep(500)
+                    d.exec("""var a = document.querySelectorAll(".close_o"); if (a.length) a[0].click();""")
+                    stop.set()
+                    break
+                }
+                if (s.modal) { SpellSentence.closeModal(d); if (stop.await(700)) break; continue }
+                if (s.round) { if (stop.await(500)) break; continue }
+                if (s.start) { Memorize.startStudyIfNeeded(d, stop); if (stop.await(800)) break; continue }
+                if (!s.card) { if (stop.await(400)) break; continue }
+
+                if (s.legacy) {           // 예전 화면 — 옛 흐름으로
+                    d.log("[문장 암기] 예전 화면 구조입니다 — 이전 방식으로 진행합니다")
+                    handedToLegacy = true
+                    runLegacy(d, answerDict, stop)
+                    break
+                }
+
+                val sig = "${s.key}|${s.step1}|${s.correct}|${s.done}|${s.tiles.count { !it.clicked }}"
+                if (sig == lastSig) {
+                    sameCount += 1
+                    if (sameCount == 60) {
+                        d.log("[문장 암기] 진행이 멈췄습니다 — 화면: key=${s.key} step1=${s.step1} done=${s.done} words=${s.words.size} tiles=${s.tiles.size}")
+                        SpellSentence.clickFeedback(d, ".btn-next-card")
+                    }
+                } else { sameCount = 0; lastSig = sig }
+
+                if (s.step1) {            // 1단계: 문장 소리를 끝까지 듣고 '영작 연습하기'
+                    if (waitedAudioFor != s.key) {
+                        waitedAudioFor = s.key
+                        stop.sleep(900)
+                        SpellSentence.waitAudio(d, stop, 20000)
+                        if (stop.isSet) break
+                    }
+                    val clicked = d.clickSmart(
+                        """
+                        var card = document.querySelector('.study-body .CardItem.active') || document.querySelector('.CardItem.active');
+                        var b = card ? card.querySelector('.step.s1 .btn-go-step1') : null;
+                        if (b && b.offsetParent !== null) el = b;
+                        """
+                    )
+                    if (!clicked) d.pressSpace()
+                    if (stop.await(500)) break
+                    continue
+                }
+
+                if (s.correct) {          // 다 맞춤 → 다음 카드
+                    SpellSentence.clickFeedback(d, ".btn-next-card")
+                    val r = SpellSentence.waitCardChange(d, stop, s.key, 3000)
+                    if (r == SpellSentence.Wait.STOPPED) break
+                    if (r == SpellSentence.Wait.STUCK) { d.blurActiveElement(); d.pressSpace() }
+                    continue
+                }
+
+                if (!s.scramble || s.words.isEmpty() || s.tilesDisabled) { if (stop.await(300)) break; continue }
+                if (s.done >= s.words.size) { if (stop.await(300)) break; continue }
+                val expected = s.words[s.done]
+                val hit = s.tiles.indexOfFirst { !it.clicked && it.input == expected }
+                if (hit < 0) { if (stop.await(250)) break; continue }
+                SpellSentence.clickTile(d, hit)
+                if (stop.await(120)) break
+            }
+        } catch (e: Throwable) {
+            if (!stop.isSet) d.log("[문장 암기] 오류: ${e.message}")
+        } finally {
+            if (!handedToLegacy) d.log("[문장 암기] 종료")
         }
     }
 }

@@ -489,3 +489,29 @@ input[type="text"].search { width: 100%; margin-top: 7px; flex: 0 0 auto; }
 .modal-body h3 { margin: 0 0 10px; font-size: 14px; }
 .modal-body textarea { width: 100%; height: 110px; resize: vertical; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 7px; margin-top: 10px; }
+
+/* -------------------------------------------------- 제어 · 진행률 */
+.ctrl-grid { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 5px; margin-top: 8px; flex: 0 0 auto; }
+.ctrl-grid .tool[disabled] { opacity: 0.45; cursor: default; }
+#btnResumeRun[disabled] { opacity: 0.45; cursor: default; }
+#progressCard { margin-top: 8px; }
+.prog-row { padding: 7px 2px; border-top: 1px solid var(--border); }
+.prog-row:first-child { border-top: 0; }
+.prog-head { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.prog-head .who { font-weight: 800; }
+.prog-head .mode { color: var(--text-2); font-size: 11px; }
+.prog-head .pct { margin-left: auto; font-weight: 800; color: var(--primary); }
+.prog-nums { font-size: 11px; color: var(--text-2); margin-top: 3px; display: flex; gap: 10px; flex-wrap: wrap; }
+.prog-nums b { color: var(--text); }
+.prog-bar { height: 8px; border-radius: 6px; background: var(--surface-alt); border: 1px solid var(--border); overflow: hidden; margin-top: 5px; }
+.prog-bar > div { height: 100%; background: linear-gradient(90deg, var(--primary), #ec4899); width: 0; transition: width 0.3s; }
+.prog-bar.paused > div { background: repeating-linear-gradient(45deg, #f59e0b, #f59e0b 6px, #fbbf24 6px, #fbbf24 12px); }
+.prog-counts { display: flex; gap: 6px; margin-top: 5px; font-size: 10px; }
+.prog-counts span { border-radius: 20px; padding: 2px 8px; font-weight: 700; }
+.prog-counts .ok { background: rgba(16, 185, 129, 0.16); color: #047857; }
+.prog-counts .fail { background: rgba(225, 29, 72, 0.14); color: #be123c; }
+.prog-counts .todo { background: rgba(42, 29, 94, 0.08); color: #6b5ea0; }
+.prog-empty { font-size: 11px; color: var(--text-3); padding: 6px 2px; }
+.account-row .pw { font-size: 10px; color: var(--text-3); font-family: ui-monospace, monospace; letter-spacing: 1px; }
+.account-row .pw.shown { color: var(--text-2); letter-spacing: 0; }
+.account-row .eye { border: 0; background: transparent; cursor: pointer; font-size: 13px; padding: 0 3px; color: var(--text-2); }

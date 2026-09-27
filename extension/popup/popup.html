@@ -16,7 +16,7 @@
       <div class="app-title">클래스카드 자동화</div>
       <div class="app-sub">✦ 이세계 학습 길드 — 유메와 푸딩이 대신 공부해 드려요</div>
     </div>
-    <div class="badge" id="versionBadge">v3.16.1</div>
+    <div class="badge" id="versionBadge">v3.18.1</div>
     <div class="spacer"></div>
     <button class="icon-btn" id="btnGear" title="고급 설정 접기/펼치기">⚙</button>
   </header>
@@ -80,6 +80,21 @@
       </div>
 
       <button class="run-btn" id="btnRun">▶&nbsp;&nbsp;자동화 시작</button>
+
+      <!-- 일시정지 · 재개 · 중지 · 진행 위치 저장 · 이어하기 -->
+      <div class="ctrl-grid">
+        <button class="tool" id="btnPause">⏸ 일시정지</button>
+        <button class="tool" id="btnResume">▶ 재개</button>
+        <button class="tool danger" id="btnStop">■ 중지</button>
+        <button class="tool" id="btnSavePos">💾 진행 위치 저장</button>
+      </div>
+      <button class="tool wide" id="btnResumeRun">↻ 저장한 위치에서 이어하기</button>
+
+      <!-- 진행률 -->
+      <div class="card" id="progressCard">
+        <div class="card-head"><h2>📊 진행률</h2><span class="hint" id="progressHint"></span></div>
+        <div id="progressList"></div>
+      </div>
     </section>
   </main>
 

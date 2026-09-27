@@ -59,11 +59,40 @@ object Memorize {
      * 이 버튼을 누르기 전에는 `.CardItem.current` 가 없어 어떤 모드도 아무것도 할 수 없다.
      * 시작 화면이면 눌러 주고 true, 이미 학습 중이면 false.
      */
+    /**
+     * 카드 학습 화면(암기·리콜·스펠·문장 모드 공통)의 진행률을 화면에서 읽어 보고한다 (확장 reportCardProgress 와 같은 JS).
+     *   전체 = .CardItem 수, 현재 = 보이는 카드의 순번, 성공 = data-status k, 실패 = data-status x
+     */
+    suspend fun reportCardProgress(d: Driver, label: String = "") {
+        val p = d.evalObjectOrNull(
+            """
+            var items = document.querySelectorAll('.study-body .CardItem, .CardItem');
+            if (!items.length) return null;
+            var cur = document.querySelector('.CardItem.active') || document.querySelector('.CardItem.current');
+            var idx = cur ? Array.prototype.indexOf.call(items, cur) + 1 : 0;
+            var ok = 0, fail = 0;
+            for (var i = 0; i < items.length; i++) {
+                var st = items[i].getAttribute('data-status') || '';
+                if (st === 'k' || st === 'xk') ok++; else if (st === 'x') fail++;
+            }
+            return { total: items.length, current: Math.max(idx, ok + fail), ok: ok, fail: fail };
+            """
+        ) ?: return
+        val total = p.optInt("total"); val ok = p.optInt("ok"); val fail = p.optInt("fail")
+        d.progress(p.optInt("current"), total, ok, fail, maxOf(0, total - ok - fail), label)
+    }
+
     suspend fun startStudyIfNeeded(d: Driver, stop: StopFlag): Boolean {
         val need = d.evalBool(
             """
             function vis(el) { return el && el.offsetParent !== null; }
             if (vis(document.querySelector('.CardItem.current'))) return false;
+            // 확인 모달이 떠 있으면 시작 버튼은 가려져 있다 — 눌러도 소용없으니 기다린다
+            var ids = ['#confirmModal', '#alertModal', '#alertModal2'];
+            for (var m = 0; m < ids.length; m++) {
+                var mo = document.querySelector(ids[m]);
+                if (mo && window.getComputedStyle(mo).display === 'block') return false;
+            }
             var btns = document.querySelectorAll('.btn-opt-start, .start-opt-body a.btn, .btn-quiz-start');
             for (var i = 0; i < btns.length; i++) if (vis(btns[i])) return true;
             return false;
@@ -157,6 +186,7 @@ object Memorize {
         d.log("[암기] 시작")
         try {
             while (!stop.isSet) {
+                reportCardProgress(d, "암기")
                 if (checkStep2SuccessAndStop(d, stop)) break
                 if (startStudyIfNeeded(d, stop)) continue
 

@@ -21,6 +21,8 @@ object SettingsStore {
     private const val KEY_DARK_MODE = "dark_mode"
     private const val KEY_AUTO_UPDATE = "auto_update"
     private const val KEY_AUTO_DICT = "auto_dict"
+    private const val KEY_SPEAK_MIC = "speaking_mic"
+    private const val KEY_SPEAK_SEC = "speaking_record_sec"
 
     /** 저장된 ID/PW로 브라우저를 열 때 바로 로그인. */
     fun autoLogin(c: Context): Boolean = prefs(c).getBoolean(KEY_AUTO_LOGIN, true)
@@ -59,6 +61,14 @@ object SettingsStore {
     /** 학습 페이지에 들어가면 그 페이지의 단어장을 알아서 가져온다. 기본값은 켬. */
     fun autoDict(c: Context): Boolean = prefs(c).getBoolean(KEY_AUTO_DICT, true)
     fun setAutoDict(c: Context, v: Boolean) = put(c, KEY_AUTO_DICT, v)
+
+    /** 스피킹의 낭독·쉐도잉·녹음 단계까지 진행할지 (직접 말해야 한다). 기본 꺼짐. */
+    fun speakingMic(c: Context): Boolean = prefs(c).getBoolean(KEY_SPEAK_MIC, false)
+    fun setSpeakingMic(c: Context, v: Boolean) = put(c, KEY_SPEAK_MIC, v)
+
+    /** 스피킹 녹음 단계에서 카드마다 말할 시간(초). */
+    fun speakingRecordSec(c: Context): Int = prefs(c).getInt(KEY_SPEAK_SEC, 6)
+    fun setSpeakingRecordSec(c: Context, v: Int) = prefs(c).edit().putInt(KEY_SPEAK_SEC, v).apply()
 
     private fun put(c: Context, key: String, value: Boolean) =
         prefs(c).edit().putBoolean(key, value).apply()

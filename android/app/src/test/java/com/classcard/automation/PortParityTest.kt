@@ -312,4 +312,33 @@ class PortParityTest {
             }
         }
     }
+
+    // ------------------------------------------------------------ 문장 테스트 점수 범위
+
+    /**
+     * 문장 테스트는 늘 100점이면 티가 나므로 매번 다른 점수를 내되, **95점 밑으로는 절대 안 내려간다**.
+     * 한 문항의 값은 100/total 점이라, 문항 수가 적으면 하나만 틀려도 95점 밑이 된다(그럴 땐 다 맞힌다).
+     */
+    @JUnitTest
+    fun planWrongIndicesRange_keepsScoreBetween95And100() {
+        for (total in listOf(1, 3, 4, 5, 10, 18, 19, 20, 24, 25, 40, 50, 100)) {
+            val sizes = HashSet<Int>()
+            repeat(300) {
+                val wrong = Test.planWrongIndicesRange(total, 95, 100)
+                sizes.add(wrong.size)
+                val score = (total - wrong.size) * 100.0 / total
+                assertEquals("${total}문항: 틀릴 번호가 겹쳤다", wrong.size, wrong.toSet().size)
+                for (n in wrong) {
+                    assertEquals("${total}문항: 번호 $n 이 1..$total 밖이다", true, n in 1..total)
+                }
+                assertEquals("${total}문항에서 ${wrong.size}개 틀려 ${score}점 — 95점 밑", true, score >= 95.0)
+                assertEquals("${total}문항에서 ${score}점 — 100점 초과", true, score <= 100.0)
+            }
+            if (total < 20) {
+                assertEquals("${total}문항은 하나만 틀려도 95점 밑이라 다 맞혀야 한다", setOf(0), sizes)
+            } else {
+                assertEquals("${total}문항인데 점수가 고정된다", true, sizes.size > 1)
+            }
+        }
+    }
 }

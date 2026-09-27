@@ -74,12 +74,20 @@ async function curlFetchNow(url, { jar, method = 'GET', data = null, retry = tru
     //   1) 로그인 화면으로 보내는 리다이렉트
     //   2) 200 이지만 본문이 '사용할 수 없는 페이지' / '정상적인 접근이 아닙니다' 스크립트뿐
     const bounced = /LoginPage|\/Login\b/.test(loc);
-    const body = last.body && last.body.length < 4000 ? last.body.toString('utf8') : '';
-    const refused = /사용할 수 없는 페이지|정상적인 접근이 아닙니다/.test(body);
+    const small = last.body && last.body.length < 4000 ? last.body.toString('utf8') : '';
+    const refused = /사용할 수 없는 페이지|정상적인 접근이 아닙니다/.test(small);
+    //   3) 200 에 온전한 페이지지만 세션이 없는 서버가 만든 '로그아웃 상태' 페이지 (is_login = false, 비공개 세트 안내 …)
+    //      — 로그인한 페이지는 항상 is_login = true 를 싣는다
+    let loggedOut = false;
+    if (last.status === 200 && last.body && last.body.length >= 4000 && method === 'GET') {
+      const head = last.body.toString('utf8', 0, Math.min(last.body.length, 200000));
+      if (/is_login\s*=\s*false/.test(head) || /비공개로 지정한 세트/.test(head)) loggedOut = true;
+    }
+    if (loggedOut) { last.status = 200; }
     // curl 자체가 실패한 경우(프록시 리셋 등)도 다시 보낸다
     const redirect = last.status >= 300 && last.status < 400;
     const failed = last.status === 599 || (!redirect && (!last.body || last.body.length === 0));
-    if (!bounced && !refused && !failed) break;
+    if (!bounced && !refused && !failed && !loggedOut) break;
   }
   // 로그인 화면이 아닌 리다이렉트는 따라간다
   let hops = 0;

@@ -1,0 +1,310 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>문장 스펠 (모의)</title>
+<!--
+  문장 세트 스펠 화면(scripts/v3/spell_sentence.js) 의 규칙을 흉내 낸다:
+   - ?t=2 어순배열: .back .para_item(data arr) / .front .line span / .scramble-body .scramble-item(data input),
+     7개씩 묶음 제시, 틀리면 .study-wrapper.wrong + feedback, 다 맞으면 .study-wrapper.correct (자동 이동 없음)
+   - ?t=0 영작: textarea.input-answer 의 마지막 keydown 이 isTrusted 가 아니면 채점 거부,
+     대소문자만 다르면 #alertModal('대소문자 틀림!') 뒤 정답 처리, 정답 뒤 소리 재생(자동 이동 없음)
+   - ?t=5 첫글자: 글자 하나를 치면 keyup 이 낱말을 통째로 채운다
+   - 시작 화면(.start-opt-body .btn-opt-start) → .round-body.active 1초 → 카드
+   - 끝: #study_end.active (모르는 카드가 있으면 .btn-study-end-unknow 로 그 카드들만 다시)
+-->
+<style>
+ body{font-family:system-ui;margin:0;background:#f4f6f9}
+ .study-wrapper{max-width:900px;margin:24px auto;background:#fff;border-radius:12px;padding:22px;min-height:420px;position:relative}
+ .CardItem{display:none}.CardItem.active{display:block}
+ .back{font-size:18px;margin-bottom:12px}.para_item.active{color:#2563eb;font-weight:600}.para_item.correct{color:#16a34a}
+ .front .line{min-height:28px;border-bottom:2px solid #cbd5e1;margin:10px 0;font-size:18px}
+ .scramble-item{display:inline-block;margin:4px;padding:8px 12px;border:1px solid #94a3b8;border-radius:8px;cursor:pointer}
+ .scramble-item.clicked{opacity:.35}.scramble-body.disabled .scramble-item{pointer-events:none}
+ textarea.input-answer{width:95%;height:70px;font-size:16px}
+ .study-footer .btns,.study-footer .feedback{margin-top:14px}
+ .study-footer .feedback{display:none}.study-wrapper.correct .feedback,.study-wrapper.wrong .feedback{display:block}
+ .study-wrapper.correct .btns,.study-wrapper.wrong .btns{display:none}
+ .btn{display:inline-block;padding:8px 14px;border-radius:8px;background:#2563eb;color:#fff;margin-right:8px;cursor:pointer}
+ .start-opt-body,.round-body,#study_end{display:none;text-align:center;padding:30px}
+ .start-opt-body.on{display:block}.round-body.active{display:block}#study_end.active{display:block}
+ #alertModal{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4)}#alertModal .box{background:#fff;margin:120px auto;width:340px;padding:20px;border-radius:10px}
+ #done{display:none;text-align:center;padding:40px}
+</style></head><body>
+<div class="start-opt-body on"><div>학습설정</div><a class="btn btn-opt-start">스펠학습 (1구간)</a></div>
+<div class="round-body"><div class="round-text">1구간 카드 학습 시작</div></div>
+<div class="study-wrapper" id="wrap" style="display:none">
+  <div class="study-body" id="body"></div>
+  <div class="study-footer">
+    <div class="scramble-body"></div>
+    <div class="btns">
+      <a class="btn btn-next-card hidden" style="display:none">나중에 다시</a>
+      <a class="btn btn-confirm-card">확인</a>
+    </div>
+    <div class="feedback"><div class="answer"></div>
+      <a class="btn btn-retry-card">지금 재시도</a>
+      <a class="btn btn-next-card">나중에 다시</a>
+    </div>
+  </div>
+</div>
+<div id="study_end"><div class="study-header"><a href="#" id="exit">나가기</a></div>
+  <div>학습 결과</div>
+  <a class="btn btn-study-end-unknow">모르는 카드 다시 학습 (<span class="unknown_count">0</span>)</a>
+  <a class="btn btn-study-end-repeat">200% 도전</a>
+</div>
+<div id="alertModal"><div class="box"><div id="alertMsg"></div><a class="btn" id="alertOk">알겠습니다!</a></div></div>
+<div id="done"><h2>🎉 문장 스펠 완료</h2><p id="stat"></p></div>
+<script>
+// ---- 페이지 전역 (실제 페이지: var set_type = 5; var show_type = 2; ...)
+var q = new URLSearchParams(location.search);
+var show_type = parseInt(q.get('t') || '2', 10);
+// mode: spell(기본) | mem(문장 암기 v3: 1단계 보기 → 2단계 어순배열) | recall(문장 리콜 v3: 빈칸 채우기)
+var MODE = q.get('mode') || 'spell';
+if (MODE !== 'spell') show_type = 2;
+var set_type = 5, front_lang = 'en';
+function removeBracket(val) {
+  var r = val.replace(/\[[^\[\]]*\]/g, '').replace(/\([^()]*\)/g, '');
+  return r === val ? r : removeBracket(r);
+}
+function replaceBracketToWord(val) {
+  var r = val, t, re1 = /\[([^\[\]]*)\]/g, re2 = /\(([^()]*)\)/g;
+  while ((t = re1.exec(r))) r = r.replace(t[0], ' ' + t[0].replace(/\s/g, '_|_'));
+  while ((t = re2.exec(r))) r = r.replace(t[0], ' ' + t[0].replace(/\s/g, '_|_'));
+  return r;
+}
+function makeArrayBracketToWord(val) {
+  return replaceBracketToWord(val).replace(/\s+/g, ' ').trim().split(' ').map(function (w) { return w.replace(/_\|_/g, ' '); });
+}
+// ---- jQuery 흉내: 엔진은 jQuery(el).data(key) 만 쓴다
+var store = new WeakMap();
+function setData(el, k, v) { var o = store.get(el) || {}; o[k] = v; store.set(el, o); }
+window.jQuery = function (el) { return { data: function (k) { var o = store.get(el); return o ? o[k] : undefined; } }; };
+// ---- 소리 흉내 (정답 뒤 1.2초 재생)
+window.audio = { src: '', paused: true, ended: true };
+function playAudio() { audio.src = 'x.mp3'; audio.paused = false; audio.ended = false; setTimeout(function () { audio.paused = true; audio.ended = true; }, 1200); }
+
+var CARDS = [
+  { front: 'I am a boy.', back: '나는 소년이다.' },
+  { front: 'Where are you going?', back: '너는 어디 가니?' },
+  { front: "It's a (very) nice day, isn't it?", back: '좋은 날이지, 그렇지?' },
+  { front: 'All Scripture is God-breathed and is useful for teaching, rebuking, correcting and training in righteousness.', back: '모든 성경은 하나님의 감동으로 된 것으로 교훈과 책망과 바르게 함과 의로 교육하기에 유익하니.' },
+];
+var known = CARDS.map(function () { return -1; });
+var results = [], rejected = 0, synthetic = 0, rounds = 0, order = [], cur = 0;
+var wrap = document.getElementById('wrap'), body = document.getElementById('body');
+
+function shuffle(a) { a = a.slice(); for (var i = a.length - 1; i > 0; i--) { var j = (i * 7 + 3) % (i + 1); var t = a[i]; a[i] = a[j]; a[j] = t; } return a; }
+function setCard() {
+  order = []; for (var i = 0; i < CARDS.length; i++) if (known[i] < 1) order.push(i);
+  cur = 0; body.innerHTML = '';
+  order.forEach(function (ci) {
+    var item = CARDS[ci];
+    var row = document.createElement('div'); row.className = 'CardItem'; row.setAttribute('data-status', '');
+    setData(row, 'idx', 'c' + ci); setData(row, 'item', item);
+    if (MODE === 'mem') {
+      // v3 문장 암기: 1단계(문장 보기 + '영작 연습하기') → 2단계(어순배열)
+      row.innerHTML = '<div class="step s1 active"><div class="card-items"><div class="card-item"><div class="front"><div class="text">' + item.front + '</div></div><div class="back"><span>' + item.back + '</span></div></div></div>' +
+        '<div class="btns"><a class="btn btn-go-step1">영작 연습하기</a></div></div>' +
+        '<div class="step s2"><div class="back"></div><div class="front"><div class="line"></div></div><div class="scramble-body"></div></div>';
+      var p = document.createElement('span'); p.className = 'para_item'; p.textContent = item.back;
+      setData(p, 'arr', makeArrayBracketToWord(item.front));
+      row.querySelector('.step.s2 .back').appendChild(p);
+      row.querySelector('.btn-go-step1').addEventListener('click', function () {
+        row.querySelector('.step.s1').classList.remove('active'); row.querySelector('.step.s2').classList.add('active');
+        wrap.classList.add('s2'); setSuggestBlock(p);
+      });
+    } else if (MODE === 'recall') {
+      // v3 문장 리콜: 앞부분은 채워져 있고 뒷부분 빈칸을 4개씩 제시되는 타일로 채운다
+      row.innerHTML = '<div class="front"><div class="input-box"></div></div><div class="back">' + item.back + '</div>';
+      var box = row.querySelector('.input-box');
+      var all = makeArrayBracketToWord(item.front.replace(/\(([^()]*)\)/g, ' ').replace(/\s+/g, ' ').trim());
+      var len = all.length, blank = len > 20 ? 16 : len > 16 ? 12 : len > 8 ? 8 : len > 3 ? 4 : len;
+      var arrAnswer = [];
+      all.forEach(function (w, i) { if (i < len - blank) { var d = document.createElement('div'); d.textContent = w; box.appendChild(d); } else arrAnswer.push(w); });
+      setData(box, 'arr_answer', arrAnswer);
+    } else if (show_type == 2) {
+      row.classList.add('scramble');
+      row.innerHTML = '<div class="back"></div><div class="front"><div class="line"></div></div><div class="scramble-body"></div>';
+      var p = document.createElement('span'); p.className = 'para_item'; p.textContent = item.back;
+      setData(p, 'arr', makeArrayBracketToWord(item.front));
+      row.querySelector('.back').appendChild(p);
+    } else {
+      row.innerHTML = '<div class="back-body">' + item.back + '</div><div><textarea class="input-answer" placeholder="문장을 입력하세요."></textarea></div>';
+    }
+    body.appendChild(row);
+  });
+  if (!order.length) { endStudy(); return; }
+  animate();
+}
+function activeCard() { return body.querySelector('.CardItem.active'); }
+function animate() {
+  wrap.classList.remove('correct', 'wrong');
+  var cards = body.querySelectorAll('.CardItem');
+  if (cur >= cards.length) { endStudy(); return; }
+  [].forEach.call(cards, function (c) { c.classList.remove('active'); });
+  var c = cards[cur]; c.classList.add('active');
+  if (MODE === 'mem') { wrap.classList.remove('s2'); setTimeout(playAudio, 600); }         // 1단계에서 문장 소리
+  else if (MODE === 'recall') { recallShuffle(c); }
+  else if (show_type == 2) setSuggestBlock(c.querySelector('.para_item'));
+  else { var ta = c.querySelector('.input-answer'); ta.value = ''; bindInput(ta); ta.focus(); }
+}
+// ---- 문장 리콜 (실제 setScrambleBtnsShuffle3 규칙)
+var footerBody = document.querySelector('.study-footer .scramble-body');
+function recallNow(box) { if (!box.querySelector('.btn-scramble.now')) { var d = document.createElement('div'); d.className = 'btn-scramble now'; d.textContent = '?'; box.appendChild(d); } }
+function recallShuffle(card) {
+  var box = card.querySelector('.input-box'), arr = jQuery(box).data('arr_answer');
+  recallNow(box);
+  footerBody.innerHTML = '';
+  var used = box.querySelectorAll('.btn-scramble:not(.now)').length;
+  var batch = []; for (var i = used; i < arr.length && batch.length < 4; i++) batch.push(arr[i]);
+  shuffle(batch).forEach(function (w) {
+    var b = document.createElement('div'); b.className = 'btn-scramble clickable'; b.textContent = w;
+    b.addEventListener('click', function () {
+      var now = box.querySelector('.btn-scramble.now'); if (!now || b.classList.contains('clicked')) return;
+      now.textContent = w; now.classList.remove('now'); now.classList.add('selected'); b.classList.add('clicked');
+      if (footerBody.querySelectorAll('.btn-scramble').length === footerBody.querySelectorAll('.btn-scramble.clicked').length) {
+        var wrong = 0;
+        [].forEach.call(box.querySelectorAll('.btn-scramble'), function (el, idx) {
+          if (el.textContent !== arr[idx]) { el.classList.add('wrong'); wrong++; } else el.classList.add('correct');
+          el.classList.remove('selected');
+        });
+        if (wrong === 0) {
+          if (box.querySelectorAll('.btn-scramble').length === arr.length) { footerBody.innerHTML = ''; setCorrect(true, card); }
+          else recallShuffle(card);
+        } else { footerBody.innerHTML = ''; setCorrect(false, card); }
+        return;
+      }
+      recallNow(box);
+    });
+    footerBody.appendChild(b);
+  });
+}
+// ---- 어순배열 (실제 setSuggestBlock 과 같은 묶음 규칙)
+function setSuggestBlock(el) {
+  var arr = jQuery(el).data('arr'), ans = [], ori = [];
+  arr.forEach(function (w) { if (w == '/') return; ori.push(w.trim()); var s = w.replace(/[!?,.]+$/g, '').trim(); ans.push(s.length ? s : w.trim()); });
+  var card = el.closest('.CardItem'), line = card.querySelector('.front .line'), bodyEl = card.querySelector('.scramble-body');
+  el.classList.add('active');
+  var curIdx = line.querySelectorAll('span:not(.end)').length;
+  var limit = curIdx + 7; if (limit + 2 >= arr.length) limit += 2;
+  if (curIdx >= ans.length) { el.classList.add('correct'); wrap.classList.add('correct'); setCorrect(true, card); return; }
+  var bottom = []; for (var i = curIdx; i < ans.length && i < limit; i++) bottom.push(ans[i]);
+  bottom = shuffle(bottom);
+  bodyEl.innerHTML = ''; bodyEl.classList.remove('disabled');
+  bottom.forEach(function (w) {
+    var d = document.createElement('div'); d.className = 'scramble-item'; d.textContent = w; setData(d, 'input', w);
+    d.addEventListener('click', function (e) {
+      if (!e.isTrusted) synthetic++;
+      var idx = line.querySelectorAll('span:not(.end)').length;
+      if (jQuery(d).data('input') == ans[idx]) {
+        d.classList.add('clicked'); var sp = document.createElement('span'); sp.textContent = ori[idx]; line.appendChild(sp); line.appendChild(document.createTextNode(' '));
+      } else {
+        bodyEl.classList.add('disabled'); setTimeout(function () { setCorrect(false, card); }, 100); return;
+      }
+      if (bodyEl.querySelectorAll('.scramble-item').length == bodyEl.querySelectorAll('.scramble-item.clicked').length) {
+        if (limit < ans.length) { setSuggestBlock(el); return; }
+        [].forEach.call(line.querySelectorAll('span'), function (s) { s.classList.add('end'); });
+        el.classList.add('correct'); wrap.classList.add('correct'); setCorrect(true, card);
+      }
+    });
+    bodyEl.appendChild(d);
+  });
+  if (limit < ans.length) bodyEl.insertAdjacentHTML('beforeend', '<span>⋯</span>');
+}
+// ---- 입력형
+function bindInput(ta) {
+  ta.onkeydown = function (e) {
+    if (!e.isTrusted) { setData(ta, 'event', null); e.preventDefault(); return false; }
+    setData(ta, 'event', e);
+    if (e.keyCode === 13) { document.querySelector('.btns .btn-confirm-card').click(); e.preventDefault(); return false; }
+    if ((show_type == 5 || show_type == 6) && e.key.trim().length != 1) { e.preventDefault(); return false; }
+  };
+  ta.onkeyup = function (e) {
+    if (!e.isTrusted) { setData(ta, 'event', null); return; }
+    setData(ta, 'event', e);
+    if (show_type == 5 || show_type == 6) {   // 첫 글자를 치면 낱말을 통째로 채운다 (실제 keyup 과 같은 결과)
+      var item = jQuery(activeCard()).data('item');
+      var words = removeBracket(item.front).replace(/\s+/g, ' ').trim().split(' ');
+      var typed = ta.value, done = typed.replace(/\s+$/, '').split(' ').filter(Boolean).length - 1;
+      if (typed.slice(-1) == ' ') return;
+      var ch = typed.slice(-1).toLowerCase(), out = typed.slice(0, -1);
+      for (var i = Math.max(done, 0); i < words.length; i++) {
+        var lw = words[i].replace(/[^0-9a-z]/gi, '');
+        if (!lw.length) { out += words[i] + ' '; continue; }
+        if (lw[0].toLowerCase() == ch) { out += words[i] + ' '; ta.value = out; }
+        else { ta.value = out; }
+        break;
+      }
+      ta.blur(); setTimeout(function () { ta.focus(); }, 50);
+    }
+  };
+}
+function setAnswer() {
+  var card = activeCard(); if (!card) return;
+  var ta = card.querySelector('.input-answer'), item = jQuery(card).data('item');
+  if (ta.value.length > 0) {
+    var ev = jQuery(ta).data('event');
+    if (!ev || !ev.isTrusted) { rejected++; console.error('event is not trusted'); return; }
+  }
+  var answer = removeBracket(item.front).replace(/\s+/g, ' ').trim(), value = ta.value.trim();
+  if (value === answer) { setAnswerScreen(true); return; }
+  if (value.toLowerCase() === answer.toLowerCase()) {
+    document.getElementById('alertMsg').textContent = '대소문자 틀림! ' + answer;
+    document.getElementById('alertModal').style.display = 'block';
+    document.getElementById('alertOk').onclick = function () { document.getElementById('alertModal').style.display = 'none'; setTimeout(function () { setAnswerScreen(true); }, 500); };
+    return;
+  }
+  setAnswerScreen(false);
+}
+function setAnswerScreen(ok) {
+  var card = activeCard(); if (!card) return;
+  if (ok) { wrap.classList.add('correct'); setTimeout(playAudio, 600); } else wrap.classList.add('wrong');
+  setCorrect(ok, card);
+}
+function setCorrect(ok, card) {
+  var ci = order[cur];
+  var st = card.getAttribute('data-status');
+  if (ok) { if (st === 'x') { card.setAttribute('data-status', 'xk'); known[ci] = 0; } else { card.setAttribute('data-status', 'k'); known[ci] = 1; } }
+  else { card.setAttribute('data-status', 'x'); known[ci] = 0; wrap.classList.add('wrong'); }
+  if (ok) wrap.classList.add('correct');
+  results.push((ok ? '정답' : '오답') + ':' + ci);
+}
+function endStudy() {
+  wrap.style.display = 'none';
+  var unknown = known.filter(function (k) { return k < 1; }).length;
+  document.querySelector('.unknown_count').textContent = unknown;
+  document.querySelector('.btn-study-end-unknow').style.display = unknown ? '' : 'none';
+  document.getElementById('study_end').classList.add('active');
+  if (!unknown || rounds >= 3) finish();
+}
+function finish() {
+  var correct = results.filter(function (r) { return r.indexOf('정답') === 0; }).length;
+  document.getElementById('stat').textContent = '정답 ' + correct + '/' + results.length + ' · 거부된 입력 ' + rejected + '회 · 합성 클릭 ' + synthetic + '회 · 재학습 ' + rounds + '회' + (MODE === 'mem' ? ' · 건너뛴 카드 ' + skippedBySpace + '장' : '');
+  document.getElementById('done').style.display = 'block';
+}
+document.querySelector('.btn-opt-start').addEventListener('click', function () {
+  document.querySelector('.start-opt-body').classList.remove('on');
+  document.querySelector('.round-body').classList.add('active');
+  setTimeout(function () { document.querySelector('.round-body').classList.remove('active'); wrap.style.display = ''; setCard(); }, 1000);
+});
+document.querySelector('.btns .btn-confirm-card').addEventListener('click', setAnswer);
+document.querySelector('.feedback .btn-next-card').addEventListener('click', function () { cur++; animate(); });
+document.querySelector('.feedback .btn-retry-card').addEventListener('click', function () {
+  var card = activeCard(); wrap.classList.remove('correct', 'wrong');
+  if (MODE === 'recall') { recallShuffle(card); }
+  else if (show_type == 2) { card.querySelector('.front .line').innerHTML = ''; var p = card.querySelector('.para_item'); p.classList.remove('correct', 'active'); setSuggestBlock(p); }
+  else { card.querySelector('.input-answer').value = ''; card.querySelector('.input-answer').focus(); }
+});
+document.querySelector('.btn-study-end-unknow').addEventListener('click', function () {
+  rounds++; document.getElementById('study_end').classList.remove('active'); wrap.style.display = ''; setCard();
+});
+document.getElementById('exit').addEventListener('click', function (e) { e.preventDefault(); finish(); });
+var skippedBySpace = 0;
+document.addEventListener('keydown', function (e) {
+  if (e.target && e.target.nodeName === 'TEXTAREA') return;
+  if (e.keyCode !== 32) return;
+  if (MODE === 'mem') {          // 실제 사이트: 1단계면 2단계로, 2단계면 '나중에 다시'(문장을 못 만들었어도 넘어간다)
+    var c = activeCard(); if (!c) return;
+    if (c.querySelector('.step.s1.active')) c.querySelector('.btn-go-step1').click();
+    else { if (!wrap.classList.contains('correct')) skippedBySpace++; cur++; animate(); }
+    e.preventDefault(); return;
+  }
+  if (wrap.classList.contains('correct') || wrap.classList.contains('wrong')) { cur++; animate(); e.preventDefault(); }
+});
+</script></body></html>

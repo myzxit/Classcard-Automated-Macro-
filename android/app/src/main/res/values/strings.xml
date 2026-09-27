@@ -58,6 +58,8 @@
     <string name="mode_spell">⌨ 스펠</string>
     <string name="mode_memorize_sentence">📖 문장 암기</string>
     <string name="mode_recall_sentence">📝 문장 리콜</string>
+    <string name="mode_spell_sentence">✍ 문장 스펠</string>
+    <string name="mode_speaking">🎤 스피킹</string>
     <string name="mode_test">🃏 단어 테스트</string>
     <string name="mode_test_sentence">📕 문장 테스트</string>
     <string name="mode_matching">🎴 단어 매칭</string>
@@ -89,6 +91,18 @@
     <!-- 실행 버튼 -->
     <string name="btn_run_start">▶  자동화 시작</string>
     <string name="btn_run_stop">■  자동화 중지</string>
+    <string name="btn_pause">⏸ 일시정지</string>
+    <string name="btn_resume">▶ 재개</string>
+    <string name="btn_stop">■ 중지</string>
+    <string name="btn_save_pos">💾 진행 위치 저장</string>
+    <string name="btn_resume_run">↻ 저장한 위치에서 이어하기</string>
+    <string name="progress_title">📊  진행률</string>
+    <string name="progress_empty">진행 중인 자동화가 없습니다. 자동화를 시작하면 여기에 진행률이 표시됩니다.</string>
+    <string name="progress_saved">저장된 진행 위치: %1$s → [이어하기]</string>
+    <string name="progress_line">현재: %1$d / %2$d · 진행률: %3$d%% · 남은 항목: %4$d</string>
+    <string name="progress_counts">성공 %1$d · 실패 %2$d · 미처리 %3$d</string>
+    <string name="progress_paused">⏸ 일시정지</string>
+    <string name="pw_hidden">(비밀번호 없음)</string>
 
     <!-- 로그 -->
     <string name="log_save">💾 저장</string>
@@ -120,7 +134,7 @@
 
     <!-- 자동 업데이트 -->
     <string name="set_auto_update">자동 업데이트</string>
-    <string name="set_auto_update_sub">새 버전이 나오면 스스로 받아 설치 화면을 띄움 (설치만 누르면 됨)</string>
+    <string name="set_auto_update_sub">새 버전이 올라오면 한 시간 안에 스스로 받아 설치 화면을 띄움 (설치만 누르면 됨)</string>
 
     <!-- 서비스 -->
     <string name="service_channel">자동화 실행 중</string>
